@@ -436,28 +436,25 @@ def snow_layer(clip_dir, style, tint):
 
 
 # ----------------------------------------------------------------------------
-# main build
+# caption layout
+#
+# WHERE every pill and every baseline goes, with no ffmpeg, no bar colour and
+# nothing written to disk -- so `qc check` can assert the geometry (point size,
+# pill width, anchor, ink/pill ratio) without rendering a frame. build() below
+# is the only drawing code and it consumes exactly these numbers, so the two
+# can never disagree about where a caption sits.
 # ----------------------------------------------------------------------------
-def build(clip_dir):
-    clip = load_yaml(os.path.join(clip_dir, "clip.yaml"))
-    style = load_yaml(os.path.join(ROOT, "templates/bars.yaml"))
-
+def layout(clip, style):
     W = int(style["canvas"]["width"])
     H = int(style["canvas"]["height"])
     tcfg, bcfg = style["text"], style["bar"]
-    scfg = tcfg["shadow"]
 
     font_path = os.path.join(ROOT, tcfg["font"])
-    ink_color = hexrgb(tcfg["color"], (255, 255, 255))
     cx = int(round(float(tcfg["center_x_frac"]) * W))
     max_w = float(tcfg["max_line_width_frac"]) * W
     bar_h = int(bcfg["height_px"])
     pad_x = float(bcfg["pad_x_px"])
     base_off = float(bcfg["baseline_below_center_px"])
-
-    bar_hex, cstats = bar_color_of(clip_dir, clip, style)   # as-seen target
-    draw_hex = predraw_color(bar_hex, style)                # what we paint
-    bar_rgb = hexrgb(draw_hex, (185, 147, 52))
 
     phrases = clip["phrases"]
     all_lines = [ln for ph in phrases for ln in phrase_lines(ph)]
@@ -466,8 +463,9 @@ def build(clip_dir):
     # the WIDEST line stays inside max_line_width.
     nominal = int(tcfg["nominal_pt"])
     probe_font = truetype(font_path, nominal)
-    widest = max(1.0, max(bbox_ls(ln, probe_font)[2] - bbox_ls(ln, probe_font)[0]
-                          for ln in all_lines))
+    raw = [bbox_ls(ln, probe_font)[2] - bbox_ls(ln, probe_font)[0]
+           for ln in all_lines]
+    widest = max(1.0, max(raw))
     pt = fit_pt(nominal, tcfg["min_pt"], max_w, widest)
     font = truetype(font_path, pt)
 
@@ -476,23 +474,14 @@ def build(clip_dir):
               float(tcfg["line2_center_y_frac"]) * H]
     y_single = float(tcfg["single_center_y_frac"]) * H
 
-    out_dir = os.path.join(clip_dir, "work", "overlays")
-    os.makedirs(out_dir, exist_ok=True)
-
-    report = {"pt": pt, "bar_hex": bar_hex, "bar_draw_hex": draw_hex,
-              "bar_stats": cstats,
-              "center_x": cx, "phrases": []}
-
+    out = {"pt": pt, "font": font, "cx": cx, "bar_h": bar_h, "max_w": max_w,
+           "widest": widest, "widest_line": all_lines[raw.index(max(raw))],
+           "phrases": []}
     for idx, ph in enumerate(phrases, start=1):
         lines = phrase_lines(ph)
         centers = [y_single] if len(lines) == 1 else y_line[:len(lines)]
-        # two canvases, not one: build_bars.py animates them separately.
-        bar_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        ink_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        d = ImageDraw.Draw(ink_img)
-        px0, px1 = W, 0
-
-        for ln, cyb in zip(lines, centers):
+        rows = []
+        for n, (ln, cyb) in enumerate(zip(lines, centers), start=1):
             l, top, r, bot = bbox_ls(ln, font)
             baseline = cyb + base_off
             # tashkeel-stripped letter-body band; the pill must sit inside it
@@ -501,23 +490,81 @@ def build(clip_dir):
             _, sb_top, _, sb_bot = bbox_ls(strip_tashkeel(ln), font)
             y0 = baseline - bar_h / 2.0 - base_off
             y0 = min(max(y0, baseline + sb_top), baseline + sb_bot - bar_h)
-            x0 = cx - (r - l) / 2.0 - pad_x
-            x1 = cx + (r - l) / 2.0 + pad_x
-            draw_pill(bar_img, x0, y0, x1, y0 + bar_h, bar_rgb)
-            d.text((cx - (r - l) / 2.0 - l, baseline), ln, font=font,
+            rows.append({
+                "n": n, "text": ln, "baseline": baseline,
+                "x0": cx - (r - l) / 2.0 - pad_x,
+                "x1": cx + (r - l) / 2.0 + pad_x,
+                "y0": y0, "y1": y0 + bar_h,
+                "pen_x": cx - (r - l) / 2.0 - l,
+                "ink_h": bot - top, "ink_body_h": sb_bot - sb_top,
+            })
+        out["phrases"].append({"i": idx, "lines": rows})
+    return out
+
+
+# ----------------------------------------------------------------------------
+# main build
+# ----------------------------------------------------------------------------
+def build(clip_dir, clip=None, style=None, out_sub="overlays"):
+    """Draw every caption layer. `clip`/`style` default to the files on disk;
+    a caller that has already resolved them (build_bars, which may have scaled
+    the template for a preview) passes them in so both agree exactly."""
+    if clip is None:
+        clip = load_yaml(os.path.join(clip_dir, "clip.yaml"))
+    if style is None:
+        style = load_yaml(os.path.join(ROOT, "templates/bars.yaml"))
+
+    W = int(style["canvas"]["width"])
+    H = int(style["canvas"]["height"])
+    tcfg = style["text"]
+    scfg = tcfg["shadow"]
+
+    ink_color = hexrgb(tcfg["color"], (255, 255, 255))
+
+    bar_hex, cstats = bar_color_of(clip_dir, clip, style)   # as-seen target
+    draw_hex = predraw_color(bar_hex, style)                # what we paint
+    bar_rgb = hexrgb(draw_hex, (185, 147, 52))
+
+    lay = layout(clip, style)
+    pt, cx, font = lay["pt"], lay["cx"], lay["font"]
+
+    out_dir = os.path.join(clip_dir, "work", out_sub)
+    os.makedirs(out_dir, exist_ok=True)
+
+    report = {"pt": pt, "bar_hex": bar_hex, "bar_draw_hex": draw_hex,
+              "bar_stats": cstats,
+              "center_x": cx, "phrases": []}
+
+    for p in lay["phrases"]:
+        idx = p["i"]
+        # two canvases, not one: build_bars.py animates them separately.
+        bar_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ink_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        d = ImageDraw.Draw(ink_img)
+        px0, px1 = W, 0
+
+        for ln in p["lines"]:
+            draw_pill(bar_img, ln["x0"], ln["y0"], ln["x1"], ln["y1"], bar_rgb)
+            d.text((ln["pen_x"], ln["baseline"]), ln["text"], font=font,
                    fill=ink_color + (255,), anchor="ls",
                    direction="rtl", language="ar")
-            px0, px1 = min(px0, x0), max(px1, x1)
+            px0, px1 = min(px0, ln["x0"]), max(px1, ln["x1"])
 
         bp = os.path.join(out_dir, f"bar{idx}.png")
         tp = os.path.join(out_dir, f"text{idx}.png")
         bar_img.save(bp)
         with_shadow(ink_img, scfg, W, H).save(tp)
-        report["phrases"].append({"bar": bp, "text": tp, "lines": len(lines),
+        report["phrases"].append({"bar": bp, "text": tp,
+                                  "lines": len(p["lines"]),
                                   "x0": px0, "x1": px1})
 
-    report["snow"] = snow_layer(clip_dir, style, bar_hex)
+    # The snow layer is expensive to evaluate (one shader pass per frame of the
+    # loop); when the effect is off nothing consumes it, so it is not built.
+    if qc.fx.enabled(style, clip, "snow"):
+        report["snow"] = snow_layer(clip_dir, style, bar_hex)
     report["scrim"] = scrim_layer(clip_dir, style)
+    nominal = int(tcfg["nominal_pt"])
+    widest, max_w = lay["widest"], lay["max_w"]
 
     print("render_bars.py OK")
     print(f"  bar {bar_hex} target / {draw_hex} drawn ({cstats})")

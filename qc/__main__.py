@@ -7,6 +7,14 @@
     qc propose <video_id> [options]    ranked clip-worthy candidate windows
     qc author <video_id> <surah>:<a>[-<b>] <start> <end> [options]
                                        align + time a window into clip.yaml
+    qc check <clip> [<clip>...] | all  validate clip.yaml before rendering
+    qc check --output <clip>...        validate a rendered output/final.mp4
+
+`check` runs no ffmpeg and takes under a second: clip.yaml schema (an unknown
+key is an ERROR -- a typo'd one is silently ignored by the renderer), phrase
+and cut ordering, that every codepoint has a glyph, that the Arabic is the
+mushaf text, the bars caption geometry, and that no caption changeover is a
+hard cut. `--output` needs a rendered file and takes a few seconds.
 
 `propose` options:
     --style S     bars | default   (default: bars) -- changes the ranking
@@ -115,8 +123,41 @@ def main(argv=None):
     if cmd == "author":
         return _author(argv)
 
+    if cmd == "check":
+        from . import check
+        out = "--output" in argv
+        dirs = _clip_dirs([a for a in argv if not a.startswith("-")])
+        if not dirs:
+            print("usage: qc check [--output] <clip> [<clip>...] | all",
+                  file=sys.stderr)
+            return 2
+        return check.run_output(dirs) if out else check.run(dirs)
+
     print("unknown command %r\n\n%s" % (cmd, USAGE.strip()), file=sys.stderr)
     return 2
+
+
+def _root():
+    import os
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _clip_dirs(names):
+    """Clip arguments -> directories. A bare name means clips/<name>; `all`
+    means every clip folder that is not scratch (leading underscore)."""
+    import os
+    clips = os.path.join(_root(), "clips")
+    out = []
+    for n in names:
+        if n == "all":
+            out += [os.path.join(clips, d) for d in sorted(os.listdir(clips))
+                    if not d.startswith((".", "_"))
+                    and os.path.isfile(os.path.join(clips, d, "clip.yaml"))]
+        elif os.path.isdir(n):
+            out.append(os.path.abspath(n))
+        else:
+            out.append(os.path.join(clips, n.rstrip("/").split("/")[-1]))
+    return out
 
 
 def _opt(argv, name, default=None):
