@@ -28,6 +28,9 @@ band:
 # band to mean luma 0.15-0.32 before any glow. Applied to the footage only,
 # before the captions are composited.
 grade:
+  enable: true                      # per-clip override: `fx: {grade: false}`
+                                    # NOTE this also feeds the bar-colour
+                                    # derivation, so off moves the pill hue too
   # brightness carries the exposure the old a=PI/2.6 vignette used to steal:
   # with the vignette relaxed to default the band ran to mean luma 0.427, well
   # outside this step's own 0.15-0.32 target and 1.7x the refs (0.213 rose /
@@ -50,7 +53,8 @@ grade:
   # 13@720 in, 0.31-0.56 at the bottom, recovering by ~60@720) -- and nothing
   # on the right. That is not a radial shape, so it is drawn explicitly.
   scrim:
-    left_min: 0.20                # multiplier at x=0
+    enable: true                  # off drops the plate's ffmpeg input entirely
+    left_min: 0.20               # multiplier at x=0
     left_to_px: 180               # ...rising linearly to 1.0 here
     edge_min: 0.15                # multiplier at the band's top/bottom rows
     edge_to_px: 190               # ...rising linearly to 1.0 this far in
@@ -173,11 +177,24 @@ transitions:
 # the two caption bars). It is applied LAST, over the composited band, so the
 # footage, the pills and the glyphs all shimmer together.
 fx:
+  # THE BAND CHAIN, in the order it runs. This list -- not the order of
+  # statements in build_bars.py -- is what drives the chain; every band effect
+  # must appear exactly once, even when disabled. Each entry below carries its
+  # own `enable`, overridable per clip with e.g. `fx: {scan: false}` in
+  # clip.yaml. An unknown name here (or there) is a hard error.
+  order:
+    - glow
+    - barglow
+    - textglow
+    - scan
+    - snow
+    - heat
   # Bar glow: the WIDE pass. Measured excess outside the pill must reach
   # ~51/36/25/13/8/5 DN at d=5/10/20/40/60/80 px@720-equivalent, decaying as
   # exp(-d/28px@720). The old 0.20/0.40 key + 0.35 gain delivered ~9 DN at
   # d=5 with tau 10-12 -- 5.7x too weak and far too tight.
   glow:
+    enable: true
     # Back at the original key. Measured: with lo/hi at 0.10/0.30 this pass
     # keys the pill AND the glyphs at full scale and, blurred at sigma 43, was
     # supplying ~48 of the 59 DN measured beside the text -- it swamped both
@@ -199,6 +216,7 @@ fx:
   # (exp(-d/28px@720)), which one gaussian cannot do: the near pass sets the
   # amplitude, the far pass carries the tail out to d=80@720.
   barglow:
+    enable: true
     sigma_near_px: 21             # 14@720 x1.5
     weight_near: 0.22
     sigma_far_px: 90              # 60@720 x1.5
@@ -209,10 +227,12 @@ fx:
   # retains ~5% of its amplitude. Target ~30/20/15/10 DN at d=3/5/8/12
   # px@720-equivalent (refs: gaussian sigma 6-8px@720, ~40 DN at the edge).
   textglow:
+    enable: true
     sigma_px: 14                  # absolute px on THIS canvas (6-8@720 x1.5)
     gain: 0.45
     tint: "#FFF4E0"               # warm near-white -- NOT the bar tint
   scan:
+    enable: true
     threshold: 0.90
     scatter: 4.0                  # -> sigma = scatter*1.2*radius*2*band_h/405
     radius: 0.70
@@ -224,6 +244,7 @@ fx:
   # NOT x1.5-scaled (the shader is resolution independent, `size` magnifies the
   # noise in uv space). The rest are our screen-composite calibration.
   snow:
+    enable: true
     amount: 0.70                  # Node Amount  -> pow exponent 50 - 49*amount
     size: 0.10                    # Node Size    -> texel_px = size*texel_scale
     speed: -1.0                   # Node Speed   -> negative = the field RISES
@@ -251,7 +272,7 @@ fx:
   # export, so the displacement inherently hits the text too).
   # See FX_RECIPE.md "Heat Wave - motion re-test" for the measurements.
   heat:
-    enable: 1                     # 1 = on, 0 = off
+    enable: true
     # Amplitude as an RMS displacement / frame width, so it scales with canvas.
     # 0.00133 -> 0.96 px @720 (the measured reference value) -> 1.44 px @1080.
     # Window: ~0.0010 is the perceptual floor; 0.0013-0.0021 is the usable

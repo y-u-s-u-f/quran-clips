@@ -42,6 +42,7 @@ from render_text import ROOT, load_yaml, hexrgb  # noqa: E402
 
 sys.path.insert(0, ROOT)
 # importing qc.fonts is what enforces RAQM (it exits if Pillow lacks it)
+import qc.fx                                   # noqa: E402
 from qc.arabic import norm_ar, strip_tashkeel  # noqa: E402
 from qc.fonts import fit_pt, truetype  # noqa: E402
 from qc.proc import FFMPEG  # noqa: E402
@@ -70,7 +71,11 @@ def grade_chain(style):
 
 
 def band_source_chain(clip, style):
-    """[0:v] -> the graded 1080x608 footage band (no pad, no captions)."""
+    """[0:v] -> the graded 1080x608 footage band (no pad, no captions).
+
+    The grade is switchable like any other effect (`fx: {grade: false}` in
+    clip.yaml). Note that this chain also feeds derive_bar_color below, so
+    turning the grade off moves the pill hue as well as the picture."""
     band = style["band"]
     vb = clip.get("video_bg") or {}
     vc = vb.get("crop") or {}
@@ -81,6 +86,8 @@ def band_source_chain(clip, style):
         pre = (f"scale={band['width']}:{band['height']}:flags=lanczos:"
                "force_original_aspect_ratio=increase,"
                f"crop={band['width']}:{band['height']}")
+    if not qc.fx.enabled(style, clip, "grade"):
+        return pre
     return pre + "," + grade_chain(style)
 
 

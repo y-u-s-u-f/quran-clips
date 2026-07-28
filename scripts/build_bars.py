@@ -25,13 +25,19 @@ Assembles and RUNS into <clip>/output/final.mp4:
                     window, `all` sweeps both.
       - crossfade : uniform alpha dissolve (the pipeline's 0.45 s feel)
   * FX confined STRICTLY to the footage band (any spill into the letterbox
-    instantly reads as wrong): Glow -> Glow Scan -> Snow -> Heat Wave, per
-    FX_RECIPE.md. Heat Wave is ON (templates/bars.yaml `fx.heat.enable: 1`) and
-    runs LAST, over the composited band, so the footage, the pills and the
-    glyphs are displaced by one shared perlin field -- 1.44 px RMS at this
-    canvas, per the reference measurement. It is the most expensive stage in
-    the graph (~49% of render time: two supersampled perlin maps plus a 3x
-    up/down scale around `displace`); set `enable: 0` for a fast preview.
+    instantly reads as wrong), per FX_RECIPE.md. WHICH effects run, and in what
+    order, is data: templates/bars.yaml `fx.order` lists the band chain and
+    every effect carries its own `enable`, overridable per clip with
+    `fx: {scan: false}` in clip.yaml. The effects themselves live in qc/fx/ --
+    each owns its filter strings, its derived scalars and all of its hooks, so
+    switching one off removes its accumulator plate and its per-phrase
+    branches too and ffgraph's tap() recomputes the band `split=N` by itself.
+    The `grade` and `scrim` stages are switchable the same way but are wired
+    ahead of the composite, at their own sites.
+    Heat Wave is ON and runs LAST, over the composited band, so the footage,
+    the pills and the glyphs are displaced by one shared perlin field. It is
+    the most expensive stage in the graph (~49% of render time); set
+    `fx: {heat: false}` for a fast preview.
   * audio: the same two-pass loudnorm + fades as build_render.py
   * encode: libx264 yuv420p 30fps, aac, +faststart
 
@@ -50,6 +56,7 @@ import build_render         # noqa: E402
 sys.path.insert(0, ROOT)
 import qc.audio             # noqa: E402
 import qc.ffgraph           # noqa: E402
+import qc.fx                # noqa: E402
 import qc.timeline          # noqa: E402
 
 FFMPEG = build_render.FFMPEG
@@ -109,38 +116,16 @@ def build(clip_dir, dry_run=False, ctx=None):
     afi, afo = float(aud["fade_in_s"]), float(aud["fade_out_s"])
     afade = qc.audio.afade_filter(dur, afi, afo)
 
-    # ---- FX constants (FX_RECIPE parameter mapping, scaled to this band) -----
-    g, sc, sn = style["fx"]["glow"], style["fx"]["scan"], style["fx"]["snow"]
-    sig = round(float(g["scatter"]) * 2.86 * BH / 405.0, 2)
-    ssig = round(float(sc["scatter"]) * 1.20 * float(sc["radius"]) * 2 * BH / 405.0, 2)
-    lo, hi = round(float(g["lo"]) * 255), round(float(g["hi"]) * 255)
-    knee = round(255.0 / (hi - lo), 6)
-    sth = round(float(sc["threshold"]) * 255)
-    sknee = round(255.0 / (255 - sth), 6)
+    # ---- the effect chain ----------------------------------------------------
+    # `fx.order` in the template is the chain order; every effect resolves its
+    # own enable flag, which a clip overrides with `fx: {name: false}`. An
+    # unknown name in either place raises here rather than silently doing
+    # nothing. Everything about an effect -- its filter strings, its derived
+    # scalars, its plate and its per-phrase branch -- lives in qc/fx/.
+    fx_chain = qc.fx.fx_chain(style, clip)
+    fx_layer = qc.fx.by_layer(fx_chain)
+    scrim_on = qc.fx.enabled(style, clip, "scrim")
     tint = [c / 255.0 for c in render_text.hexrgb(rep["bar_hex"], (201, 162, 39))]
-    gr, gg, gb = [round(c * float(g["gain"]), 4) for c in tint]
-    sr, sg, sb = [round(c * float(sc["gain"]), 4) for c in tint]
-    # The pill's own glow rides the BAR layer alone: keyed off the composite it
-    # is at the mercy of scene brightness (measured: 3.4x the gain moved the
-    # excess at d=5 by 1 DN). Two gaussians, near + far, because the refs' tail
-    # is exponential rather than gaussian (STYLE2_SPEC B.6).
-    bg_ = style["fx"]["barglow"]
-    bgsn = round(float(bg_["sigma_near_px"]), 2)
-    bgsf = round(float(bg_["sigma_far_px"]), 2)
-    bgn = [round(c * float(bg_["gain"]) * float(bg_["weight_near"]), 4) for c in tint]
-    bgf = [round(c * float(bg_["gain"]) * float(bg_["weight_far"]), 4) for c in tint]
-    # the tight halo rides the TEXT layer alone and carries its own near-white
-    # tint -- the refs' halo is warm neutral, notably NOT the bar hue.
-    tg = style["fx"]["textglow"]
-    tgsig = round(float(tg["sigma_px"]), 2)
-    tgr, tgg, tgb = [round(c / 255.0 * float(tg["gain"]), 4)
-                     for c in render_text.hexrgb(tg["tint"], (255, 244, 224))]
-    LUMA = ("colorchannelmixer=rr=0.299:rg=0.587:rb=0.114:"
-            "gr=0.299:gg=0.587:gb=0.114:br=0.299:bg=0.587:bb=0.114")
-    KNEE = (f"lutrgb=r='clip((val-{lo})*{knee},0,255)':"
-            f"g='clip((val-{lo})*{knee},0,255)':b='clip((val-{lo})*{knee},0,255)'")
-    SKNEE = (f"lutrgb=r='clip((val-{sth})*{sknee},0,255)':"
-             f"g='clip((val-{sth})*{sknee},0,255)':b='clip((val-{sth})*{sknee},0,255)'")
 
     # ---- filtergraph ---------------------------------------------------------
     # inputs: [0]=source  [1..2n]=bar,text per phrase  [2n+1]=snow  [2n+2]=scrim
@@ -149,22 +134,31 @@ def build(clip_dir, dry_run=False, ctx=None):
     vin = g_.input(src, ss=f"{ss:.3f}", t=f"{dur:.3f}")
     ph_in = [g_.input(png, framerate=fps, loop=1) for png in phrase_pngs]
     snow_in = g_.input(snow, stream_loop=-1)
-    scrim_in = g_.input(rep["scrim"], framerate=fps, loop=1)
+    # the scrim is the LAST input, so dropping it cannot shift any other index
+    scrim_in = g_.input(rep["scrim"], framerate=fps, loop=1) if scrim_on else None
+
+    # what the effects need to know about this canvas, this band and this clip
+    fxctx = qc.fx.Ctx(W=W, H=H, BW=BW, BH=BH, BY=BY, fps=fps, dur=dur,
+                      tint=tint, nphrases=len(phrases), band_src="band",
+                      snow_in=snow_in, hexrgb=render_text.hexrgb)
 
     wtgt = str(tr["wipe_target"]).lower()
     g_.chain(vin, [render_bars.band_source_chain(clip, style), "setsar=1",
                    f"fps={fps}", "format=gbrp"], "bnd")
-    g_.chain(scrim_in, "format=gbrp", "scr")
-    g_.chain(["bnd", "scr"],
-             ["blend=all_mode=multiply:shortest=1", "format=rgba",
-              f"pad={W}:{H}:0:{BY}:color=black"], "bg")
-    # the text layers are accumulated a second time onto a black plate to key
-    # the tight halo off; `d=` keeps this branch finite (every other input on
-    # it is an infinite still).
-    g_.chain(None, f"color=c=black:s={W}x{H}:r={fps}:d={dur:.3f}", "tg0")
-    # ...and the bar layers likewise, as a WHITE silhouette so the glow's
-    # amplitude does not follow the (clip-derived) pill colour.
-    g_.chain(None, f"color=c=black:s={W}x{H}:r={fps}:d={dur:.3f}", "bq0")
+    if scrim_on:
+        g_.chain(scrim_in, "format=gbrp", "scr")
+        g_.chain(["bnd", "scr"],
+                 ["blend=all_mode=multiply:shortest=1", "format=rgba",
+                  f"pad={W}:{H}:0:{BY}:color=black"], "bg")
+    else:
+        g_.chain("bnd", ["format=rgba", f"pad={W}:{H}:0:{BY}:color=black"],
+                 "bg")
+    # The caption layers are accumulated a second time onto black plates, to key
+    # the barglow / textglow passes off; `d=` keeps those branches finite (every
+    # other input on them is an infinite still). Each plate belongs to its
+    # effect and disappears with it.
+    for eff in qc.fx.plates(fx_chain):
+        eff.plate(g_, fxctx)
     base = "bg"
     for i, (kind, t_in, d_in, t_out, d_out) in enumerate(sched):
         masks = {}                                # layer name -> mask label
@@ -216,96 +210,29 @@ def build(clip_dir, dry_run=False, ctx=None):
                           f"fade=t=in:st={t_in:.3f}:d={d_in:.3f}:alpha=1",
                           f"fade=t=out:st={t_out:.3f}:d={d_out:.3f}:alpha=1"],
                          f"x{lbl}")
-            if name == "bar":
-                g_.chain(f"x{lbl}", "split=2", [f"x{lbl}c", f"x{lbl}g"])
-                g_.chain(f"x{lbl}g", "alphaextract", f"q{i + 1}")
-                g_.chain(None, f"color=c=white:s={W}x{H}:r={fps}:d={dur:.3f}",
-                         f"qw{i + 1}")
-                g_.chain([f"qw{i + 1}", f"q{i + 1}"], "alphamerge",
-                         f"qm{i + 1}")
-                g_.chain([f"bq{i}", f"qm{i + 1}"],
-                         "overlay=0:0:format=auto:shortest=1", f"bq{i + 1}")
-                lbl = f"{lbl}c"
-            if name == "text":
-                g_.chain(f"x{lbl}", "split=2", [f"x{lbl}c", f"x{lbl}g"])
-                g_.chain([f"tg{i}", f"x{lbl}g"],
-                         "overlay=0:0:format=auto:shortest=1", f"tg{i + 1}")
-                lbl = f"{lbl}c"
+            # the layer's glow effect, if enabled, takes its own branch off
+            # this layer here and hands back the label to composite instead
+            eff = fx_layer.get(name)
+            if eff is not None:
+                lbl = eff.per_phrase(g_, fxctx, i, lbl)
             nxt = f"c{i + 1}{name[0]}"
             g_.chain([base, f"x{lbl}"], "overlay=0:0:format=auto:shortest=1",
                      nxt)
             base = nxt
 
-    # ---- HEAT WAVE (4th Node effect; LAST, over the composited band) ---------
-    # Applied after glow/scan/snow so the footage, the pills and the glyphs are
-    # displaced by one shared field -- Node runs over a flattened export, so the
-    # warp inherently hits the text. Measured in both refs at 0.96 px RMS @720
-    # against a 0.10 px noise floor. See FX_RECIPE.md "Heat Wave - motion re-test".
-    ht = style["fx"].get("heat", {})
-    if int(ht.get("enable", 0)):
-        S = int(ht.get("supersample", 3))
-        rms = float(ht["rms_frac_w"]) * W            # RMS displacement in px
-        ctr = float(ht.get("perlin_centre", 130.26))
-        sdp = float(ht.get("perlin_sd", 18.4))
-        k = round(rms * S / sdp, 5)                  # px -> 8-bit map slope
-        SW, SH = BW * S, BH * S
-        psrc = (f"perlin=size={BW}x{BH}:rate={fps}:octaves={int(ht.get('octaves', 6))}"
-                f":persistence={ht.get('persistence', 0.6)}"
-                f":xscale={ht['xscale']}:yscale={ht['xscale']}"
-                f":tscale={ht['tscale']}:random_mode=seed")
-        pmap = (f"scroll=vertical={ht['scroll_v']},"
-                f"scale={SW}:{SH}:flags=bicubic,format=gbrp,"
-                f"lutrgb=r='128+(val-{ctr})*{k}':g='128+(val-{ctr})*{k}':"
-                f"b='128+(val-{ctr})*{k}'")
-        # neighbour up / area down: the upscale must not soften, the downscale
-        # must average -- that is what turns integer `displace` into 1/S px.
-        heat_in = "bandfx0"
-    else:
-        heat_in = "bandfx"
-
-    # FX, applied to the captioned flat but cropped to the band and pasted back
-    # so nothing can bleed into the letterbox.
+    # ---- FX ------------------------------------------------------------------
+    # Applied to the captioned flat but cropped to the band and pasted back, so
+    # nothing can bleed into the letterbox. WHICH effects run and in what order
+    # is `fx.order` (see qc/fx/); this loop just threads the band label through
+    # them. Every branch off the band is a tap, so the split's degree is
+    # whatever the enabled consumers add up to: disabling `scan` takes it from
+    # 3 to 2 with no edit here at all.
     full, pre = g_.chain(base, "split=2", ["full", "pre"])
     g_.chain(pre, ["format=gbrp", f"crop={BW}:{BH}:0:{BY}"], "band")
-    # every branch off the band is a tap: the split's degree is whatever the
-    # consumers below add up to, so dropping one is a one-line edit.
-    fxbase = g_.tap("band", "fxbase")
-    g1 = g_.tap("band", "g1")
-    sc0 = g_.tap("band", "sc0")
-    g_.chain(g1, [LUMA, KNEE, f"gblur=sigma={sig}:steps=3",
-                  f"colorchannelmixer=rr={gr}:gg={gg}:bb={gb}"], "glow")
-    g_.chain([fxbase, "glow"], "blend=all_mode=screen:shortest=1", "s1")
-    g_.chain(f"bq{len(phrases)}", ["format=gbrp", "split=2"], ["bqn", "bqf"])
-    g_.chain("bqn", [f"gblur=sigma={bgsn}:steps=3",
-                     f"colorchannelmixer=rr={bgn[0]}:gg={bgn[1]}:bb={bgn[2]}"],
-             "bgn")
-    g_.chain("bqf", [f"gblur=sigma={bgsf}:steps=3",
-                     f"colorchannelmixer=rr={bgf[0]}:gg={bgf[1]}:bb={bgf[2]}"],
-             "bgf")
-    g_.chain(["bgn", "bgf"], ["blend=all_mode=addition:shortest=1",
-                              f"crop={BW}:{BH}:0:{BY}"], "barglow")
-    g_.chain(["s1", "barglow"], "blend=all_mode=screen:shortest=1", "s1a")
-    g_.chain(f"tg{len(phrases)}",
-             ["format=gbrp", f"crop={BW}:{BH}:0:{BY}", LUMA,
-              f"gblur=sigma={tgsig}:steps=3",
-              f"colorchannelmixer=rr={tgr}:gg={tgg}:bb={tgb}"], "tglow")
-    g_.chain(["s1a", "tglow"], "blend=all_mode=screen:shortest=1", "s1b")
-    g_.chain(sc0, [LUMA, SKNEE, f"gblur=sigma={ssig}:steps=3",
-                   "lutrgb=r='clip(val*3,0,255)':g='clip(val*3,0,255)':"
-                   "b='clip(val*3,0,255)'",
-                   f"colorchannelmixer=rr={sr}:gg={sg}:bb={sb}"], "scan")
-    g_.chain(["s1b", "scan"], "blend=all_mode=screen:shortest=1", "s2")
-    g_.chain(snow_in, ["format=gbrp", f"scale={BW}:{BH}:flags=neighbor",
-                       "setsar=1"], "pt")
-    g_.chain(["s2", "pt"], "blend=all_mode=screen:shortest=1", heat_in)
-    if heat_in == "bandfx0":
-        g_.chain(None, [f"{psrc}:seed={int(ht.get('seed_x', 11))}", pmap], "xm")
-        g_.chain(None, [f"{psrc}:seed={int(ht.get('seed_y', 77))}", pmap], "ym")
-        g_.chain("bandfx0", f"scale={SW}:{SH}:flags=neighbor", "bigb")
-        g_.chain(["bigb", "xm", "ym"], ["displace=edge=smear",
-                                        f"scale={BW}:{BH}:flags=area"],
-                 "bandfx")
-    g_.chain([full, "bandfx"],
+    band_lbl = g_.tap("band", "fxbase")
+    for eff in fx_chain:
+        band_lbl = eff.apply(g_, band_lbl, fxctx)
+    g_.chain([full, band_lbl],
              [f"overlay=0:{BY}:shortest=1",
               f"fade=t=in:st=0:d={mot['video_fade_in_s']}",
               f"fade=t=out:st={dur - float(mot['video_fade_out_s']):.3f}:"
@@ -336,6 +263,9 @@ def build(clip_dir, dry_run=False, ctx=None):
     print("\nRENDER OK ->", out_path)
     print(f"  trim {ss:.3f}s +{dur:.3f}s | {W}x{H} band {BW}x{BH}@y{BY} | "
           f"bar {rep['bar_hex']}")
+    sw = qc.fx.switches(style, clip)
+    print("  fx: " + " ".join(("+" if sw[n] else "-") + n
+                              for n in ("grade", "scrim") + qc.fx.BAND_FX))
     print(f"  wipe_target={wtgt} (text always cross-fades unless 'all')"
           + (f" | sequential, min fade {minf}s" if seq else " | OVERLAPPING"))
     if cuts:
