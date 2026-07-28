@@ -27,6 +27,7 @@ import os
 from .. import quran as Q
 from . import align as A
 from . import energy as E
+from . import linebreak as LB
 
 # Card splitting. A true waqf is always a caption swap. Beyond that, a card is
 # split only because it is too long to read or too wide to set: the bars
@@ -351,8 +352,15 @@ def clip_yaml(p, meta=None, style="bars"):
         L.append("  - t0: %.2f" % (c["t0"] - p["seg_start"]))
         L.append("    t1: %.2f" % (c["t1"] - p["seg_start"]))
         L.append("    ayah: %d" % c["ayah"])
-        lines = split_lines(c["words"]) if style == "bars" else \
-            [" ".join(c["words"])]
+        if style == "bars":
+            # WHERE the break falls is a judgement call, so it is made by a
+            # model that only ever returns an INDEX -- see qc/author/linebreak.
+            lines, why = LB.split(c["words"], split_lines, MAX_LINE_WORDS,
+                                  use_llm=meta.get("llm_linebreak", True))
+            if why:
+                L.append("    # line break: %s" % why)
+        else:
+            lines, why = [" ".join(c["words"])], None
         if len(lines) == 1:
             L.append('    ar: "%s"' % Q.nfc(lines[0]))
         else:
