@@ -27,7 +27,7 @@ Also derives the bar colour from the clip's own GRADED footage
 style/refs2/STYLE2_SPEC.md C2 and derive_bar_color below. Overridable per-clip
 with `bar_color: "#RRGGBB"` in clip.yaml.
 
-Run with /opt/homebrew/bin/python3 (its Pillow has RAQM).
+Run with tools/render-venv/bin/python (its Pillow has RAQM, plus PyYAML).
 """
 import colorsys
 import math
@@ -42,7 +42,7 @@ from render_text import ROOT, load_yaml, hexrgb, truetype  # noqa: E402
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow RAQM (HarfBuzz+FriBiDi) not available. "
-             "Use /opt/homebrew/bin/python3.")
+             "Use tools/render-venv/bin/python.")
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 

@@ -103,8 +103,8 @@ shadow:                           # applies to arabic + english
   blur_px: 5
   color: "#000000"
   opacity: 0.60
-  outline: none
-  box: none
+  outline: null
+  box: null
 
 motion:
   text_transition: crossfade      # dissolve; fixed position, no slide/scale
@@ -119,18 +119,18 @@ audio:
   true_peak_dbtp: -1.0            # ceiling
   fade_in_s: 0.3
   fade_out_s: 0.5
-  reverb: off                     # natural acoustics only, none added
-  echo: off
+  reverb: "off"                     # natural acoustics only, none added
+  echo: "off"
   eq: natural                     # full-range, no lo-fi filtering
 
 overlays:
-  reciter_photo: none
-  reciter_name_caption: none
-  surah_ayah_caption: none        # only native mushaf medallion
-  watermark_handle: none
-  progress_bar: none
-  emoji: none
-  border: none
+  reciter_photo: null
+  reciter_name_caption: null
+  surah_ayah_caption: null        # only native mushaf medallion
+  watermark_handle: null
+  progress_bar: null
+  emoji: null
+  border: null
 
 fixed_vs_variable:
   fixed:

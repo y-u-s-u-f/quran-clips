@@ -30,7 +30,7 @@ Assembles and RUNS into <clip>/output/final.mp4:
   * audio: the same two-pass loudnorm + fades as build_render.py
   * encode: libx264 yuv420p 30fps, aac, +faststart
 
-Run with /opt/homebrew/bin/python3.
+Run with tools/render-venv/bin/python.
 """
 import os
 import sys

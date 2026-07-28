@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export a finished clip to the permanent reels/ library.
 
-Run:  /opt/homebrew/bin/python3 scripts/export_reel.py <clip-name> [...] | all
+Run:  tools/render-venv/bin/python scripts/export_reel.py <clip-name> [...] | all
 
 Per clip:
   - stream-copy remux clips/<name>/output/final.mp4 -> reels/RECITER-SURAH-a0-a1.mp4

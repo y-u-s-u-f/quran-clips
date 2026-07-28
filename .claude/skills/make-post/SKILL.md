@@ -73,6 +73,13 @@ Produce `clips/<name>/clip.yaml` and `clips/<name>/work/source.mp4`.
   restore note below). If the venv is missing, recreate it:
   `/opt/homebrew/bin/python3 -m venv tools/asr-venv &&
   tools/asr-venv/bin/pip install mlx-whisper`.
+- **RENDER VENV**: every pipeline script runs under `tools/render-venv/bin/python`
+  (it needs PyYAML). `tools/` is gitignored, so on a fresh clone recreate it —
+  note `--system-site-packages`, which is what keeps the RAQM Pillow:
+  `/opt/homebrew/bin/python3 -m venv --system-site-packages tools/render-venv &&
+  tools/render-venv/bin/pip install -r requirements/render.txt`, then verify
+  `tools/render-venv/bin/python -c "from PIL import features;
+  print(features.check('raqm'))"` prints True.
 - Download source ≤1080p into `sources/<youtube-video-id>.mp4` (flat; subs
   alongside as `sources/<id>.ar-orig.vtt`). If the default clients 403 or return
   DRM-only formats (learned al-infitar-6-9), add
@@ -208,7 +215,7 @@ whole-ayah-repeat rule, alquran.cloud fetch and IG-hook head-tighten. What chang
    0.503 W ceiling. Run this against the draft clip.yaml (heredoc, from repo
    root; it is the same measurement the renderer does):
    ```
-   /opt/homebrew/bin/python3 - clips/<name> <<'EOF'
+   tools/render-venv/bin/python - clips/<name> <<'EOF'
    import sys, os
    sys.path.insert(0, "scripts"); import render_bars as rb
    from render_text import load_yaml, truetype, ROOT
@@ -277,8 +284,8 @@ whole-ayah-repeat rule, alquran.cloud fetch and IG-hook head-tighten. What chang
   tighten `segment.start`/`end` instead.
 
 ### Stage 2 — Render agent (Opus)
-- Run the EXISTING scripts with Homebrew python:
-  `/opt/homebrew/bin/python3 scripts/build_render.py clips/<name>`
+- Run the EXISTING scripts with the render venv:
+  `tools/render-venv/bin/python scripts/build_render.py clips/<name>`
   (it calls `render_text.py` internally). Output: `clips/<name>/output/final.mp4`.
   **This entrypoint is the same for BOTH styles** — `build_render.build()` reads
   `style:` from clip.yaml and delegates to `build_bars.build()` (which calls
@@ -377,7 +384,7 @@ Run these checks and report each PASS/FAIL with the number you measured:
   or non-waqf boundary you inherited from stage 1 so the user can judge it.
 
 ### Stage 5 — Export (after user approval only)
-- Run `/opt/homebrew/bin/python3 scripts/export_reel.py <name>`. It:
+- Run `tools/render-venv/bin/python scripts/export_reel.py <name>`. It:
   - stream-copy remuxes `output/final.mp4` → `reels/RECITER-SURAH-a0-a1.mp4`
     (e.g. `BADR-AL-TURKI-AHZAB-70-71.mp4`; reciter part from tags.yaml
     `reciter_short` if set, else `reciter`; surah name article-stripped,
@@ -404,9 +411,12 @@ Run these checks and report each PASS/FAIL with the number you measured:
   transparent PNGs from Pillow, composited with
   `overlay enable='between(t,a,b)'` + `fade ...:alpha=1`. The scripts already do
   this; don't reach for drawtext.
-- **Text rendering MUST use `/opt/homebrew/bin/python3`** — its Pillow needs
-  RAQM (HarfBuzz+FriBiDi) for Arabic shaping. `render_text.py` hard-fails without
-  raqm. NEVER pip-install Pillow into a venv for this.
+- **Text rendering MUST use `tools/render-venv/bin/python`** — a
+  `--system-site-packages` venv over `/opt/homebrew/bin/python3`, so it INHERITS
+  that interpreter's RAQM (HarfBuzz+FriBiDi) Pillow for Arabic shaping and adds
+  only PyYAML (`requirements/render.txt`). `render_text.py` hard-fails without
+  raqm. NEVER pip-install Pillow into the venv — that would shadow the working
+  Homebrew build with a stock wheel that has no raqm.
   - **If raqm breaks** (`features.check('raqm')` is False, or PIL imports as an
     empty namespace / `cannot import name 'Image'`): a stock PyPI Pillow wheel
     for this Python (currently cp314) does NOT bundle raqm, and pip churn from a
@@ -554,7 +564,7 @@ Run these checks and report each PASS/FAIL with the number you measured:
   keywords), and `posted: false` / `posted_at: ""`. While the clip folder
   exists this is the source of truth for tags + post status; after export +
   deletion the reel's own Finder marker takes over (see Stage 5). Then run
-  `/opt/homebrew/bin/python3 scripts/status.py sync` to mirror the tags + a
+  `tools/render-venv/bin/python scripts/status.py sync` to mirror the tags + a
   green "Posted" / red "Not Posted" marker onto the clip folder AND its
   exported reel. Mark posted with `scripts/status.py post <clip-or-reel-name>`
   (unpost/list/sync also). tags.yaml is read via render_text.load_yaml; Finder

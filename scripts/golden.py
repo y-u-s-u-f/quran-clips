@@ -9,18 +9,18 @@ that the current code produces, plus the md5 of every generated intermediate
 final encode. Any refactor that is meant to be behaviour-preserving must leave
 all of these byte-identical.
 
-  python3 scripts/golden.py check <clip>           tier 1: env + argv + graph
-  python3 scripts/golden.py check --layers <clip>  tier 2: + regenerate layers
-  python3 scripts/golden.py check --full <clip>    tier 3: + full render md5
-  python3 scripts/golden.py check --all            tier 1 over every golden clip
-  python3 scripts/golden.py bless <clip>           re-record after an INTENDED
+  render-venv/bin/python scripts/golden.py check <clip>           tier 1: env + argv + graph
+  render-venv/bin/python scripts/golden.py check --layers <clip>  tier 2: + regenerate layers
+  render-venv/bin/python scripts/golden.py check --full <clip>    tier 3: + full render md5
+  render-venv/bin/python scripts/golden.py check --all            tier 1 over every golden clip
+  render-venv/bin/python scripts/golden.py bless <clip>           re-record after an INTENDED
                                                    change (add --full to also
                                                    re-record output.md5)
 
 Tiers 2 and 3 NEVER write into a clip's output/ directory -- the encode is
 redirected to a scratch path.
 
-Run with /opt/homebrew/bin/python3.
+Run with tools/render-venv/bin/python.
 """
 import os
 import sys
@@ -34,7 +34,7 @@ import subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 GOLD = os.path.join(ROOT, "tests", "golden")
-PYTHON = "/opt/homebrew/bin/python3"
+PYTHON = os.path.join(ROOT, "tools", "render-venv", "bin", "python")
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 
 ARGV_MARK = "=== DRY RUN ARGV ==="

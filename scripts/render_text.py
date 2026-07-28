@@ -18,127 +18,51 @@ composites over the trimmed footage:
 Native-landscape 1920x1080 output, per STYLE_SPEC.md authoritative
 fractions_of_frame.  Requires Pillow with RAQM (HarfBuzz+FriBiDi).
 
-Run with /opt/homebrew/bin/python3 (its Pillow has RAQM).
+Run with tools/render-venv/bin/python (a --system-site-packages venv over
+/opt/homebrew/bin/python3, so its Pillow still has RAQM, plus PyYAML).
 """
 import os, sys, math, re, itertools
 
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, features
+
+try:
+    import yaml
+except ImportError:                                       # pragma: no cover
+    sys.exit("FATAL: PyYAML not available. Use tools/render-venv/bin/python "
+             "(create it with: /opt/homebrew/bin/python3 -m venv "
+             "--system-site-packages tools/render-venv && "
+             "tools/render-venv/bin/pip install -r requirements/render.txt). "
+             "Do NOT pip-install into /opt/homebrew/bin/python3.")
 
 # ----------------------------------------------------------------------------
 # hard requirements
 # ----------------------------------------------------------------------------
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow RAQM (HarfBuzz+FriBiDi) not available. "
-             "Use /opt/homebrew/bin/python3.")
+             "Use tools/render-venv/bin/python.")
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # ----------------------------------------------------------------------------
-# tiny YAML reader (sufficient for clip.yaml + style.yaml in this repo)
+# YAML
 # ----------------------------------------------------------------------------
-def _coerce(v):
-    v = v.strip()
-    if v == "" or v is None:
-        return v
-    if len(v) >= 2 and v[0] == '"' and v[-1] == '"':
-        return v[1:-1]
-    if v.startswith("[") and v.endswith("]"):
-        inner = v[1:-1].strip()
-        if not inner:
-            return []
-        return [_coerce(x) for x in inner.split(",")]
-    low = v.lower()
-    if low in ("true", "false"):
-        return low == "true"
-    if low in ("none", "null"):
-        return None
-    try:
-        return int(v)
-    except ValueError:
-        pass
-    try:
-        return float(v)
-    except ValueError:
-        pass
-    return v
-
+# Every config in this repo (clips/*/clip.yaml, clips/*/tags.yaml,
+# templates/*.yaml) is read through here. This used to be a ~75-line
+# indentation-based hand parser that failed silently on tabs, single quotes,
+# block scalars and duplicate keys; it is now a thin yaml.safe_load wrapper.
+#
+# PyYAML uses YAML 1.1 resolution, which differs from the old parser in two
+# ways that mattered to this repo's data (both fixed in the data, not here):
+#   * bare off/on/yes/no resolve to booleans -- quote them to keep a string;
+#   * bare `none` is NOT a null (only null/~/Null/NULL are), so any key that
+#     wants None must be spelled `null`.
+# Bare sexagesimals (12:30) also resolve to integers, so every time-like
+# value (segment.start / segment.end) must stay quoted.
 def load_yaml(path):
-    """Indentation-based parser: nested maps + block lists of maps/scalars.
-    Strips '# ' comments outside quotes. Good enough for this repo's files."""
-    lines = []
-    for raw in open(path, encoding="utf-8").read().splitlines():
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
-        # strip trailing comment (only when not inside quotes)
-        out, inq = [], False
-        i = 0
-        while i < len(raw):
-            c = raw[i]
-            if c == '"':
-                inq = not inq
-            if c == "#" and not inq and (i == 0 or raw[i-1] == " "):
-                break
-            out.append(c)
-            i += 1
-        line = "".join(out).rstrip()
-        if line.strip():
-            lines.append(line)
-
-    pos = [0]
-    def indent(s): return len(s) - len(s.lstrip(" "))
-
-    def parse_block(min_indent):
-        node = None
-        while pos[0] < len(lines):
-            line = lines[pos[0]]
-            ind = indent(line)
-            if ind < min_indent:
-                break
-            body = line.strip()
-            if body.startswith("- "):
-                if node is None:
-                    node = []
-                pos[0] += 1
-                item = body[2:].strip()
-                if ":" in item and not (item[0] == '"'):
-                    # inline "key: val" starting a list-item map
-                    k, _, v = item.partition(":")
-                    d = {}
-                    v = v.strip()
-                    if v == "":
-                        d[k.strip()] = parse_block(ind + 1)
-                    else:
-                        d[k.strip()] = _coerce(v)
-                    # continuation keys of this list-item map (indented deeper)
-                    child_min = indent(lines[pos[0]]) if pos[0] < len(lines) else 0
-                    while pos[0] < len(lines) and indent(lines[pos[0]]) >= child_min \
-                            and not lines[pos[0]].strip().startswith("- ") \
-                            and indent(lines[pos[0]]) > ind:
-                        l2 = lines[pos[0]].strip()
-                        k2, _, v2 = l2.partition(":")
-                        pos[0] += 1
-                        v2 = v2.strip()
-                        if v2 == "":
-                            d[k2.strip()] = parse_block(indent(lines[pos[0]]) if pos[0] < len(lines) else ind+1)
-                        else:
-                            d[k2.strip()] = _coerce(v2)
-                    node.append(d)
-                else:
-                    node.append(_coerce(item))
-            else:
-                if node is None:
-                    node = {}
-                k, _, v = body.partition(":")
-                pos[0] += 1
-                v = v.strip()
-                if v == "":
-                    child = parse_block(ind + 1)
-                    node[k.strip()] = child
-                else:
-                    node[k.strip()] = _coerce(v)
-        return node
-
-    return parse_block(0)
+    """Parse a YAML file into plain Python data. Returns None for an empty
+    file, matching the previous parser."""
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
 # ----------------------------------------------------------------------------

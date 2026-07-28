@@ -15,10 +15,10 @@ Two kinds of artifacts:
                   truth. `sync` never touches markers on ownerless reels.
 
 Usage (run with Homebrew python so it matches the rest of the pipeline):
-    /opt/homebrew/bin/python3 scripts/status.py list
-    /opt/homebrew/bin/python3 scripts/status.py post   <clip-or-reel> [...]
-    /opt/homebrew/bin/python3 scripts/status.py unpost <clip-or-reel> [...]
-    /opt/homebrew/bin/python3 scripts/status.py sync            # re-apply Finder tags
+    tools/render-venv/bin/python scripts/status.py list
+    tools/render-venv/bin/python scripts/status.py post   <clip-or-reel> [...]
+    tools/render-venv/bin/python scripts/status.py unpost <clip-or-reel> [...]
+    tools/render-venv/bin/python scripts/status.py sync            # re-apply Finder tags
 
 `post`/`unpost` also accept `all` (all clips + any ownerless reels). Editing
 `posted:` in a tags.yaml by hand and then running `sync` (or `list`) achieves

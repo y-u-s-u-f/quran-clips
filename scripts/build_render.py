@@ -21,7 +21,7 @@ Native landscape 1920x1080 output (per STYLE_SPEC authoritative fractions).
 ffmpeg here is a SLIM build (no drawtext/subtitles/libass) -> all text is
 pre-rendered PNG + overlay, which this pipeline relies on.
 
-Run with /opt/homebrew/bin/python3.
+Run with tools/render-venv/bin/python.
 """
 import os, sys, json, subprocess, shlex
 
