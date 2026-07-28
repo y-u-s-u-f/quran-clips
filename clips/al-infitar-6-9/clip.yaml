@@ -1,0 +1,66 @@
+source_url: "https://www.youtube.com/watch?v=6DbWV72HnzQ"
+reciter:
+  name_en: "Abdullah bin Abdulrahman al-Buaijan"
+  name_ar: "عبدالله بن عبدالرحمن البعيجان"
+# Live-video background: trimmed source footage IS the video track (audio+video).
+# Fajr at the Prophet's Mosque, single STATIC camera (verified by a 2s frame
+# sweep across 303.9-331.0: no angle cuts, no congregation wides, reciter barely
+# moves). The sheikh FACES LEFT (head turned toward the mihrab, mics on his
+# image-left), so captions go LEFT per the facing rule.
+# Source has a burned-in bottom banner across the FULL width (green gradient +
+# PRAGOVSA/social icons bottom-left, www.prh.gov.sa centred, Presidency logo
+# bottom-right) starting at source y~860. Crop height is capped at 855 with y=0
+# so the banner is fully excluded -- no logos survive into the frame.
+# Reciter silhouette measured on a gridded render of this crop: output
+# x 0.648..0.930 (w_r=0.282). BALANCED layout: A=(0.49-0.282)/3=0.069 (right
+# margin measured 0.070), caption_center=(1-0.069-0.282)/2=0.324 -> left caption
+# edge 0.324-0.252=0.072 == A. 1520->1920 is only a 1.26x upscale.
+video_bg:
+  mode: live
+  crop:
+    x: 122
+    y: 0
+    w: 1520
+    h: 855
+text:
+  center_x_frac: 0.324  # captions LEFT, centred in the left-edge -> reciter gap
+  center_y_frac: 0.50
+segment:
+  # Ayah 6 is recited TWICE (repeat 1: 295.56-303.36, repeat 2: 303.97-312.13).
+  # The clip starts on the SECOND, complete recitation; onset abs 303.97 lands at
+  # rel 0.15s (IG hook). Ibtidaa check run on all four internal pauses with
+  # word-timestamp ASR: no restarts, no aborted starts -- plain ayah-boundary
+  # breaths. Ends inside the true silence 330.33-330.88 (ayah 10 resumes 330.88).
+  start: "00:05:03.820"   # absolute in source
+  end: "00:05:30.800"     # absolute in source; source duration 407.800s
+  # Trim ~0.4s off each of the two 1.0s inter-ayah breaths so all gaps match the
+  # natural 0.65s rhythm. CLIP-RELATIVE on the UNCUT timeline; both fall well
+  # inside verified true silence (rel 12.90-13.80 and 20.78-21.57).
+  cuts:
+    - start: 13.00
+      end: 13.40
+    - start: 20.88
+      end: 21.28
+surah: 82
+ayah_range: [6, 9]
+phrases:   # times RELATIVE to clip start (UNCUT timeline; t0 = segment.start)
+  - t0: 0.15
+    t1: 8.31
+    ayah: 6
+    ar: "يَٰٓأَيُّهَا ٱلْإِنسَٰنُ مَا غَرَّكَ بِرَبِّكَ ٱلْكَرِيمِ"
+    en: "O mankind, what has deceived you concerning your Lord, the Generous,"
+  - t0: 8.96
+    t1: 12.90
+    ayah: 7
+    ar: "ٱلَّذِى خَلَقَكَ فَسَوَّىٰكَ فَعَدَلَكَ"
+    en: "Who created you, proportioned you, and balanced you?"
+  - t0: 13.80
+    t1: 20.78
+    ayah: 8
+    ar: "فِىٓ أَىِّ صُورَةٍۢ مَّا شَآءَ رَكَّبَكَ"
+    en: "In whatever form He willed has He assembled you."
+  - t0: 21.57
+    t1: 26.60
+    ayah: 9
+    ar: "كَلَّا بَلْ تُكَذِّبُونَ بِٱلدِّينِ"
+    en: "No! But you deny the Recompense."

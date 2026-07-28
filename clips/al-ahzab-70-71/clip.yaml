@@ -1,0 +1,54 @@
+source_url: "https://www.youtube.com/watch?v=EzPfBFifUkg"
+reciter:
+  name_en: "Ibrahim bin Mudhish al-Mansari"
+  name_ar: "إبراهيم بن مدهش المنصري"
+# Live-video background: trimmed source footage IS the video track (audio+video).
+# Reciter is CENTERED in source; crop reframes a 16:9 window (1152x648 in the
+# 1920x1080 source) so the reciter sits LEFT and drops the burned-in bottom-left
+# handle + top-right channel logo. ~1.67x zoom -> lanczos to 1920x1080.
+# BALANCED layout (user spec): reciter left-edge margin == caption right-edge
+# margin (~0.06W each), and the caption block is centred between the reciter's
+# inner (right) edge and the screen's right edge. Reciter silhouette measured at
+# SOURCE px [787,1109]. A 1024x576 window (1.875x zoom) at x=728 puts the reciter
+# at output x0.06..0.37 (face ~x0.23) while keeping the right edge (1752) CLEAR
+# of the burned-in top-right channel logo (source x>=1785) — a wider crop can't
+# do both. center_x=0.686 then equalises both margins.
+video_bg:
+  mode: live
+  crop:
+    x: 728
+    y: 272
+    w: 1024
+    h: 576
+text:
+  center_x_frac: 0.686  # caption centred in the reciter->right-edge gap
+  center_y_frac: 0.47    # slightly high -> favours darker wall over bright pillow
+segment:
+  # start moved +0.42s (69.500 -> 69.920) so recitation onset (abs 69.991) lands
+  # at rel ~0.07s -> recitation begins right at the head (IG hook), no dead air.
+  start: "00:01:09.920"   # absolute in source
+  end: "00:01:53.400"     # absolute in source; source duration 208.167s
+  # Remove the ~2s breath between ayah 70 and 71 (true silence, verified). Times
+  # are CLIP-RELATIVE in the UNCUT timeline; build_render.py splices it out and
+  # shifts phrase 2/3 earlier by 2.0s.
+  cuts:
+    - start: 16.40
+      end: 18.40
+surah: 33
+ayah_range: [70, 71]
+phrases:   # times RELATIVE to clip start (UNCUT timeline; t0 = segment.start)
+  - t0: 0.07
+    t1: 16.40
+    ayah: 70
+    ar: "يَٰٓأَيُّهَا ٱلَّذِينَ ءَامَنُوا۟ ٱتَّقُوا۟ ٱللَّهَ وَقُولُوا۟ قَوْلًۭا سَدِيدًۭا"
+    en: "O you who have believed, fear Allah and speak words of appropriate justice."
+  - t0: 18.55
+    t1: 27.42
+    ayah: 71
+    ar: "يُصْلِحْ لَكُمْ أَعْمَٰلَكُمْ وَيَغْفِرْ لَكُمْ ذُنُوبَكُمْ"
+    en: "He will [then] amend for you your deeds and forgive you your sins."
+  - t0: 28.72
+    t1: 42.41
+    ayah: 71
+    ar: "وَمَن يُطِعِ ٱللَّهَ وَرَسُولَهُۥ فَقَدْ فَازَ فَوْزًا عَظِيمًا"
+    en: "And whoever obeys Allah and His Messenger has certainly attained a great attainment."

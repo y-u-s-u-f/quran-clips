@@ -1,0 +1,19 @@
+# Per-clip tags + post status. Edit `posted:` by hand (false/true) OR use
+#   /opt/homebrew/bin/python3 scripts/status.py post|unpost al-anam-95-96
+surah: al-anam
+surah_number: 6
+ayah_range: [95, 96]
+reciter: Bandar Baleela
+reciter_short: Bandar Baleela  # reel filename only -> BANDAR-BALEELA-...
+title: "Indeed, Allah is the cleaver of grain and date seeds"
+source_url: "https://www.youtube.com/watch?v=NaocYSMpkDw"
+tags:
+  - surah-al-anam
+  - bandar-baleela
+  - masjid-al-haram
+  - makkah
+  - taraweeh
+  - signs-of-creation
+  - power-of-allah
+posted: false
+posted_at: ""

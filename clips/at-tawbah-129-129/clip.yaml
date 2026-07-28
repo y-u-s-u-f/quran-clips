@@ -1,0 +1,70 @@
+source_url: "https://www.youtube.com/watch?v=YkXjYyKwHJ4"
+# Shared source (downloaded once): sources/YkXjYyKwHJ4.mp4  (1920x1080,
+# 30fps, 1031.27s). work/source.mp4 symlinks to it. THIS clip = Surah at-Tawbah
+# ayah 129 (the beloved closing verse of the surah: "Sufficient for me is Allah;
+# there is no deity except Him... Lord of the Great Throne"), recited as the last
+# ayah of rak'ah 2 at abs ~11:40-12:07.
+reciter:
+  name_en: "Badr al-Turki"
+  name_ar: "بدر التركي"
+# LIVE-video background. Same fixed shot: reciter CENTERED (head center ~x970),
+# front gold mic, burned-in top-right logo (x>=1620), full-width bottom banner +
+# handles (y>=800), right-side attendee (~x1480-1720). A 1280x720 window (1.5x
+# zoom -> 1920x1080) moves him RIGHT and drops every overlay: right edge 1328 <
+# 1480 (clears attendee AND logo); bottom 750 < 800 (clears banner). Head-center
+# 970 -> output x0.72; outer robe edge ~x0.95 (B~0.05). Text LEFT, opposite the
+# reciter. BALANCED: center_x = 0.05 + 0.255 = 0.31 -> equal outer margins, block
+# centred in the reciter->left-edge gap. Thin gold mic boom grazes the caption's
+# right portion (bright capsule clear); seated by grade + drop shadow.
+video_bg:
+  mode: live
+  crop:
+    x: 48
+    y: 30
+    w: 1280
+    h: 720
+text:
+  center_x_frac: 0.31
+  center_y_frac: 0.44
+segment:
+  # onset (envelope) abs 700.44 (waqf gap 699.70-700.45 separates it from 9:128
+  # "raheem"); start 700.32 -> onset rel 0.12 (IG hook). End 727.10 = 0.44s tail
+  # after "al-'azeem" ends (~726.66), inside the deep true-silence gap
+  # 726.66-727.99, no next speech in the tail. Envelope-anchored (RMS fallback).
+  start: "00:11:40.320"   # absolute in source
+  end: "00:12:07.100"     # absolute in source; duration 26.78s
+  # TWO ibtida restarts in this ayah (verified ASR + envelope):
+  #   (a) after "fa-qul hasbiya Allah" [waqf 708.03-709.52] the reciter RESTARTS
+  #       "fa-qul hasbiya Allah la ilaha illa huwa 'alayhi tawakkaltu" -> P2
+  #       repeats "fa-qul hasbiya Allah" (shown at the START of P2, ar+en).
+  #   (b) after "'alayhi tawakkaltu" [waqf 717.11-717.97] he RESTARTS
+  #       "'alayhi tawakkaltu wa huwa rabbu-l-'arshi-l-'azeem" -> P3 repeats
+  #       "'alayhi tawakkaltu" (start of P3, ar+en) + completion.
+  # cuts: trim 0.90s of the 1.49s restart gap (a) — verified true silence
+  # (abs 708.22-709.12, min -43dB) — for IG flow, leaving ~0.6s so the restart
+  # still reads as deliberate. Times are CLIP-RELATIVE on the UNCUT timeline;
+  # build_render splices it out and shifts P2/P3 earlier by 0.90s.
+  cuts:
+    - start: 7.90
+      end: 8.80
+surah: 9
+ayah_range: [129, 129]
+phrases:   # times RELATIVE to clip start (UNCUT timeline; t0 = segment.start)
+  - t0: 0.12
+    t1: 7.71
+    ayah: 129
+    ar: "فَإِن تَوَلَّوْا۟ فَقُلْ حَسْبِىَ ٱللَّهُ"
+    en: "But if they turn away, say, Sufficient for me is Allah;"
+  - t0: 9.20
+    t1: 16.79
+    ayah: 129
+    # restart: repeats "fa-qul hasbiya Allah" then continues.
+    ar: "فَقُلْ حَسْبِىَ ٱللَّهُ لَآ إِلَٰهَ إِلَّا هُوَ عَلَيْهِ تَوَكَّلْتُ"
+    en: "say, Sufficient for me is Allah; there is no deity except Him. On Him I have relied,"
+  - t0: 17.65
+    t1: 26.34
+    ayah: 129
+    # restart: repeats "'alayhi tawakkaltu" + completion. Ayah completes ->
+    # medallion.
+    ar: "عَلَيْهِ تَوَكَّلْتُ وَهُوَ رَبُّ ٱلْعَرْشِ ٱلْعَظِيمِ"
+    en: "On Him I have relied, and He is the Lord of the Great Throne."

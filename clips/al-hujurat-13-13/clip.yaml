@@ -1,0 +1,75 @@
+source_url: "https://www.youtube.com/watch?v=YkXjYyKwHJ4"
+# Shared source (downloaded once): sources/YkXjYyKwHJ4.mp4  (1920x1080,
+# 30fps, 1031.27s). work/source.mp4 is a symlink to it. This "فروض الخميس"
+# recitation has 3 rak'ahs: (1) Al-Hujurat 49 complete, (2) At-Tawbah 123-129,
+# (3) Al-Ahzab 53-59. THIS clip = Surah al-Hujurat ayah 13 (the famous
+# "O mankind, We created you from male and female..." title-verse), recited in
+# rak'ah 1 at abs ~06:18-06:51.
+reciter:
+  name_en: "Badr al-Turki"
+  name_ar: "بدر التركي"
+# LIVE-video background (user asked for the video itself as the background). The
+# reciter (Sheikh Badr al-Turki, imam of Masjid al-Haram) is CENTERED in-source
+# (head center ~x960 of 1920) with wide shoulders, a front gold mic, and three
+# burned-in overlays to exclude: top-right channel logo (source x>=1620,
+# y40-210), the full-width bottom banner + social handles (y>=800), and the
+# bottom-right society text. A 1280x720 window (1.5x zoom, lanczos->1920x1080)
+# reframes the reciter to the RIGHT and drops ALL overlays: crop right edge
+# 1320 < 1620 (clears logo & any right-side attendee); crop bottom 760 < 800
+# (clears the banner). Reciter head-center 960 -> output x0.72; his outer
+# (image-right) robe edge sits at ~x0.95 (B = right margin ~0.05). Text on the
+# LEFT, opposite the reciter (ref DZcVeORugrZ: reciter right / text left x0.31).
+# BALANCED (user "do all the composition balancing"): equal outer margins ->
+# caption_left_margin == B(0.05); caption half-width ~0.255 (0.51W phrase) ->
+# center_x = 0.05 + 0.255 = 0.31 -> both outer margins equal AND the block is
+# centred in the reciter->left-edge gap. Only the thin gold mic BOOM crosses the
+# caption's right portion (the bright capsule at ~x0.62 stays clear); inherent to
+# this centered-reciter + front-mic footage, seated by the grade + drop shadow
+# (the account's own refs include gold mics).
+video_bg:
+  mode: live
+  crop:
+    x: 40
+    y: 40
+    w: 1280
+    h: 720
+text:
+  center_x_frac: 0.31   # equal outer margins; block centred in reciter->left gap
+  center_y_frac: 0.44   # slightly high -> over the calmer wall/attendee-heads,
+                        # nudged off the brighter lower robes
+segment:
+  # Recitation onset (envelope) abs 378.84; start moved to 378.72 so onset lands
+  # at rel ~0.12 (recitation begins right at the head after the 0.3s fade-in; IG
+  # hook, no dead second). End 411.55 = 0.35s tail after "khabir" ends (~411.20),
+  # inside the true waqf gap 411.20-411.84, BEFORE the next verse (49:14 "qalat
+  # al-a'rab" ~411.84). Boundaries anchored on RMS-envelope waqf gaps, NOT ASR
+  # (silencedetect@-35dB found almost nothing here -> heavy hall reverb -> 10ms
+  # RMS envelope fallback).
+  start: "00:06:18.720"   # absolute in source
+  end: "00:06:51.550"     # absolute in source; duration 32.83s
+  # No cuts: the internal gaps (P1->P2 0.85s, P2->P3 0.21s, P3->P4 0.56s) are the
+  # ayah's natural quranic waqf breaths within ONE ayah; trimming would rush the
+  # tarteel. (Cuts are reserved for dead air BETWEEN ayat.)
+surah: 49
+ayah_range: [13, 13]
+phrases:   # times RELATIVE to clip start (UNCUT timeline; t0 = segment.start)
+  - t0: 0.12
+    t1: 11.61
+    ayah: 13
+    ar: "يَٰٓأَيُّهَا ٱلنَّاسُ إِنَّا خَلَقْنَٰكُم مِّن ذَكَرٍۢ وَأُنثَىٰ"
+    en: "O mankind, indeed We have created you from male and female"
+  - t0: 12.46
+    t1: 19.99
+    ayah: 13
+    ar: "وَجَعَلْنَٰكُمْ شُعُوبًۭا وَقَبَآئِلَ لِتَعَارَفُوٓا۟"
+    en: "and made you peoples and tribes that you may know one another."
+  - t0: 20.20
+    t1: 26.82
+    ayah: 13
+    ar: "إِنَّ أَكْرَمَكُمْ عِندَ ٱللَّهِ أَتْقَىٰكُمْ"
+    en: "Indeed, the most noble of you in the sight of Allah is the most righteous of you."
+  - t0: 27.38
+    t1: 32.48
+    ayah: 13
+    ar: "إِنَّ ٱللَّهَ عَلِيمٌ خَبِيرٌۭ"
+    en: "Indeed, Allah is Knowing and Acquainted."

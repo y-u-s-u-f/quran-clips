@@ -1,0 +1,151 @@
+# Quran-clip style — machine-readable params.
+# Derived ONLY from refs DZcVeORugrZ, DXQZ2JFEvvR, DXLVk82Eqyj.
+# Two coordinate systems are provided:
+#   fractions_of_frame  -> authoritative, resolution-independent (matches the
+#                          account's NATIVE landscape style)
+#   canvas_1080x1920    -> derived reproduction targets for a vertical reel
+# Note: source references are LANDSCAPE (16:9 / 2:1). Native-landscape repro is
+# highest fidelity; vertical repro uses blurred-pad reframing (below).
+
+meta:
+  fps: 30
+  duration_range_s: [18, 30]
+  source_native_aspect: ["2:1", "16:9"]   # observed
+  word_level_karaoke: false               # per-phrase swap is sufficient
+  timing_granularity: per_phrase          # phrase = one meaningful segment
+
+canvas:
+  width: 1080
+  height: 1920
+
+# ---- Vertical reframing (only needed for a 1080x1920 reel) ----
+reframe:
+  mode: blurred_pad_band
+  foreground:
+    scale_to_width: 1080          # 16:9 source -> 1080x608 band
+    band_height_16x9: 608
+    band_height_2x1: 540
+    y_center: 960                 # band centered vertically
+    dim_pct: 10                   # slight exposure reduction
+  background_pad:                 # fills top/bottom margins
+    source: same_footage
+    scale: cover                  # cover 1080x1920
+    gaussian_sigma: 40
+    brightness_pct: -45
+  # For native-landscape repro, skip reframe: use source as-is + overlays.
+
+color_treatment:
+  color_grade: minimal            # keep native scene colors
+  vignette:
+    enabled: true
+    edge_luminance_pct: -35
+  text_backing_gradient:          # subtle, only over bright backgrounds
+    enabled: true
+    strength_pct: -25
+    hard_box: false
+
+text_block:
+  # Horizontal side is per-clip: place OPPOSITE the reciter's face.
+  side: right                     # variable: left | right
+  fractions_of_frame:
+    center_x_left: 0.31
+    center_x_right: 0.70
+    block_center_y: 0.50          # ~mid frame; per-clip nudge +/-0.04
+    align: center                 # english centered under arabic
+  canvas_1080x1920:
+    center_x_left: 345
+    center_x_right: 735
+    align: center
+
+arabic:
+  font: "KFGQPC Uthmanic Hafs"    # v22
+  color: "#F7F5EF"                # warm-white
+  render:
+    nominal_pt: 72                # was 84 (rendered ~80); ~12% smaller per user
+  fractions_of_frame:
+    base_glyph_height: 0.047      # of frame HEIGHT
+    baseline_y: 0.50
+    max_line_width: 0.51          # of frame WIDTH; single line, no wrap. 0.55->0.51 (QA al-ahzab-70-71: refs never bring text within ~0.05W of the frame edge; only shrinks over-wide phrases)
+  canvas_1080x1920:
+    base_glyph_height_px: 58
+    point_size_approx: 96
+    baseline_y_px: 930
+    max_line_width_px: 900
+    wrap: false
+  ayah_medallion:
+    show_only_on_full_ayah: true
+    numerals: arabic_indic
+    inline_end_of_line: true
+
+english:
+  font: "Albertus MT Lt"
+  smallcaps: false                # uniform ALL-CAPS at one size (per user)
+  tracking_pct: 3
+  color: "#F5F3ED"
+  render:
+    cap_pt: 29                    # was 33; ~12% smaller per user
+    petite_pt: 26                 # only used when smallcaps: true
+  fractions_of_frame:
+    cap_height: 0.023             # ~half the arabic base height
+    gap_below_arabic: 0.02
+    max_line_width: 0.55          # of frame WIDTH; QA cap (was 0.50; long Saheeh phrases wrap balanced-2-line / single-line and still tuck under the Arabic at ~0.545W)
+  canvas_1080x1920:
+    cap_height_px: 30
+    point_size_approx: 40
+    top_y_px: 1000
+    line_spacing_px: 40
+    max_lines: 2
+    align: center
+
+shadow:                           # applies to arabic + english
+  type: drop_shadow
+  offset_px: 2
+  blur_px: 5
+  color: "#000000"
+  opacity: 0.60
+  outline: none
+  box: none
+
+motion:
+  text_transition: crossfade      # dissolve; fixed position, no slide/scale
+  crossfade_s: 0.45
+  per_word_reveal: false
+  background: static               # native footage only; no zoompan
+  video_fade_in_s: 0.3            # whole-frame fade from black (all 3 refs)
+  video_fade_out_s: 0.5           # whole-frame fade to black
+
+audio:
+  lufs: -14.0                     # measured -14.2/-14.2/-14.4 across refs
+  true_peak_dbtp: -1.0            # ceiling
+  fade_in_s: 0.3
+  fade_out_s: 0.5
+  reverb: off                     # natural acoustics only, none added
+  echo: off
+  eq: natural                     # full-range, no lo-fi filtering
+
+overlays:
+  reciter_photo: none
+  reciter_name_caption: none
+  surah_ayah_caption: none        # only native mushaf medallion
+  watermark_handle: none
+  progress_bar: none
+  emoji: none
+  border: none
+
+fixed_vs_variable:
+  fixed:
+    - fonts
+    - white_text
+    - english_centered_below_arabic
+    - crossfade_0.45s
+    - drop_shadow_no_outline_no_box
+    - dim_plus_vignette
+    - lufs_-14
+    - no_watermark_name_reference_progressbar
+  per_clip:
+    - source_footage
+    - text_side           # opposite reciter
+    - vertical_nudge      # +/- 0.04 H
+    - english_line_count  # 1-2
+    - ayah_medallion_present
+    - native_color_tone

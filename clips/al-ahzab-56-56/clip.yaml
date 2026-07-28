@@ -1,0 +1,64 @@
+source_url: "https://www.youtube.com/watch?v=YkXjYyKwHJ4"
+# Shared source (downloaded once): sources/YkXjYyKwHJ4.mp4  (1920x1080,
+# 30fps, 1031.27s). work/source.mp4 symlinks to it. THIS clip = Surah al-Ahzab
+# ayah 56 (the beloved "Indeed, Allah confers blessing upon the Prophet..."
+# verse of salawat), recited in rak'ah 3 at abs ~15:27-15:57.
+reciter:
+  name_en: "Badr al-Turki"
+  name_ar: "بدر التركي"
+# LIVE-video background. Same fixed single-camera shot as the other Badr al-Turki
+# clips: reciter CENTERED (head center ~x1000 here), front gold mic, burned-in
+# top-right logo (x>=1620), full-width bottom banner + handles (y>=800), and a
+# right-side police attendee (~x1560-1920). A 1280x720 window (1.5x zoom ->
+# 1920x1080) moves him RIGHT and drops every overlay: right edge 1358 < 1560
+# (clears the attendee AND logo); bottom 750 < 800 (clears banner). Head-center
+# 1000 -> output x0.72; outer robe edge ~x0.95 (B~0.05). Text LEFT, opposite the
+# reciter. BALANCED: center_x = B + half-width = 0.05 + 0.255 = 0.31 -> equal
+# outer margins, block centred in the reciter->left-edge gap. Thin gold mic boom
+# grazes the caption's right edge (bright capsule clear); seated by grade+shadow.
+video_bg:
+  mode: live
+  crop:
+    x: 78
+    y: 30
+    w: 1280
+    h: 720
+text:
+  center_x_frac: 0.31
+  center_y_frac: 0.44
+segment:
+  # onset (envelope) abs 927.45; start 927.32 -> onset rel 0.13 (IG hook). The
+  # reciter does a tiny ibtida stutter "in... innallaha" at onset (not captioned;
+  # the P1 card shows the full ayah opening). End 957.30 = 0.5s tail after
+  # "taslima" ends (~956.80), inside the deep true-silence gap 956.80-958.38
+  # (min -74dB), no next-verse speech in the tail. Envelope-anchored (RMS
+  # fallback; silencedetect@-35dB unreliable under the hall reverb).
+  start: "00:15:27.320"   # absolute in source
+  end: "00:15:57.300"     # absolute in source; duration 29.98s
+  # IBTIDA (verified on the ASR + envelope): after the first pass
+  # "...aamanoo salloo 'alayhi" the reciter PAUSES (waqf gap 945.36-946.10) then
+  # RESTARTS "yaa ayyuha alladheena aamanoo salloo 'alayhi wa sallimoo tasleema".
+  # So P2 = first pass, P3 = restart (repeats P2's words) + completion. The
+  # repeated words correctly appear at the START of P3 in both ar and en. The
+  # 0.74s restart gap and the 0.61s P1->P2 gap are natural waqf; left uncut.
+surah: 33
+ayah_range: [56, 56]
+phrases:   # times RELATIVE to clip start (UNCUT timeline; t0 = segment.start)
+  - t0: 0.13
+    t1: 10.82
+    ayah: 56
+    ar: "إِنَّ ٱللَّهَ وَمَلَٰٓئِكَتَهُۥ يُصَلُّونَ عَلَى ٱلنَّبِىِّ"
+    en: "Indeed, Allah confers blessing upon the Prophet, and His angels ask Him to do so."
+  - t0: 11.43
+    t1: 18.04
+    ayah: 56
+    ar: "يَٰٓأَيُّهَا ٱلَّذِينَ ءَامَنُوا۟ صَلُّوا۟ عَلَيْهِ"
+    en: "O you who have believed, ask blessing upon him"
+  - t0: 18.78
+    t1: 29.48
+    ayah: 56
+    # P3 = the ibtida restart: repeats "yaa ayyuha... salloo 'alayhi" (shown in
+    # P2) and completes with "wa sallimoo tasleema". Ayah completes here ->
+    # medallion.
+    ar: "يَٰٓأَيُّهَا ٱلَّذِينَ ءَامَنُوا۟ صَلُّوا۟ عَلَيْهِ وَسَلِّمُوا۟ تَسْلِيمًا"
+    en: "O you who have believed, ask blessing upon him and ask Allah to grant him peace."

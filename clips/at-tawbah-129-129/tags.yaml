@@ -1,0 +1,20 @@
+# Per-clip tags + post status. Edit `posted:` by hand (false/true) OR use
+#   /opt/homebrew/bin/python3 scripts/status.py post|unpost at-tawbah-129-129
+# The same script mirrors `tags` + a green Posted / red "Not Posted" marker onto
+# the folder's macOS Finder tags (visible/filterable in Finder).
+surah: at-tawbah
+surah_number: 9
+ayah_range: [129, 129]
+reciter: Badr al-Turki
+title: "Sufficient for me is Allah... Lord of the Great Throne"
+source_url: "https://www.youtube.com/watch?v=YkXjYyKwHJ4"
+tags:
+  - surah-at-tawbah
+  - badr-al-turki
+  - masjid-al-haram
+  - tawakkul
+  - reliance
+  - throne
+  - surah-closing
+posted: false
+posted_at: ""

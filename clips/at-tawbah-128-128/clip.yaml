@@ -1,0 +1,63 @@
+source_url: "https://www.youtube.com/watch?v=YkXjYyKwHJ4"
+# Shared source (downloaded once): sources/YkXjYyKwHJ4.mp4  (1920x1080,
+# 30fps, 1031.27s). work/source.mp4 symlinks to it. THIS clip = Surah at-Tawbah
+# ayah 128 ("There has certainly come to you a Messenger from among yourselves"),
+# recited immediately before 9:129 in rak'ah 2 at abs ~11:16-11:40.
+#
+# FIRST clip on the new vertical "bars" style (templates/bars.yaml): 1080x1920,
+# 16:9 footage band on black, two centre-anchored lines of Thuluth Arabic each
+# struck through by an opaque rounded pill. Arabic only, no translation.
+style: bars
+reciter:
+  name_en: "Badr al-Turki"
+  name_ar: "بدر التركي"
+# LIVE-video background, same fixed shot and same proven 1280x720 window as the
+# other Badr al-Turki clips: it moves the reciter RIGHT and drops every burned-in
+# overlay (right edge 1328 < the attendee/logo at 1480; bottom 750 < the banner
+# at 800). Scaled to the 1080x608 band. Text block sits LEFT at 0.30 W, opposite
+# the reciter; the caption's right edge lands at ~0.60 W, clearing his face.
+video_bg:
+  mode: live
+  crop:
+    x: 48
+    y: 30
+    w: 1280
+    h: 720
+# bar_color: "#B99334"   # uncomment to override the auto-derived bar colour
+segment:
+  # onset abs 676.45; start 676.33 -> onset rel 0.12 (IG hook). End 700.05 sits
+  # in the waqf gap 699.70-700.45 that separates 9:128 from 9:129, so no next-
+  # verse speech leaks into the tail.
+  start: "00:11:16.330"   # absolute in source
+  end: "00:11:40.050"     # absolute in source; duration 23.72s
+surah: 9
+ayah_range: [128, 128]
+phrases:   # times RELATIVE to clip start; ar1/ar2 = the two caption lines
+  # 4 cards, not 3. The old card 1 carried 11.1s of speech and a 5-word first
+  # line (567px raw), which alone forced the WHOLE clip down to 85pt and blew
+  # the bar out to 0.545 W -- wider than any bar in either reference. Neither
+  # ref ever puts more than 4 short words on a line, so it is split in two at
+  # the quietest point before "'azeezun" (word onset 7.11; the 50ms RMS
+  # envelope troughs to -24 dB at 6.40/6.90 against -10 dB speech -- this is
+  # continuous recitation, there is no true waqf here, so the swap is placed
+  # in the last dip before the onset rather than in a gap).
+  - t0: 0.12
+    t1: 6.85
+    ayah: 128
+    ar1: "لَقَدْ جَآءَكُمْ رَسُولٌ"
+    ar2: "مِّنْ أَنفُسِكُمْ"
+  - t0: 7.11
+    t1: 11.22
+    ayah: 128
+    ar: "عَزِيزٌ عَلَيْهِ مَا عَنِتُّمْ"
+  - t0: 11.97
+    t1: 17.82
+    ayah: 128
+    # ibtida restart: repeats "'azeezun 'alayhi maa 'anittum" then continues.
+    ar1: "عَزِيزٌ عَلَيْهِ مَا عَنِتُّمْ"
+    ar2: "حَرِيصٌ عَلَيْكُم"
+  - t0: 18.57
+    t1: 23.32
+    ayah: 128
+    # single line; completes the ayah.
+    ar: "بِٱلْمُؤْمِنِينَ رَءُوفٌ رَّحِيمٌ"

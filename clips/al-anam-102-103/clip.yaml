@@ -1,0 +1,58 @@
+source_url: "https://www.youtube.com/watch?v=NaocYSMpkDw"
+reciter:
+  name_en: "Bandar bin Abdulaziz Baleela"
+  name_ar: "بندر بن عبد العزيز بليلة"
+# Same single static camera as al-anam-76-77 (see that clip.yaml for full
+# framing rationale). USER OVERRIDE for THIS clip: captions on the RIGHT.
+# Re-crop to clear the right side: window shifted right + slight zoom so the
+# reciter (source head-centre x~970 of 1920) sits at output x~0.30 (was ~0.67
+# under the old {0,0,1440,810}). Crop {563,0,1357,763}: right edge = 1920 so a
+# little of the top-right logo cluster (x>=1470, y0.04-0.24) shows — user
+# pre-approved; it is vertically ABOVE the mid-frame caption band so no overlap.
+# Bottom 763 stays well above the intermittent lower-third banner (top ~y820).
+# NOTE: source frames the reciter's head near the very top (head-top ~y50), so
+# large headroom (0.25-0.30) is NOT physically available; head sits ~0.07 down,
+# same as the account's other Haram taraweeh clips from this source.
+video_bg:
+  mode: live
+  crop:
+    x: 563
+    y: 0
+    w: 1357
+    h: 763
+text:
+  center_x_frac: 0.70   # captions RIGHT (mirror of style center_x_right 0.70)
+  center_y_frac: 0.54
+segment:
+  # Starts inside waqf gap 640.91-641.85 after 6:101 (onset rel 0.21s). Ends mid
+  # true-silence gap 669.60-670.31; ayah 104 resumes ~670.35.
+  start: "00:10:41.650"   # absolute in source
+  end: "00:11:10.050"     # absolute in source; source duration 1279.214s
+surah: 6
+ayah_range: [102, 103]
+phrases:   # times RELATIVE to clip start (t0 = segment.start), seconds
+  - t0: 0.21
+    t1: 4.90
+    ayah: 102
+    ar: "ذَٰلِكُمُ ٱللَّهُ رَبُّكُمْ لَآ إِلَٰهَ إِلَّا هُوَ"
+    en: "That is Allah, your Lord; there is no deity except Him,"
+  - t0: 4.92
+    t1: 9.20
+    ayah: 102
+    ar: "خَٰلِقُ كُلِّ شَىْءٍۢ فَٱعْبُدُوهُ"
+    en: "the Creator of all things, so worship Him."
+  - t0: 10.20
+    t1: 15.15
+    ayah: 102
+    ar: "وَهُوَ عَلَىٰ كُلِّ شَىْءٍۢ وَكِيلٌۭ"
+    en: "And He is Disposer of all things."
+  - t0: 16.05
+    t1: 23.85
+    ayah: 103
+    ar: "لَّا تُدْرِكُهُ ٱلْأَبْصَٰرُ وَهُوَ يُدْرِكُ ٱلْأَبْصَٰرَ"
+    en: "Vision perceives Him not, but He perceives [all] vision;"
+  - t0: 24.95
+    t1: 27.85
+    ayah: 103
+    ar: "وَهُوَ ٱللَّطِيفُ ٱلْخَبِيرُ"
+    en: "and He is the Subtle, the Acquainted."

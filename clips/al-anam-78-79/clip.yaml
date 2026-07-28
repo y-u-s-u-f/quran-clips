@@ -1,0 +1,50 @@
+source_url: "https://www.youtube.com/watch?v=NaocYSMpkDw"
+reciter:
+  name_en: "Bandar bin Abdulaziz Baleela"
+  name_ar: "بندر بن عبد العزيز بليلة"
+# Same single static camera as al-anam-76-77 (see that clip.yaml for full
+# framing rationale). Reciter faces screen-LEFT -> captions LEFT (user rule).
+# Crop drops top-right logos, bottom lower-third banner and far-right attendant.
+video_bg:
+  mode: live
+  crop:
+    x: 0
+    y: 0
+    w: 1440
+    h: 810
+text:
+  center_x_frac: 0.30
+  center_y_frac: 0.54
+segment:
+  # Starts inside waqf gap 70.91-71.82 after 6:77 (onset rel 0.17s). Ends mid
+  # true-silence gap 101.93-102.80; ayah 80 resumes ~102.85.
+  start: "00:01:11.650"   # absolute in source
+  end: "00:01:42.550"     # absolute in source; source duration 1279.214s
+surah: 6
+ayah_range: [78, 79]
+phrases:   # times RELATIVE to clip start (t0 = segment.start), seconds
+  - t0: 0.17
+    t1: 3.40
+    ayah: 78
+    ar: "فَلَمَّا رَءَا ٱلشَّمْسَ بَازِغَةًۭ"
+    en: "And when he saw the sun rising,"
+  - t0: 3.51
+    t1: 7.65
+    ayah: 78
+    ar: "قَالَ هَٰذَا رَبِّى هَٰذَآ أَكْبَرُ"
+    en: "he said, “This is my lord; this is greater.”"
+  - t0: 8.46
+    t1: 18.45
+    ayah: 78
+    ar: "فَلَمَّآ أَفَلَتْ قَالَ يَٰقَوْمِ إِنِّى بَرِىٓءٌۭ مِّمَّا تُشْرِكُونَ"
+    en: "But when it set, he said, “O my people, indeed I am free from what you associate with Allah."
+  - t0: 19.36
+    t1: 26.35
+    ayah: 79
+    ar: "إِنِّى وَجَّهْتُ وَجْهِىَ لِلَّذِى فَطَرَ ٱلسَّمَٰوَٰتِ وَٱلْأَرْضَ حَنِيفًۭا"
+    en: "Indeed, I have turned my face toward He who created the heavens and the earth, inclining toward truth,"
+  - t0: 26.45
+    t1: 30.55
+    ayah: 79
+    ar: "وَمَآ أَنَا۠ مِنَ ٱلْمُشْرِكِينَ"
+    en: "and I am not of those who associate others with Allah.”"

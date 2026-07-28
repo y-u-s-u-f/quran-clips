@@ -1,0 +1,56 @@
+source_url: "https://www.youtube.com/watch?v=NaocYSMpkDw"
+reciter:
+  name_en: "Bandar bin Abdulaziz Baleela"
+  name_ar: "بندر بن عبد العزيز بليلة"
+# Same single static camera as al-anam-76-77 (see that clip.yaml for full
+# framing rationale). Reciter faces screen-LEFT -> captions LEFT (user rule).
+# The burned-in lower-third banner IS on screen during part of this window
+# (top edge ~y830); crop bottom 810 excludes it entirely (verified at t=500).
+video_bg:
+  mode: live
+  crop:
+    x: 0
+    y: 0
+    w: 1440
+    h: 810
+text:
+  center_x_frac: 0.30
+  center_y_frac: 0.54
+segment:
+  # Starts inside waqf gap 486.55-487.26 after 6:94 (onset rel 0.18s). Ends mid
+  # true-silence gap 520.31-521.07; ayah 97 resumes ~521.1.
+  start: "00:08:07.100"   # absolute in source
+  end: "00:08:40.800"     # absolute in source; source duration 1279.214s
+surah: 6
+ayah_range: [95, 96]
+phrases:   # times RELATIVE to clip start (t0 = segment.start), seconds
+  - t0: 0.20
+    t1: 5.30
+    ayah: 95
+    ar: "إِنَّ ٱللَّهَ فَالِقُ ٱلْحَبِّ وَٱلنَّوَىٰ"
+    en: "Indeed, Allah is the cleaver of grain and date seeds."
+  - t0: 6.52
+    t1: 11.55
+    ayah: 95
+    ar: "يُخْرِجُ ٱلْحَىَّ مِنَ ٱلْمَيِّتِ وَمُخْرِجُ ٱلْمَيِّتِ مِنَ ٱلْحَىِّ"
+    en: "He brings the living out of the dead and brings the dead out of the living."
+  - t0: 12.51
+    t1: 18.20
+    ayah: 95
+    ar: "ذَٰلِكُمُ ٱللَّهُ فَأَنَّىٰ تُؤْفَكُونَ"
+    en: "That is Allah; so how are you deluded?"
+  - t0: 19.36
+    t1: 21.35
+    ayah: 96
+    ar: "فَالِقُ ٱلْإِصْبَاحِ"
+    en: "[He is] the cleaver of daybreak"
+  - t0: 22.51
+    t1: 28.10
+    ayah: 96
+    ar: "وَجَعَلَ ٱلَّيْلَ سَكَنًۭا وَٱلشَّمْسَ وَٱلْقَمَرَ حُسْبَانًۭا"
+    en: "and has made the night for rest and the sun and moon for calculation."
+  - t0: 28.75
+    t1: 33.10
+    ayah: 96
+    ar: "ذَٰلِكَ تَقْدِيرُ ٱلْعَزِيزِ ٱلْعَلِيمِ"
+    en: "That is the determination of the Exalted in Might, the Knowing."

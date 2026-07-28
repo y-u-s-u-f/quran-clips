@@ -1,0 +1,58 @@
+# ==========================================================================
+# quran-clips — track the CREATION PROCESS, not the output.
+# Tracked: scripts/, templates/, .claude/, assets/ (fonts + scene images),
+#          clips/*/clip.yaml + tags.yaml, style/**/*.md specs + fx code.
+# Ignored: downloaded footage, exported reels, per-clip renders, the venv.
+# ==========================================================================
+
+# --- Downloaded / exported / recreatable trees -----------------------------
+# downloaded YouTube source videos + subtitles (re-downloadable)
+sources/
+# exported final reels (regenerable from clip.yaml)
+reels/
+# python venv for ASR (recreate with pip install)
+tools/
+
+# --- Per-clip intermediates and renders ------------------------------------
+clips/*/work/
+clips/*/output/
+
+# --- Throwaway A/B test harnesses ------------------------------------------
+clips/_abtmp/
+clips/_mA/
+clips/_mB/
+
+# --- Media, anywhere --------------------------------------------------------
+*.mp4
+*.mov
+*.wav
+*.m4a
+
+# --- Reference frames / QA stills (extracted or rendered, regenerable) ------
+style/**/*.jpg
+style/**/*.jpeg
+style/**/*.png
+
+# --- Generated reports ------------------------------------------------------
+pipeline-review.html
+
+# --- Python / OS cruft ------------------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# ===========================================================================
+# Explicit keeps — these are INPUTS to the pipeline, never outputs.
+# (Defensive negations: nothing above should swallow them.)
+# ===========================================================================
+!scripts/
+!templates/
+!.claude/
+!assets/
+!assets/fonts/*.ttf
+!assets/reciters/*.png
+!clips/*/clip.yaml
+!clips/*/tags.yaml
+!style/**/*.md
+!*.excalidraw

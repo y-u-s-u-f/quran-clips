@@ -1,0 +1,291 @@
+# "bars" style — machine-readable params.
+# Selected per-clip with `style: bars` in clip.yaml (absent => the original
+# `templates/style.yaml` landscape style, untouched).
+#
+# Derived from style/refs2/STYLE2_SPEC.md (pixel forensics of ig_DNon3t8J9je
+# "gold" and ig_DNrnY9b2EHe "rose") and style/refs2/FX_RECIPE.md (tested
+# ffmpeg filtergraphs). The refs are 720x1280; every px figure below is the
+# measured value x1.5 to reach this template's 1080x1920 canvas.
+#
+# Parsed by render_text.load_yaml() -> nested maps + block lists ONLY.
+
+meta:
+  fps: 30
+  arabic_only: true               # the refs carry NO english translation
+
+canvas:
+  width: 1080
+  height: 1920
+
+# 16:9 footage band, centred vertically, pure #000000 above and below.
+# refs: 720x405 at y=437.5  ->  x1.5  ->  1080x608 at y=656.
+band:
+  width: 1080
+  height: 608
+  y: 656
+
+# Step 0 of FX_RECIPE and the single biggest contributor to the look: bring the
+# band to mean luma 0.15-0.32 before any glow. Applied to the footage only,
+# before the captions are composited.
+grade:
+  # brightness carries the exposure the old a=PI/2.6 vignette used to steal:
+  # with the vignette relaxed to default the band ran to mean luma 0.427, well
+  # outside this step's own 0.15-0.32 target and 1.7x the refs (0.213 rose /
+  # 0.263 gold). -0.30 puts it back at 0.285. Nothing else in the grade moved.
+  eq: "brightness=-0.30:contrast=1.30:saturation=0.75:gamma=0.72"
+  colorbalance: "rm=0.08:gm=0.02:bm=-0.10"
+  # DEFAULT strength only. The refs are NOT radially vignetted: measured
+  # normalised luminance at the right edge is 0.94-1.11 (i.e. no falloff at
+  # all) against 0.16 at the left edge (spec E.3), so the edge darkening is a
+  # LEFT-ONLY scrim that buys contrast for the text. a=PI/2.6 crushed both
+  # ends to 0.01 and narrowed the composition.
+  # a=PI/5 was still measured (on a white probe through this chain) at 0.58 at
+  # the right edge -- the refs sit at 0.81 (rose) / 0.94 (gold). a=PI/8 lands
+  # on 0.81 and keeps a little radial depth; everything directional is the
+  # scrim below.
+  vignette: "a=PI/8"
+  # The edge scrim, a generated multiply plate (render_bars.scrim_layer). The
+  # refs' falloff is a LEFT ramp (x0 0.16 -> 0.89-0.91 by x=120@720) plus a soft
+  # top/bottom feather where the picture meets the letterbox (0.23-0.33 at
+  # 13@720 in, 0.31-0.56 at the bottom, recovering by ~60@720) -- and nothing
+  # on the right. That is not a radial shape, so it is drawn explicitly.
+  scrim:
+    left_min: 0.20                # multiplier at x=0
+    left_to_px: 180               # ...rising linearly to 1.0 here
+    edge_min: 0.15                # multiplier at the band's top/bottom rows
+    edge_to_px: 190               # ...rising linearly to 1.0 this far in
+
+text:
+  font: "assets/fonts/AM_Thulth_Regular_0.1.ttf"   # AMoshref-Thulth, OFL
+  color: "#FFFFFF"                # refs measure #FFFBFC / #FFFCF3 = white
+  nominal_pt: 96                  # ref alif stem 38px@720 -> 57px@1080
+  min_pt: 60
+  # Per-line cap. Widest ref bar is 362px@720 = 0.503 W, and bar = ink + 54,
+  # so 0.45 W of ink keeps every bar at or under that ceiling (0.498 W here).
+  # 0.50 let phrase 1 run to 0.545 W and dragged the whole clip down to 85pt.
+  max_line_width_frac: 0.45
+  # CENTER-anchored on a fixed vertical axis (the forensics showed bar centres
+  # cluster at 0.275 W rose / 0.317 W gold while the edges swing freely).
+  center_x_frac: 0.30
+  # Bar centre lines, as fractions of canvas height (spec rows 9/10/11).
+  line1_center_y_frac: 0.4637
+  line2_center_y_frac: 0.5592
+  single_center_y_frac: 0.5111
+  # ONE drop shadow on the Arabic glyphs -- a solid offset copy of the letter
+  # silhouette, NOT the default style's soft blurred shadow: pure black, fully
+  # opaque, ZERO blur, and pushed straight DOWN (no horizontal component).
+  # It sits ABOVE the pill and below the glyphs; measured in ig_DNon3t8J9je the
+  # pixels directly under a glyph read 106-116 luma against a 145 bar interior,
+  # i.e. the reference shadow darkens the bar rather than hiding behind it.
+  shadow:
+    color: "#000000"
+    opacity: 1.0
+    dx_frac: 0.0                  # of canvas WIDTH -- vertical-only by design
+    dy_frac: 0.003                # of canvas HEIGHT -> 6px at 1920. The shadow
+                                  # must HUG the glyph -- a tight underhang, not
+                                  # an offset duplicate. The refs measure
+                                  # ~0.004 H (and soft); ours is hard, which
+                                  # reads as more detached at equal offset, so
+                                  # it sits at the tight end.
+    blur_px: 0                    # hard edged; >0 would soften it (do not)
+
+# The pill is a highlight band struck THROUGH the letter bodies, not a
+# background box: 44px tall against ~125px of glyph ink.
+bar:
+  height_px: 44                   # 29.0px@720 x1.5
+  pad_x_px: 27                    # 18px@720 x1.5; bar w = ink w + 54
+  # Vertical anchor. Spec row 29: text baseline = bar centre + 8px@720.
+  # Baseline-anchored rather than derived from the ink bbox or from font
+  # ascent/descent -- AM_Thulth's tashkeel overshoot the em box by ~0.23em and
+  # its yMax (2409) far exceeds hhea ascent (1946), so both of those would
+  # place the bar wrong. The tashkeel-stripped ink band is measured anyway and
+  # the bar is clamped into it (see render_bars.py).
+  baseline_below_center_px: 12
+  # The colour below is the bar as it must READ IN THE FINISHED FRAME (that is
+  # what the spec measured). render_bars pre-darkens the painted pill so that
+  # the Glow / Glow Scan screen passes land it on this value.
+  color: auto                     # "auto" or an explicit "#RRGGBB"
+  fx_screen_lift: 0.179           # measured screen gain the FX add over a pill
+  fx_sat_retain: 0.88             # and the saturation they wash out
+  # Auto-derivation from the clip's own GRADED band (spec rows 51-53).
+  auto:
+    lightness_gain: 1.78
+    lightness_min: 0.34
+    lightness_max: 0.48
+    saturation_gain: 2.2
+    saturation_min: 0.22
+    saturation_max: 0.60
+    saturation_lowchroma_below: 0.12   # see render_bars.derive_bar_color
+    sample_fps: 1                 # frames/s pulled for the colour statistics
+    sample_tile: 5                # sample_tile^2 frames max, at 48x27 each
+
+transitions:
+  first: wipe                     # wipe | crossfade
+  rest: crossfade                 # wipe | crossfade
+  # WHAT a "wipe" phrase actually sweeps. `bar` = the coloured pill only; its
+  # TEXT layer (glyphs + shadow) cross-fades instead, uniformly, over the same
+  # window -- which is what the refs show (STYLE2_SPEC "Uncertain" 2: the gold
+  # glyph count keeps climbing while the pill edge travels). `all` restores the
+  # old behaviour where bar and text ride the same directional mask.
+  wipe_target: bar                # bar | all
+  # Captions are STRICTLY SEQUENTIAL: caption N's fade-out reaches alpha 0 at
+  # or before caption N+1's fade-in leaves 0, so two captions are never on
+  # screen together. (The legacy landscape schedule deliberately overlaps them
+  # -- it starts the incoming card 0.24s early -- which is what `false`
+  # restores; the default style is unaffected either way.)
+  sequential: true                # true | false
+  # Both fades of a changeover are fitted into the gap the recitation actually
+  # leaves between the two phrases, shrinking together and proportionally, but
+  # never below this floor -- when even 2 x min_fade_s will not fit, the
+  # outgoing caption starts leaving before its t1 (losing a few frames of tail
+  # beats stacking two captions). A changeover only becomes a hard cut if the
+  # caption would not have finished arriving before it has to go.
+  min_fade_s: 0.20
+  # NOMINAL durations. The measured on-screen ramp is shorter than the wipe
+  # nominal because `trav` carries ~80px of dead travel past the bar ends
+  # (build_bars.py) -- these values are tuned to the MEASURED targets
+  # (refs: 0.93-1.00 s crossfade, 0.87-1.00 s wipe in, 0.73-0.80 s wipe out).
+  crossfade_s: 0.95               # was 0.45 = ~2x too fast against the refs
+  wipe_in_s: 1.02                 # -> ~0.86 s measured; right edge pinned
+  # The wipe is a MATCHED PAIR: the exit must read as the mirror of the entry,
+  # same duration and -- since both sweeps cover the same `trav` -- the same
+  # front speed in px/s. So this is deliberately EQUAL to wipe_in_s, not the
+  # refs' shorter 0.73-0.80 s exit; a 0.20 s snap-out (what the gap-fitting
+  # produced at the 0.26 s P1->P2 gap) is the thing this replaces.
+  wipe_out_s: 1.02                # == wipe_in_s; left edge pinned
+  # WHERE a wipe-out sits in the gap.
+  #   start : legacy. It begins at the phrase's t1 and the gap-fitting logic
+  #           shrinks it (to min_fade_s in the worst case) so it lands before
+  #           the next caption -- an abrupt snap whenever the gap is short.
+  #   end   : the wipe-out is EXEMPT from that shrink. It keeps its full
+  #           wipe_out_s and is placed by SUBTRACTING that duration from the
+  #           deadline (half a frame before the incoming fade-in leaves 0), so
+  #           it starts before t1 and eats the outgoing caption's tail. The
+  #           incoming fade-in is unaffected -- it is still fitted to the gap
+  #           and still fully up on its word onset. Crossfades ignore this.
+  wipe_out_anchor: end            # end | start
+  wipe_feather_px: 20             # 12-14px@720 front feather x1.5
+
+# style/refs2/fx/nodefx.sh, confined strictly to the footage band.
+# Heat Wave IS in both references and IS applied -- see FX_RECIPE.md section
+# "Heat Wave - motion re-test". Measured 0.96 px RMS bar-edge wander in the refs
+# against a 0.10 px measurement noise floor, spatially coherent (r=0.73 between
+# the two caption bars). It is applied LAST, over the composited band, so the
+# footage, the pills and the glyphs all shimmer together.
+fx:
+  # Bar glow: the WIDE pass. Measured excess outside the pill must reach
+  # ~51/36/25/13/8/5 DN at d=5/10/20/40/60/80 px@720-equivalent, decaying as
+  # exp(-d/28px@720). The old 0.20/0.40 key + 0.35 gain delivered ~9 DN at
+  # d=5 with tau 10-12 -- 5.7x too weak and far too tight.
+  glow:
+    # Back at the original key. Measured: with lo/hi at 0.10/0.30 this pass
+    # keys the pill AND the glyphs at full scale and, blurred at sigma 43, was
+    # supplying ~48 of the 59 DN measured beside the text -- it swamped both
+    # dedicated passes and could not be steered independently. At 0.20/0.40 it
+    # is a scene bloom again (~9 DN beside the pill) and the barglow/textglow
+    # passes below own the caption's glow.
+    lo: 0.20
+    hi: 0.40
+    scatter: 10.0                 # -> sigma = scatter * 2.86 * band_h/405
+    # SCENE bloom only. Raising this pass to 1.20 was measured to do nothing
+    # for the pill (excess at d=5 went 9 -> 10 DN for a 3.4x gain): keyed off
+    # the COMPOSITE, lo/hi saturates across the whole band, so the pill's
+    # marginal contribution is crushed by the screen. The pill's own glow is
+    # the dedicated `barglow` pass below, keyed off the bar layer.
+    gain: 0.35
+  # Bar glow, keyed off the BAR LAYER (so it is the pill's glow by
+  # construction and cannot be washed out by scene brightness). Two gaussians,
+  # per STYLE2_SPEC B.6's practical recipe -- the refs' falloff is EXPONENTIAL
+  # (exp(-d/28px@720)), which one gaussian cannot do: the near pass sets the
+  # amplitude, the far pass carries the tail out to d=80@720.
+  barglow:
+    sigma_near_px: 21             # 14@720 x1.5
+    weight_near: 0.22
+    sigma_far_px: 90              # 60@720 x1.5
+    weight_far: 0.42
+    gain: 1.20                    # tint = the bar colour
+  # Text halo: a SECOND, TIGHT pass, keyed off the TEXT layer alone. The wide
+  # pass can never produce it -- a 3-5px glyph stroke blurred at sigma 43
+  # retains ~5% of its amplitude. Target ~30/20/15/10 DN at d=3/5/8/12
+  # px@720-equivalent (refs: gaussian sigma 6-8px@720, ~40 DN at the edge).
+  textglow:
+    sigma_px: 14                  # absolute px on THIS canvas (6-8@720 x1.5)
+    gain: 0.45
+    tint: "#FFF4E0"               # warm near-white -- NOT the bar tint
+  scan:
+    threshold: 0.90
+    scatter: 4.0                  # -> sigma = scatter*1.2*radius*2*band_h/405
+    radius: 0.70
+    gain: 1.40
+  # Node Video "Snow" is a procedural two-layer noise shader, NOT a particle
+  # system -- the shipped GLSL was recovered from the app and is reproduced in
+  # render_bars.py. See style/refs2/SNOW_SPEC.md. The first five values below
+  # are Node's OWN UI values, read off the tutorial's parameter panel; they are
+  # NOT x1.5-scaled (the shader is resolution independent, `size` magnifies the
+  # noise in uv space). The rest are our screen-composite calibration.
+  snow:
+    amount: 0.70                  # Node Amount  -> pow exponent 50 - 49*amount
+    size: 0.10                    # Node Size    -> texel_px = size*texel_scale
+    speed: -1.0                   # Node Speed   -> negative = the field RISES
+    flicker: 1.0                  # Node Flicker -> layer cross-drift (twinkle)
+    intensity: 1.0                # Node Intensity
+    # Node adds `color*v*intensity*18` to the source; we screen-composite the
+    # layer instead, and 7.0 is the fitted equivalent: our layer holds 22.5
+    # blobs/band above 40 DN and 12.1 above 60, vs the refs' 24 and 12.
+    gain: 7.0
+    # Fitted on the finished 1080 layer downscaled to 720 (the refs went the
+    # same way through Instagram): profile 1.00/0.45/0.13/0.04 at r=0..3 vs the
+    # refs' 1.00/0.40/0.09/0.04, and it lands the apparent rise on 3.0 px/frame
+    # against the refs' measured 2.9.
+    texel_scale: 72.0             # texel_px = size * this * band_h/405
+    # The tutorial's author eyedroppers a cream (#CDBDA3) into Snow's Color,
+    # but BOTH reference reels measure the specks as neutral white (residual
+    # RGB 96.1/96.4/93.4 gold, 92.7/92.5/92.5 rose). 0.10 is a whisper of the
+    # bar hue; raise toward ~0.35 to reproduce the tutorial's cream.
+    tint_mix: 0.10
+    sway_texels: 3.5              # horizontal sway, one whole cycle per loop
+    seed: 7
+    loop_s: 8
+  # HEAT WAVE -- the 4th Node effect, applied LAST over the composited band, so
+  # footage + pills + glyphs all shimmer together (Node runs over a flattened
+  # export, so the displacement inherently hits the text too).
+  # See FX_RECIPE.md "Heat Wave - motion re-test" for the measurements.
+  heat:
+    enable: 1                     # 1 = on, 0 = off
+    # Amplitude as an RMS displacement / frame width, so it scales with canvas.
+    # 0.00133 -> 0.96 px @720 (the measured reference value) -> 1.44 px @1080.
+    # Window: ~0.0010 is the perceptual floor; 0.0013-0.0021 is the usable
+    # range; above ~0.0040 the caption visibly swims.
+    rms_frac_w: 0.00133
+    # perlin's scale is in NORMALISED frame coordinates -- resolution
+    # independent, so do NOT rescale it for the 1080 canvas. The tutorial's
+    # 0.33 makes the whole band translate rigidly (a wobble, not a warp); the
+    # refs' ratio of local warp to bulk drift matches ~2.0.
+    xscale: 2.0
+    tscale: 0.5                   # Node "Speed 0.50" -- confirmed vs the refs
+    scroll_v: -0.004              # Node "Direction 0 x -125"
+    octaves: 6
+    persistence: 0.6
+    # ffmpeg `displace` is INTEGER-pixel. Without supersampling a +-1.4 px warp
+    # is a 3-level staircase that judders on the crisp pill edge. 3 -> 1/3 px.
+    supersample: 3
+    perlin_centre: 130.26         # measured perlin mean at xscale 2.0; getting
+    perlin_sd: 18.4               # this wrong adds a CONSTANT band offset
+    seed_x: 11
+    seed_y: 77
+
+motion:
+  video_fade_in_s: 0.3            # whole-frame fade from black
+  video_fade_out_s: 0.5
+
+audio:
+  lufs: -14.0
+  true_peak_dbtp: -1.0
+  lra: 11.0
+  fade_in_s: 0.3
+  fade_out_s: 0.5
+
+encode:
+  crf: 18
+  preset: slow
+  audio_bitrate: "192k"

@@ -1,0 +1,57 @@
+source_url: "https://www.youtube.com/watch?v=7UA9R1wE46Y"
+reciter:
+  name_en: "Muhammad Aba al-Hasan"
+  name_ar: "محمد أباالحسن"
+# Static scene image IS the clip's video track (reciter hooded, standing at the
+# mic on the RIGHT, facing left; blurred mosque interior + golden pillar on the
+# LEFT). Source footage is used for audio only.
+scene_image: assets/reciters/muhammad-aba-al-hasan-scene.png
+# 1.14x zoom crop of the 1824x1788 still (exact 16:9 = 1600x900). Head center
+# in the still is ~(1195, 648); with x clamped at 0 (max rightward shift) and
+# y=234 the head lands at frame ~(0.75, 0.46) -> slightly above center, on the
+# right, a bit larger per feedback. Hood top ~y465 keeps ~0.26 frame headroom;
+# blurred upper-LEFT wall + pillar area stays open for the text block.
+scene_crop:
+  x: 0
+  y: 234
+  w: 1600
+  h: 900
+# Text block placement (frame fractions). Reciter is RIGHT, text on the LEFT,
+# vertically ~centered; legibility over the pillar/blur comes from the
+# text-backing gradient + drop shadow.
+text:
+  center_x_frac: 0.30
+  center_y_frac: 0.47
+
+# Empirically re-timed (RMS envelope + pitch/ZCR; ASR word timestamps drift up
+# to ~1.7s during melismas and were NOT trusted for boundaries):
+#   v60 مشرقين madd ends 07:49.60 -> waqf breath 07:49.61-49.97 (-32..-36 dB)
+#   فلما onset 07:49.97 (soft ف, then a 1.4s melisma on مّـا, 140->208 Hz)
+#   لمدركون madd ends 08:04.74 -> waqf 08:04.77-05.21
+#   قال كلا onset 08:05.24; the ۖ waqf after كلا shows as the dip 08:07.2-07.6
+#   سيهدين ends 08:11.86 -> silence -> v63 فأوحينا onset 08:12.28 (excluded)
+segment:
+  start: "00:07:49.500"   # absolute in source (~0.5s before فلما); source dur 1489.694s
+  end: "00:08:12.250"     # absolute; cut inside the 0.4s gap before v63 فأوحينا
+surah: 26
+ayah_range: [61, 62]
+phrases:   # times RELATIVE to clip start (t0=00:07:49.500), seconds
+  # Ibtida' repetition (verified in audio envelope + word-level ASR): after
+  # قَالَ أَصْحَٰبُ مُوسَىٰٓ the reciter pauses (07:58.2-58.6 = rel 8.70-9.10)
+  # and RESTARTS from قَالَ. Per skill spec the pause is a natural card swap
+  # and the repeated words START the next card: split across cards 1 -> 2.
+  - t0: 0.47
+    t1: 8.70
+    ayah: 61
+    ar: "فَلَمَّا تَرَٰٓءَا ٱلْجَمْعَانِ قَالَ أَصْحَٰبُ مُوسَىٰٓ"
+    en: "And when the two companies saw one another, the companions of Moses said,"
+  - t0: 9.10
+    t1: 15.24
+    ayah: 61
+    ar: "قَالَ أَصْحَٰبُ مُوسَىٰٓ إِنَّا لَمُدْرَكُونَ"
+    en: "The companions of Moses said, “Indeed, we are to be overtaken!”"
+  - t0: 15.74
+    t1: 22.36
+    ayah: 62
+    ar: "قَالَ كَلَّآ ۖ إِنَّ مَعِىَ رَبِّى سَيَهْدِينِ"
+    en: "[Moses] said, “No! Indeed, with me is my Lord; He will guide me.”"

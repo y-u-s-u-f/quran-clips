@@ -1,0 +1,18 @@
+# Per-clip tags + post status. Edit `posted:` by hand (false/true) OR use
+#   /opt/homebrew/bin/python3 scripts/status.py post|unpost ash-shuara-61-62
+# The same script mirrors `tags` + a green Posted / red "Not Posted" marker onto
+# the folder's macOS Finder tags (visible/filterable in Finder).
+surah: ash-shuara
+surah_number: 26
+ayah_range: [61, 62]
+reciter: Muhammad Aba al-Hasan
+title: "No! Indeed, with me is my Lord; He will guide me"
+source_url: "https://www.youtube.com/watch?v=7UA9R1wE46Y"
+tags:
+  - surah-ash-shuara
+  - muhammad-aba-al-hasan
+  - musa
+  - trust-in-allah
+  - guidance
+posted: true
+posted_at: "2026-07-20"
