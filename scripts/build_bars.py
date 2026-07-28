@@ -45,7 +45,7 @@ import build_render         # noqa: E402
 FFMPEG = build_render.FFMPEG
 
 
-def build(clip_dir):
+def build(clip_dir, dry_run=False):
     clip = render_text.load_yaml(os.path.join(clip_dir, "clip.yaml"))
     style = render_text.load_yaml(render_text.template_path(clip))
 
@@ -342,7 +342,8 @@ def build(clip_dir):
     fc = "".join(parts)
 
     out_dir = os.path.join(clip_dir, "output")
-    os.makedirs(out_dir, exist_ok=True)
+    if not dry_run:
+        os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "final.mp4")
 
     cmd = [FFMPEG, "-y", "-hide_banner",
@@ -359,6 +360,9 @@ def build(clip_dir):
             "-pix_fmt", "yuv420p", "-r", str(fps),
             "-c:a", "aac", "-b:a", str(enc["audio_bitrate"]),
             "-movflags", "+faststart", out_path]
+    if dry_run:
+        build_render.emit_dry_run(cmd, fc)
+        return out_path
     if build_render.run(cmd).returncode != 0:
         sys.exit("ffmpeg failed")
 
@@ -377,5 +381,6 @@ def build(clip_dir):
 
 
 if __name__ == "__main__":
-    build(sys.argv[1] if len(sys.argv) > 1
-          else os.path.join(ROOT, "clips", "at-tawbah-128-128"))
+    _args = [a for a in sys.argv[1:] if a != "--dry-run"]
+    build(_args[0] if _args else os.path.join(ROOT, "clips", "at-tawbah-128-128"),
+          dry_run="--dry-run" in sys.argv[1:])

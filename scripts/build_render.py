@@ -52,6 +52,22 @@ def run(cmd, **kw):
     return subprocess.run(cmd, **kw)
 
 
+DRY_ARGV_MARK = "=== DRY RUN ARGV ==="
+DRY_FC_MARK = "=== DRY RUN FILTER_COMPLEX ==="
+DRY_END_MARK = "=== END DRY RUN ==="
+
+
+def emit_dry_run(cmd, fc):
+    """Print the fully-derived ffmpeg argv (one token per line) + the complete
+    filter_complex, for the golden regression tests. No encode is run."""
+    print(DRY_ARGV_MARK)
+    for tok in cmd:
+        print(tok)
+    print(DRY_FC_MARK)
+    print(fc)
+    print(DRY_END_MARK)
+
+
 def measure_loudness(src, ss, dur, lufs=LUFS, tp=TP, lra=LRA):
     """Two-pass loudnorm: first pass returns measured stats (JSON)."""
     LUFS, TP, LRA = lufs, tp, lra
@@ -71,11 +87,11 @@ def measure_loudness(src, ss, dur, lufs=LUFS, tp=TP, lra=LRA):
     return stats
 
 
-def build(clip_dir):
+def build(clip_dir, dry_run=False):
     clip = render_text.load_yaml(os.path.join(clip_dir, "clip.yaml"))
     if render_text.style_of(clip) != "default":
         import build_bars
-        return build_bars.build(clip_dir)
+        return build_bars.build(clip_dir, dry_run=dry_run)
     style = render_text.load_yaml(render_text.template_path(clip))
 
     seg = clip["segment"]
@@ -232,7 +248,8 @@ def build(clip_dir):
     fc = "".join(parts)
 
     out_dir = os.path.join(clip_dir, "output")
-    os.makedirs(out_dir, exist_ok=True)
+    if not dry_run:
+        os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "final.mp4")
 
     cmd = [
@@ -254,6 +271,9 @@ def build(clip_dir):
         "-movflags", "+faststart",
         out_path,
     ]
+    if dry_run:
+        emit_dry_run(cmd, fc)
+        return out_path
     p = run(cmd)
     if p.returncode != 0:
         sys.exit("ffmpeg failed")
@@ -266,6 +286,7 @@ def build(clip_dir):
 
 
 if __name__ == "__main__":
-    clip_dir = sys.argv[1] if len(sys.argv) > 1 else \
-        os.path.join(ROOT, "clips", "at-tawbah-51-51")
-    build(clip_dir)
+    args = [a for a in sys.argv[1:] if a != "--dry-run"]
+    dry = "--dry-run" in sys.argv[1:]
+    clip_dir = args[0] if args else os.path.join(ROOT, "clips", "at-tawbah-51-51")
+    build(clip_dir, dry_run=dry)
