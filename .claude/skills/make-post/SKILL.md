@@ -278,10 +278,11 @@ whole-ayah-repeat rule, alquran.cloud fetch and IG-hook head-tighten. What chang
   the swap reads as a snap over held sound. Take it only when the alternative is
   an over-long line; note it in a clip.yaml comment as that clip did, and flag
   it to the user in the stage-4 handoff.
-- `segment.cuts` is NOT supported on bars (build_render delegates to build_bars
-  before the splice step). Do not write `cuts:` into a bars clip.yaml — it is
-  silently ignored. Choose a segment that does not need dead air removed, or
-  tighten `segment.start`/`end` instead.
+- `segment.cuts` works on BOTH styles (the splice now runs in
+  `qc.timeline.segment`, ahead of the style dispatch). On bars, remember that
+  shortening a gap also shrinks the fades fitted into it: a cut that eats most
+  of a changeover gap will drive that swap toward `min_fade_s` or into a hard
+  cut. Cut the dead air between ayat, not the pause a caption swap lives in.
 
 ### Stage 2 — Render agent (Opus)
 - Run the EXISTING scripts with the render venv:
@@ -475,8 +476,9 @@ Run these checks and report each PASS/FAIL with the number you measured:
 - **Mid-segment cuts** (`segment.cuts`, added al-ahzab-70-71): remove dead air
   (e.g. the breath between ayat) without a separate editor. List of
   `{start,end}` in CLIP-RELATIVE seconds on the UNCUT timeline; cuts MUST fall
-  in verified true silence between phrases. build_render.py splices the kept
-  sub-intervals into `work/source_seg.mp4` and shifts later phrase t0/t1 earlier
+  in verified true silence between phrases. `qc.timeline.segment` splices the
+  kept sub-intervals into `work/source_seg.mp4` (both styles, before the style
+  dispatch) and shifts later phrase t0/t1 earlier
   by each preceding cut's length. Keep clip.yaml phrase times in the UNCUT
   timeline; the remap happens only at render. Hard cut (fine for a near-static
   shot in a pause); add an xfade only if a jump is visible.
@@ -532,9 +534,11 @@ Run these checks and report each PASS/FAIL with the number you measured:
     two on screen at once. Both fades of a changeover are fitted into the real
     recited gap, shrinking proportionally but never below `min_fade_s: 0.20`;
     when even that will not fit, `build_bars` prints `HARD CUT at changeover(s)`.
-  - **`segment.cuts` does NOT work on bars** — `build_render.build()` delegates
-    to `build_bars` BEFORE the splice step, so a `cuts:` list is silently
-    ignored. Landscape clips are unaffected.
+  - **`segment.cuts` works on bars too** (since the splice moved into
+    `qc.timeline.segment`, which runs before the style dispatch). The phrase
+    times in clip.yaml stay on the UNCUT timeline either way; the remap happens
+    at render. Watch the interaction with the sequential fades above — a cut
+    that shortens a changeover gap shrinks that swap's fades with it.
   - FX are confined strictly to the band and applied before the pad, so the
     letterbox stays bit-exact black. Heat wave is applied LAST over the composited
     band (footage + pills + glyphs shimmer together) — this is correct, not a bug.

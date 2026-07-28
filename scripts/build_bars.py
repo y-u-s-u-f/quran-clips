@@ -25,8 +25,13 @@ Assembles and RUNS into <clip>/output/final.mp4:
                     window, `all` sweeps both.
       - crossfade : uniform alpha dissolve (the pipeline's 0.45 s feel)
   * FX confined STRICTLY to the footage band (any spill into the letterbox
-    instantly reads as wrong): Glow -> Glow Scan -> Snow, per FX_RECIPE.md.
-    Heat Wave is deliberately absent (invisible, +66% bitrate, tears the pill).
+    instantly reads as wrong): Glow -> Glow Scan -> Snow -> Heat Wave, per
+    FX_RECIPE.md. Heat Wave is ON (templates/bars.yaml `fx.heat.enable: 1`) and
+    runs LAST, over the composited band, so the footage, the pills and the
+    glyphs are displaced by one shared perlin field -- 1.44 px RMS at this
+    canvas, per the reference measurement. It is the most expensive stage in
+    the graph (~49% of render time: two supersampled perlin maps plus a 3x
+    up/down scale around `displace`); set `enable: 0` for a fast preview.
   * audio: the same two-pass loudnorm + fades as build_render.py
   * encode: libx264 yuv420p 30fps, aac, +faststart
 
@@ -45,13 +50,20 @@ import build_render         # noqa: E402
 sys.path.insert(0, ROOT)
 import qc.audio             # noqa: E402
 import qc.timeline          # noqa: E402
-from qc.timeline import hms  # noqa: E402
 
 FFMPEG = build_render.FFMPEG
 
 
-def build(clip_dir, dry_run=False):
-    clip = render_text.load_yaml(os.path.join(clip_dir, "clip.yaml"))
+def build(clip_dir, dry_run=False, ctx=None):
+    """`ctx` is the (clip, src, ss, dur) build_render.build() already resolved
+    -- it owns loading clip.yaml and applying segment.cuts, and its phrase times
+    are on the cut timeline. Absent (i.e. this module run directly), do it
+    here; the two paths must stay equivalent."""
+    if ctx is None:
+        clip = render_text.load_yaml(os.path.join(clip_dir, "clip.yaml"))
+        src, ss, dur = qc.timeline.segment(clip_dir, clip)
+    else:
+        clip, src, ss, dur = ctx
     style = render_text.load_yaml(render_text.template_path(clip))
 
     W = int(style["canvas"]["width"])
@@ -63,11 +75,6 @@ def build(clip_dir, dry_run=False):
     aud = style["audio"]
     mot = style["motion"]
     enc = style["encode"]
-
-    seg = clip["segment"]
-    ss = hms(seg["start"])
-    dur = round(hms(seg["end"]) - ss, 3)
-    src = os.path.join(clip_dir, "work", "source.mp4")
 
     # ---- (re)build overlays + the particle layer; also derives the bar colour
     rep = render_bars.build(clip_dir)

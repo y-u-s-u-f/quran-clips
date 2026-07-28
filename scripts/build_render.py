@@ -61,66 +61,18 @@ def emit_dry_run(cmd, fc):
 
 def build(clip_dir, dry_run=False):
     clip = render_text.load_yaml(os.path.join(clip_dir, "clip.yaml"))
+
+    # ---- resolve the trim, splicing out any segment.cuts, BEFORE the style
+    #      dispatch so that BOTH styles honour `cuts` (they used to be applied
+    #      after it, and were therefore silently ignored on bars clips). This
+    #      also remaps the in-memory phrase times onto the cut timeline.
+    src, ss, dur = qc.timeline.segment(clip_dir, clip)
+
     if render_text.style_of(clip) != "default":
         import build_bars
-        return build_bars.build(clip_dir, dry_run=dry_run)
+        return build_bars.build(clip_dir, dry_run=dry_run,
+                                ctx=(clip, src, ss, dur))
     style = render_text.load_yaml(render_text.template_path(clip))
-
-    seg = clip["segment"]
-    ss = hms(seg["start"])
-    dur = round(hms(seg["end"]) - ss, 3)
-    src = os.path.join(clip_dir, "work", "source.mp4")
-
-    # ---- optional mid-segment cuts (remove dead air, e.g. the breath between
-    #      ayat) ----
-    # segment.cuts: list of {start,end} in CLIP-RELATIVE seconds (relative to
-    # segment.start, in the UNCUT timeline; cuts must fall in true silence
-    # between phrases). We splice the kept sub-intervals into
-    # work/source_seg.mp4 (re-encoded, audio+video) and then run the normal
-    # single-trim pipeline over it (ss=0). Phrase t0/t1 are shifted earlier by
-    # the length of every cut that precedes them. clip.yaml keeps the UNCUT
-    # phrase times + the cuts list; this remap is applied only here at render.
-    cuts = sorted((float(c["start"]), float(c["end"]))
-                  for c in (seg.get("cuts") or []))
-    if cuts:
-        kept, prev = [], 0.0
-        for c0, c1 in cuts:
-            if c0 > prev:
-                kept.append((prev, c0))
-            prev = c1
-        if prev < dur - 1e-3:
-            kept.append((prev, dur))
-        vlab, alab, parts = [], [], []
-        for i, (k0, k1) in enumerate(kept):
-            a0, a1 = ss + k0, ss + k1
-            parts.append(f"[0:v]trim=start={a0:.3f}:end={a1:.3f},"
-                         f"setpts=PTS-STARTPTS[v{i}];")
-            parts.append(f"[0:a]atrim=start={a0:.3f}:end={a1:.3f},"
-                         f"asetpts=PTS-STARTPTS[a{i}];")
-            vlab.append(f"[v{i}]")
-            alab.append(f"[a{i}]")
-        n = len(kept)
-        parts.append("".join(vlab) + f"concat=n={n}:v=1:a=0[vseg];")
-        parts.append("".join(alab) + f"concat=n={n}:v=0:a=1[aseg]")
-        seg_path = os.path.join(clip_dir, "work", "source_seg.mp4")
-        scmd = [FFMPEG, "-y", "-hide_banner", "-i", src,
-                "-filter_complex", "".join(parts),
-                "-map", "[vseg]", "-map", "[aseg]",
-                "-c:v", "libx264", "-crf", "16", "-preset", "medium",
-                "-pix_fmt", "yuv420p", "-r", "30",
-                "-c:a", "aac", "-b:a", "256k", seg_path]
-        if run(scmd).returncode != 0:
-            sys.exit("ffmpeg splice (segment.cuts) failed")
-        cut_total = sum(c1 - c0 for c0, c1 in cuts)
-
-        def _remap(t):
-            return round(t - sum(c1 - c0 for c0, c1 in cuts
-                                 if c1 <= t + 1e-6), 3)
-        for ph in clip["phrases"]:
-            ph["t0"], ph["t1"] = _remap(ph["t0"]), _remap(ph["t1"])
-        src, ss, dur = seg_path, 0.0, round(dur - cut_total, 3)
-        print(f"  spliced {n} kept interval(s) -> source_seg.mp4 | removed "
-              f"{cut_total:.2f}s | new dur {dur:.3f}s")
 
     # Two video-track modes:
     #   LIVE  : the trimmed SOURCE footage IS the video track (audio + video
