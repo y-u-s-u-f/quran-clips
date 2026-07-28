@@ -42,6 +42,10 @@ import render_text          # noqa: E402
 import render_bars          # noqa: E402
 import build_render         # noqa: E402
 
+sys.path.insert(0, ROOT)
+import qc.audio             # noqa: E402
+from qc.timeline import hms  # noqa: E402
+
 FFMPEG = build_render.FFMPEG
 
 
@@ -60,8 +64,8 @@ def build(clip_dir, dry_run=False):
     enc = style["encode"]
 
     seg = clip["segment"]
-    ss = build_render.hms(seg["start"])
-    dur = round(build_render.hms(seg["end"]) - ss, 3)
+    ss = hms(seg["start"])
+    dur = round(hms(seg["end"]) - ss, 3)
     src = os.path.join(clip_dir, "work", "source.mp4")
 
     # ---- (re)build overlays + the particle layer; also derives the bar colour
@@ -143,14 +147,10 @@ def build(clip_dir, dry_run=False):
 
     # ---- audio ---------------------------------------------------------------
     lufs, tp, lra = float(aud["lufs"]), float(aud["true_peak_dbtp"]), float(aud["lra"])
-    st = build_render.measure_loudness(src, ss, dur, lufs, tp, lra)
-    ln = (f"loudnorm=I={lufs}:TP={tp}:LRA={lra}:"
-          f"measured_I={st['input_i']}:measured_TP={st['input_tp']}:"
-          f"measured_LRA={st['input_lra']}:measured_thresh={st['input_thresh']}:"
-          f"offset={st['target_offset']}:linear=true:print_format=summary")
+    st = qc.audio.measure_loudness(src, ss, dur, lufs, tp, lra)
+    ln = qc.audio.loudnorm_filter(st, lufs, tp, lra)
     afi, afo = float(aud["fade_in_s"]), float(aud["fade_out_s"])
-    afade = (f"afade=t=in:st=0:d={afi},"
-             f"afade=t=out:st={dur - afo:.3f}:d={afo}")
+    afade = qc.audio.afade_filter(dur, afi, afo)
 
     # ---- FX constants (FX_RECIPE parameter mapping, scaled to this band) -----
     g, sc, sn = style["fx"]["glow"], style["fx"]["scan"], style["fx"]["snow"]

@@ -23,29 +23,23 @@ pre-rendered PNG + overlay, which this pipeline relies on.
 
 Run with tools/render-venv/bin/python.
 """
-import os, sys, json, subprocess, shlex
+import os, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 import render_text  # noqa: E402
-from qc.timeline import hms  # noqa: E402,F401  (re-exported for the siblings)
-
-FFMPEG = "/opt/homebrew/bin/ffmpeg"
-FFPROBE = "/opt/homebrew/bin/ffprobe"
+# re-exported: build_bars.py and the golden harness reach for these through
+# this module, which is the pipeline's entrypoint.
+from qc.proc import FFMPEG, FFPROBE, run  # noqa: E402,F401
+from qc.timeline import hms  # noqa: E402,F401
+from qc.audio import (LUFS, TP, LRA, measure_loudness,  # noqa: E402,F401
+                      loudnorm_filter, afade_filter)
 
 CROSSFADE = 0.45   # style.yaml motion.crossfade_s
 FADE_IN_A = 0.3    # style.yaml audio.fade_in_s
 FADE_OUT_A = 0.5   # style.yaml audio.fade_out_s
-LUFS = -14.0
-TP = -1.0
-LRA = 11.0
-
-
-def run(cmd, **kw):
-    print("+", " ".join(shlex.quote(c) for c in cmd))
-    return subprocess.run(cmd, **kw)
 
 
 DRY_ARGV_MARK = "=== DRY RUN ARGV ==="
@@ -62,25 +56,6 @@ def emit_dry_run(cmd, fc):
     print(DRY_FC_MARK)
     print(fc)
     print(DRY_END_MARK)
-
-
-def measure_loudness(src, ss, dur, lufs=LUFS, tp=TP, lra=LRA):
-    """Two-pass loudnorm: first pass returns measured stats (JSON)."""
-    LUFS, TP, LRA = lufs, tp, lra
-    cmd = [FFMPEG, "-hide_banner", "-nostats", "-ss", f"{ss:.3f}",
-           "-t", f"{dur:.3f}", "-i", src,
-           "-af", f"loudnorm=I={LUFS}:TP={TP}:LRA={LRA}:print_format=json",
-           "-f", "null", "-"]
-    p = run(cmd, capture_output=True, text=True)
-    out = p.stderr
-    start = out.rfind("{")
-    end = out.rfind("}")
-    if start == -1 or end == -1:
-        raise RuntimeError("loudnorm pass-1 produced no JSON:\n" + out[-2000:])
-    stats = json.loads(out[start:end + 1])
-    print("  loudnorm pass-1:", {k: stats[k] for k in
-          ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")})
-    return stats
 
 
 def build(clip_dir, dry_run=False):
@@ -204,12 +179,8 @@ def build(clip_dir, dry_run=False):
 
     # ---- audio: two-pass loudnorm ----
     st = measure_loudness(src, ss, dur)
-    ln = (f"loudnorm=I={LUFS}:TP={TP}:LRA={LRA}:"
-          f"measured_I={st['input_i']}:measured_TP={st['input_tp']}:"
-          f"measured_LRA={st['input_lra']}:measured_thresh={st['input_thresh']}:"
-          f"offset={st['target_offset']}:linear=true:print_format=summary")
-    afade = (f"afade=t=in:st=0:d={FADE_IN_A},"
-             f"afade=t=out:st={dur - FADE_OUT_A:.3f}:d={FADE_OUT_A}")
+    ln = loudnorm_filter(st, LUFS, TP, LRA)
+    afade = afade_filter(dur, FADE_IN_A, FADE_OUT_A)
 
     # ---- filtergraph ----
     # LIVE  : [0]=source (audio + video bg)  [1]=grade  [2..]=phrase overlays
