@@ -3,8 +3,16 @@
     qc source add <url> [--no-video]   download + metadata + auto-captions
     qc locate <video_id> [-v]          which surah/ayat does this video recite?
     qc ayah <surah>:<ayah>[-<ayah>]    print the mushaf text (Uthmani + Sahih)
+    qc propose <video_id> [options]    ranked clip-worthy candidate windows
     qc author <video_id> <surah>:<a>[-<b>] <start> <end> [options]
                                        align + time a window into clip.yaml
+
+`propose` options:
+    --style S     bars | default   (default: bars) -- changes the ranking
+    -n N          how many candidates to print (default: 5)
+    --range MM:SS-MM:SS   skip proposal, score this window instead
+    --verses S:A[-B]      skip proposal, score these ayat instead
+    --json        machine-readable only, to stdout
 
 `author` options:
     -o DIR        where to write clip.yaml + tags.yaml (default: a temp dir)
@@ -65,6 +73,9 @@ def main(argv=None):
             print()
         return 0
 
+    if cmd == "propose":
+        return _propose(argv)
+
     if cmd == "author":
         return _author(argv)
 
@@ -88,6 +99,28 @@ def _timecode(s):
     for p in parts:
         t = t * 60 + float(p)
     return t
+
+
+def _propose(argv):
+    from .author import fetch, propose
+
+    style = _opt(argv, "--style", "bars")
+    n = int(_opt(argv, "-n", "5"))
+    rng = _opt(argv, "--range")
+    verses = _opt(argv, "--verses")
+    as_json = "--json" in argv
+    rest = [a for a in argv if not a.startswith("-")]
+    if not rest:
+        print("usage: qc propose <video_id> [--style bars|default] [-n 5] "
+              "[--range MM:SS-MM:SS] [--verses S:A-B] [--json]",
+              file=sys.stderr)
+        return 2
+    if style not in ("bars", "default"):
+        print("unknown style %r" % style, file=sys.stderr)
+        return 2
+    propose.run(fetch.video_id(rest[0]), style=style, n=n,
+                rng=rng, verses=verses, as_json=as_json)
+    return 0
 
 
 def _author(argv):
