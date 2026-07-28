@@ -49,6 +49,7 @@ import build_render         # noqa: E402
 
 sys.path.insert(0, ROOT)
 import qc.audio             # noqa: E402
+import qc.ffgraph           # noqa: E402
 import qc.timeline          # noqa: E402
 
 FFMPEG = build_render.FFMPEG
@@ -144,23 +145,26 @@ def build(clip_dir, dry_run=False, ctx=None):
     # ---- filtergraph ---------------------------------------------------------
     # inputs: [0]=source  [1..2n]=bar,text per phrase  [2n+1]=snow  [2n+2]=scrim
     ph_base = 1
-    snow_idx = ph_base + 2 * len(phrases)
-    scrim_idx = snow_idx + 1
+    g_ = qc.ffgraph.Graph()
+    vin = g_.input(src, ss=f"{ss:.3f}", t=f"{dur:.3f}")
+    ph_in = [g_.input(png, framerate=fps, loop=1) for png in phrase_pngs]
+    snow_in = g_.input(snow, stream_loop=-1)
+    scrim_in = g_.input(rep["scrim"], framerate=fps, loop=1)
+
     wtgt = str(tr["wipe_target"]).lower()
-    parts = [
-        f"[0:v]{render_bars.band_source_chain(clip, style)},setsar=1,fps={fps},"
-        f"format=gbrp[bnd]"
-        f";[{scrim_idx}:v]format=gbrp[scr]"
-        f";[bnd][scr]blend=all_mode=multiply:shortest=1,format=rgba,"
-        f"pad={W}:{H}:0:{BY}:color=black[bg]"
-        # the text layers are accumulated a second time onto a black plate to
-        # key the tight halo off; `d=` keeps this branch finite (every other
-        # input on it is an infinite still).
-        f";color=c=black:s={W}x{H}:r={fps}:d={dur:.3f}[tg0]"
-        # ...and the bar layers likewise, as a WHITE silhouette so the glow's
-        # amplitude does not follow the (clip-derived) pill colour.
-        f";color=c=black:s={W}x{H}:r={fps}:d={dur:.3f}[bq0]"
-    ]
+    g_.chain(vin, [render_bars.band_source_chain(clip, style), "setsar=1",
+                   f"fps={fps}", "format=gbrp"], "bnd")
+    g_.chain(scrim_in, "format=gbrp", "scr")
+    g_.chain(["bnd", "scr"],
+             ["blend=all_mode=multiply:shortest=1", "format=rgba",
+              f"pad={W}:{H}:0:{BY}:color=black"], "bg")
+    # the text layers are accumulated a second time onto a black plate to key
+    # the tight halo off; `d=` keeps this branch finite (every other input on
+    # it is an infinite still).
+    g_.chain(None, f"color=c=black:s={W}x{H}:r={fps}:d={dur:.3f}", "tg0")
+    # ...and the bar layers likewise, as a WHITE silhouette so the glow's
+    # amplitude does not follow the (clip-derived) pill colour.
+    g_.chain(None, f"color=c=black:s={W}x{H}:r={fps}:d={dur:.3f}", "bq0")
     base = "bg"
     for i, (kind, t_in, d_in, t_out, d_out) in enumerate(sched):
         masks = {}                                # layer name -> mask label
@@ -181,14 +185,15 @@ def build(clip_dir, dry_run=False, ctx=None):
             fi = f"{x1:.1f}-{trav:.1f}*(t-{t_in:.3f})/{d_in:.3f}"
             fo = f"{x1:.1f}-{trav:.1f}*(t-{t_out:.3f})/{d_out:.3f}"
             xe = f"if(lt(t,{a:.3f}),max(0,{fi}),min(0,{fo}-{W}))"
-            parts.append(
-                f";color=c=black:s={W}x{H}:r={fps}[kb{i + 1}]"
-                f";color=c=white:s={W}x{H}:r={fps}[kw{i + 1}]"
-                f";[kb{i + 1}][kw{i + 1}]overlay=x='{xe}':y=0:shortest=1,"
-                f"gblur=sigma={feather / 4.0:.2f}:steps=2,format=gray[m{i + 1}]"
-            )
+            g_.chain(None, f"color=c=black:s={W}x{H}:r={fps}", f"kb{i + 1}")
+            g_.chain(None, f"color=c=white:s={W}x{H}:r={fps}", f"kw{i + 1}")
+            g_.chain([f"kb{i + 1}", f"kw{i + 1}"],
+                     [f"overlay=x='{xe}':y=0:shortest=1",
+                      f"gblur=sigma={feather / 4.0:.2f}:steps=2", "format=gray"],
+                     f"m{i + 1}")
             if wtgt == "all":
-                parts.append(f";[m{i + 1}]split=2[mbar{i + 1}][mtext{i + 1}]")
+                g_.chain(f"m{i + 1}", "split=2",
+                         [f"mbar{i + 1}", f"mtext{i + 1}"])
                 masks = {"bar": f"mbar{i + 1}", "text": f"mtext{i + 1}"}
             else:
                 # `bar`: the pill alone rides the sweep; the text dissolves.
@@ -199,34 +204,36 @@ def build(clip_dir, dry_run=False, ctx=None):
             sidx = ph_base + 2 * i + j
             lbl = f"{name}{i + 1}"
             if name in masks:
-                parts.append(
-                    f";[{sidx}:v]format=rgba,split=2[p{lbl}][pa{lbl}]"
-                    f";[pa{lbl}]alphaextract[a{lbl}]"
-                    f";[a{lbl}][{masks[name]}]blend=all_mode=multiply:shortest=1[am{lbl}]"
-                    f";[p{lbl}][am{lbl}]alphamerge[x{lbl}]"
-                )
+                g_.chain(ph_in[sidx - ph_base], ["format=rgba", "split=2"],
+                         [f"p{lbl}", f"pa{lbl}"])
+                g_.chain(f"pa{lbl}", "alphaextract", f"a{lbl}")
+                g_.chain([f"a{lbl}", masks[name]],
+                         "blend=all_mode=multiply:shortest=1", f"am{lbl}")
+                g_.chain([f"p{lbl}", f"am{lbl}"], "alphamerge", f"x{lbl}")
             else:
-                parts.append(
-                    f";[{sidx}:v]format=rgba,"
-                    f"fade=t=in:st={t_in:.3f}:d={d_in:.3f}:alpha=1,"
-                    f"fade=t=out:st={t_out:.3f}:d={d_out:.3f}:alpha=1[x{lbl}]"
-                )
+                g_.chain(ph_in[sidx - ph_base],
+                         ["format=rgba",
+                          f"fade=t=in:st={t_in:.3f}:d={d_in:.3f}:alpha=1",
+                          f"fade=t=out:st={t_out:.3f}:d={d_out:.3f}:alpha=1"],
+                         f"x{lbl}")
             if name == "bar":
-                parts.append(
-                    f";[x{lbl}]split=2[x{lbl}c][x{lbl}g]"
-                    f";[x{lbl}g]alphaextract[q{i + 1}]"
-                    f";color=c=white:s={W}x{H}:r={fps}:d={dur:.3f}[qw{i + 1}]"
-                    f";[qw{i + 1}][q{i + 1}]alphamerge[qm{i + 1}]"
-                    f";[bq{i}][qm{i + 1}]overlay=0:0:format=auto:shortest=1[bq{i + 1}]")
+                g_.chain(f"x{lbl}", "split=2", [f"x{lbl}c", f"x{lbl}g"])
+                g_.chain(f"x{lbl}g", "alphaextract", f"q{i + 1}")
+                g_.chain(None, f"color=c=white:s={W}x{H}:r={fps}:d={dur:.3f}",
+                         f"qw{i + 1}")
+                g_.chain([f"qw{i + 1}", f"q{i + 1}"], "alphamerge",
+                         f"qm{i + 1}")
+                g_.chain([f"bq{i}", f"qm{i + 1}"],
+                         "overlay=0:0:format=auto:shortest=1", f"bq{i + 1}")
                 lbl = f"{lbl}c"
             if name == "text":
-                parts.append(f";[x{lbl}]split=2[x{lbl}c][x{lbl}g]"
-                             f";[tg{i}][x{lbl}g]overlay=0:0:format=auto:"
-                             f"shortest=1[tg{i + 1}]")
+                g_.chain(f"x{lbl}", "split=2", [f"x{lbl}c", f"x{lbl}g"])
+                g_.chain([f"tg{i}", f"x{lbl}g"],
+                         "overlay=0:0:format=auto:shortest=1", f"tg{i + 1}")
                 lbl = f"{lbl}c"
             nxt = f"c{i + 1}{name[0]}"
-            parts.append(
-                f";[{base}][x{lbl}]overlay=0:0:format=auto:shortest=1[{nxt}]")
+            g_.chain([base, f"x{lbl}"], "overlay=0:0:format=auto:shortest=1",
+                     nxt)
             base = nxt
 
     # ---- HEAT WAVE (4th Node effect; LAST, over the composited band) ---------
@@ -253,61 +260,65 @@ def build(clip_dir, dry_run=False, ctx=None):
         # neighbour up / area down: the upscale must not soften, the downscale
         # must average -- that is what turns integer `displace` into 1/S px.
         heat_in = "bandfx0"
-        heatg = (f";{psrc}:seed={int(ht.get('seed_x', 11))},{pmap}[xm]"
-                 f";{psrc}:seed={int(ht.get('seed_y', 77))},{pmap}[ym]"
-                 f";[bandfx0]scale={SW}:{SH}:flags=neighbor[bigb]"
-                 f";[bigb][xm][ym]displace=edge=smear,"
-                 f"scale={BW}:{BH}:flags=area[bandfx]")
     else:
-        heat_in, heatg = "bandfx", ""
+        heat_in = "bandfx"
 
     # FX, applied to the captioned flat but cropped to the band and pasted back
     # so nothing can bleed into the letterbox.
-    parts.append(
-        f";[{base}]split=2[full][pre]"
-        f";[pre]format=gbrp,crop={BW}:{BH}:0:{BY}[band]"
-        ";[band]split=3[fxbase][g1][sc0]"
-        f";[g1]{LUMA},{KNEE},gblur=sigma={sig}:steps=3,"
-        f"colorchannelmixer=rr={gr}:gg={gg}:bb={gb}[glow]"
-        ";[fxbase][glow]blend=all_mode=screen:shortest=1[s1]"
-        f";[bq{len(phrases)}]format=gbrp,split=2[bqn][bqf]"
-        f";[bqn]gblur=sigma={bgsn}:steps=3,"
-        f"colorchannelmixer=rr={bgn[0]}:gg={bgn[1]}:bb={bgn[2]}[bgn]"
-        f";[bqf]gblur=sigma={bgsf}:steps=3,"
-        f"colorchannelmixer=rr={bgf[0]}:gg={bgf[1]}:bb={bgf[2]}[bgf]"
-        f";[bgn][bgf]blend=all_mode=addition:shortest=1,"
-        f"crop={BW}:{BH}:0:{BY}[barglow]"
-        ";[s1][barglow]blend=all_mode=screen:shortest=1[s1a]"
-        f";[tg{len(phrases)}]format=gbrp,crop={BW}:{BH}:0:{BY},{LUMA},"
-        f"gblur=sigma={tgsig}:steps=3,"
-        f"colorchannelmixer=rr={tgr}:gg={tgg}:bb={tgb}[tglow]"
-        ";[s1a][tglow]blend=all_mode=screen:shortest=1[s1b]"
-        f";[sc0]{LUMA},{SKNEE},gblur=sigma={ssig}:steps=3,"
-        "lutrgb=r='clip(val*3,0,255)':g='clip(val*3,0,255)':b='clip(val*3,0,255)',"
-        f"colorchannelmixer=rr={sr}:gg={sg}:bb={sb}[scan]"
-        ";[s1b][scan]blend=all_mode=screen:shortest=1[s2]"
-        f";[{snow_idx}:v]format=gbrp,scale={BW}:{BH}:flags=neighbor,setsar=1[pt]"
-        f";[s2][pt]blend=all_mode=screen:shortest=1[{heat_in}]"
-        f"{heatg}"
-        f";[full][bandfx]overlay=0:{BY}:shortest=1,"
-        f"fade=t=in:st=0:d={mot['video_fade_in_s']},"
-        f"fade=t=out:st={dur - float(mot['video_fade_out_s']):.3f}:"
-        f"d={mot['video_fade_out_s']},format=yuv420p[vout]"
-    )
-    parts.append(f";[0:a]{ln},{afade}[aout]")
-    fc = "".join(parts)
+    full, pre = g_.chain(base, "split=2", ["full", "pre"])
+    g_.chain(pre, ["format=gbrp", f"crop={BW}:{BH}:0:{BY}"], "band")
+    # every branch off the band is a tap: the split's degree is whatever the
+    # consumers below add up to, so dropping one is a one-line edit.
+    fxbase = g_.tap("band", "fxbase")
+    g1 = g_.tap("band", "g1")
+    sc0 = g_.tap("band", "sc0")
+    g_.chain(g1, [LUMA, KNEE, f"gblur=sigma={sig}:steps=3",
+                  f"colorchannelmixer=rr={gr}:gg={gg}:bb={gb}"], "glow")
+    g_.chain([fxbase, "glow"], "blend=all_mode=screen:shortest=1", "s1")
+    g_.chain(f"bq{len(phrases)}", ["format=gbrp", "split=2"], ["bqn", "bqf"])
+    g_.chain("bqn", [f"gblur=sigma={bgsn}:steps=3",
+                     f"colorchannelmixer=rr={bgn[0]}:gg={bgn[1]}:bb={bgn[2]}"],
+             "bgn")
+    g_.chain("bqf", [f"gblur=sigma={bgsf}:steps=3",
+                     f"colorchannelmixer=rr={bgf[0]}:gg={bgf[1]}:bb={bgf[2]}"],
+             "bgf")
+    g_.chain(["bgn", "bgf"], ["blend=all_mode=addition:shortest=1",
+                              f"crop={BW}:{BH}:0:{BY}"], "barglow")
+    g_.chain(["s1", "barglow"], "blend=all_mode=screen:shortest=1", "s1a")
+    g_.chain(f"tg{len(phrases)}",
+             ["format=gbrp", f"crop={BW}:{BH}:0:{BY}", LUMA,
+              f"gblur=sigma={tgsig}:steps=3",
+              f"colorchannelmixer=rr={tgr}:gg={tgg}:bb={tgb}"], "tglow")
+    g_.chain(["s1a", "tglow"], "blend=all_mode=screen:shortest=1", "s1b")
+    g_.chain(sc0, [LUMA, SKNEE, f"gblur=sigma={ssig}:steps=3",
+                   "lutrgb=r='clip(val*3,0,255)':g='clip(val*3,0,255)':"
+                   "b='clip(val*3,0,255)'",
+                   f"colorchannelmixer=rr={sr}:gg={sg}:bb={sb}"], "scan")
+    g_.chain(["s1b", "scan"], "blend=all_mode=screen:shortest=1", "s2")
+    g_.chain(snow_in, ["format=gbrp", f"scale={BW}:{BH}:flags=neighbor",
+                       "setsar=1"], "pt")
+    g_.chain(["s2", "pt"], "blend=all_mode=screen:shortest=1", heat_in)
+    if heat_in == "bandfx0":
+        g_.chain(None, [f"{psrc}:seed={int(ht.get('seed_x', 11))}", pmap], "xm")
+        g_.chain(None, [f"{psrc}:seed={int(ht.get('seed_y', 77))}", pmap], "ym")
+        g_.chain("bandfx0", f"scale={SW}:{SH}:flags=neighbor", "bigb")
+        g_.chain(["bigb", "xm", "ym"], ["displace=edge=smear",
+                                        f"scale={BW}:{BH}:flags=area"],
+                 "bandfx")
+    g_.chain([full, "bandfx"],
+             [f"overlay=0:{BY}:shortest=1",
+              f"fade=t=in:st=0:d={mot['video_fade_in_s']}",
+              f"fade=t=out:st={dur - float(mot['video_fade_out_s']):.3f}:"
+              f"d={mot['video_fade_out_s']}", "format=yuv420p"], "vout")
+    g_.chain(vin.a, [ln, afade], "aout")
+    fc, in_argv = g_.render()
 
     out_dir = os.path.join(clip_dir, "output")
     if not dry_run:
         os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "final.mp4")
 
-    cmd = [FFMPEG, "-y", "-hide_banner",
-           "-ss", f"{ss:.3f}", "-t", f"{dur:.3f}", "-i", src]
-    for png in phrase_pngs:
-        cmd += ["-framerate", str(fps), "-loop", "1", "-i", png]
-    cmd += ["-stream_loop", "-1", "-i", snow]
-    cmd += ["-framerate", str(fps), "-loop", "1", "-i", rep["scrim"]]
+    cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv
     cmd += ["-filter_complex", fc,
             "-map", "[vout]", "-map", "[aout]",
             "-t", f"{dur:.3f}",
