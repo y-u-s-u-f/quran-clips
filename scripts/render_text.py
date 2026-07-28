@@ -23,7 +23,7 @@ Run with tools/render-venv/bin/python (a --system-site-packages venv over
 """
 import os, sys, math, re, itertools
 
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, features
+from PIL import Image, ImageDraw, ImageFilter
 
 try:
     import yaml
@@ -34,14 +34,15 @@ except ImportError:                                       # pragma: no cover
              "tools/render-venv/bin/pip install -r requirements/render.txt). "
              "Do NOT pip-install into /opt/homebrew/bin/python3.")
 
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 # ----------------------------------------------------------------------------
 # hard requirements
 # ----------------------------------------------------------------------------
-if not features.check("raqm"):
-    sys.exit("FATAL: Pillow RAQM (HarfBuzz+FriBiDi) not available. "
-             "Use tools/render-venv/bin/python.")
-
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+# importing qc.fonts is what enforces RAQM (it exits if Pillow lacks it)
+sys.path.insert(0, ROOT)
+from qc.arabic import norm_ar  # noqa: E402
+from qc.fonts import RAQM, fit_pt, truetype  # noqa: E402,F401
 
 # ----------------------------------------------------------------------------
 # YAML
@@ -99,11 +100,6 @@ def hexrgb(s, default=(247, 245, 239)):
         return default
     s = s.lstrip("#")
     return tuple(int(s[i:i+2], 16) for i in (0, 2, 4))
-
-RAQM = ImageFont.Layout.RAQM
-
-def truetype(path, pt):
-    return ImageFont.truetype(path, pt, layout_engine=RAQM)
 
 def draw_rtl(draw, xy, text, font, fill, anchor="mm"):
     draw.text(xy, text, font=font, fill=fill, anchor=anchor,
@@ -245,23 +241,11 @@ def build(clip_dir):
         return render_bars.build(clip_dir)
     style = load_yaml(template_path(clip))
 
-    # Normalize Arabic: drop small tajweed ANNOTATION marks (reading aids, not
-    # letters or harakat) that either misrender or read as "random floating
-    # symbols" over the clean account style (learned al-ahzab-70-71):
-    #   U+06DF SMALL HIGH ROUNDED ZERO — silent-letter aid over واو الجماعة
-    #          alifs (ءَامَنُوا۟); KFGQPC Hafs v22 can't mark-attach it via RAQM
-    #          -> ugly U+25CC dotted-circle fallback cluster.
-    #   U+06ED SMALL LOW MEEM — iqlab/ikhfa aid (قَوْلًۭا سَدِيدًۭا); the tiny
-    #          floating "meem" the user flagged.
-    # The consonantal text + all pronunciation diacritics (harakat, tanwin,
-    # shadda, madda, superscript alif, small waw/yeh silah) are untouched.
-    _STRIP_MARKS = {"۟", "ۭ"}
-
-    def _norm_ar(s):
-        return "".join(c for c in s if c not in _STRIP_MARKS)
+    # Drop the small tajweed annotation marks (see qc.arabic for which and why;
+    # learned on al-ahzab-70-71).
     for _ph in clip.get("phrases", []):
         if isinstance(_ph, dict) and _ph.get("ar"):
-            _ph["ar"] = _norm_ar(_ph["ar"])
+            _ph["ar"] = norm_ar(_ph["ar"])
 
     ar_color = hexrgb(style["arabic"]["color"])
     en_color = hexrgb(style["english"]["color"])
@@ -325,8 +309,7 @@ def build(clip_dir):
         f = truetype(AR_FONT_PATH, NOMINAL_AR_PT)
         bb = bbox_rtl(pd, (0, 0), ph["ar"] + med_suffix(i), f)
         widest = max(widest, bb[2] - bb[0])
-    scale = min(1.0, max_line_w / widest)
-    AR_PT = max(40, int(NOMINAL_AR_PT * scale))
+    AR_PT = fit_pt(NOMINAL_AR_PT, 40, max_line_w, widest)
     ar_font = truetype(AR_FONT_PATH, AR_PT)
 
     # English fonts. Uniform ALL-CAPS at one size when smallcaps is off

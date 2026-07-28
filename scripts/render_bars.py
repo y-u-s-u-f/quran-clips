@@ -35,40 +35,17 @@ import os
 import subprocess
 import sys
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, features
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from render_text import ROOT, load_yaml, hexrgb, truetype  # noqa: E402
+from render_text import ROOT, load_yaml, hexrgb  # noqa: E402
 
 sys.path.insert(0, ROOT)
+# importing qc.fonts is what enforces RAQM (it exits if Pillow lacks it)
+from qc.arabic import norm_ar, strip_tashkeel  # noqa: E402
+from qc.fonts import fit_pt, truetype  # noqa: E402
+from qc.proc import FFMPEG  # noqa: E402
 from qc.timeline import hms  # noqa: E402
-
-if not features.check("raqm"):
-    sys.exit("FATAL: Pillow RAQM (HarfBuzz+FriBiDi) not available. "
-             "Use tools/render-venv/bin/python.")
-
-FFMPEG = "/opt/homebrew/bin/ffmpeg"
-
-# Same house-style normalisation as render_text.build: drop the tajweed
-# ANNOTATION marks. U+06DF is additionally absent from AM_Thulth's cmap and
-# would silently vanish (this font renders missing codepoints as ZERO WIDTH,
-# not as tofu), so stripping it keeps widths honest.
-_STRIP_MARKS = {"۟", "ۭ"}
-
-# Combining marks, for the tashkeel-stripped "letter body" measurement.
-_TASHKEEL = set(
-    "ًٌٍَُِّْٕٓٔ"
-    "ٰۖۗۘۙۚۛۜ۟۠ۡ"
-    "ۣ۪ۭۢۤۧۨ۫۬"
-)
-
-
-def norm_ar(s):
-    return "".join(c for c in s if c not in _STRIP_MARKS)
-
-
-def strip_tashkeel(s):
-    return "".join(c for c in s if c not in _TASHKEEL)
 
 
 # ----------------------------------------------------------------------------
@@ -484,7 +461,7 @@ def build(clip_dir):
     probe_font = truetype(font_path, nominal)
     widest = max(1.0, max(bbox_ls(ln, probe_font)[2] - bbox_ls(ln, probe_font)[0]
                           for ln in all_lines))
-    pt = max(int(tcfg["min_pt"]), int(nominal * min(1.0, max_w / widest)))
+    pt = fit_pt(nominal, tcfg["min_pt"], max_w, widest)
     font = truetype(font_path, pt)
 
     # Bar centre lines (canvas px).
