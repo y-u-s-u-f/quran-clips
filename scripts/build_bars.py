@@ -44,6 +44,7 @@ import build_render         # noqa: E402
 
 sys.path.insert(0, ROOT)
 import qc.audio             # noqa: E402
+import qc.timeline          # noqa: E402
 from qc.timeline import hms  # noqa: E402
 
 FFMPEG = build_render.FFMPEG
@@ -87,63 +88,11 @@ def build(clip_dir, dry_run=False):
     minf = float(tr["min_fade_s"])
     kinds = [str(tr["first"] if i == 0 else tr["rest"]).lower()
              for i in range(len(phrases))]
-    n_ph = len(phrases)
-
-    def snap(t):
-        """On the frame grid, so a fade-out's last frame and the next fade-in's
-        first frame cannot straddle the same frame through rounding."""
-        return round(t * fps) / float(fps)
-
-    sched = []
-    for i, ph in enumerate(phrases):
-        d_in = float(tr["wipe_in_s"]) if kinds[i] == "wipe" else xf
-        d_out = float(tr["wipe_out_s"]) if kinds[i] == "wipe" else xf
-        if seq:
-            t_in = max(0.0, ph["t0"] - 0.05) if i == 0 else ph["t0"] - d_in
-            t_out = (min(dur - d_out, ph["t1"] - 0.15)
-                     if i == n_ph - 1 else ph["t1"])
-        else:
-            t_in = max(0.0, ph["t0"] - 0.05) if i == 0 else ph["t0"] - 0.24
-            t_out = (min(dur - d_out, ph["t1"] - 0.15)
-                     if i == n_ph - 1 else ph["t1"] + 0.02)
-        sched.append([kinds[i], t_in, d_in, t_out, d_out])
-
-    cuts = []
-    if seq:
-        guard = 0.5 / fps          # outgoing is gone half a frame early, so no
-        for i in range(n_ph - 1):  # single frame can carry both captions
-            t0n, t1c = float(phrases[i + 1]["t0"]), float(phrases[i]["t1"])
-            gap = t0n - t1c
-            d_out, d_in = sched[i][4], sched[i + 1][2]
-            nom_out = float(tr["wipe_out_s"]) if kinds[i] == "wipe" else xf
-            # `wipe_out_anchor: end` -- a wipe-out is EXEMPT from the shrink so
-            # that it mirrors its wipe-in exactly (same duration, and since both
-            # sweeps cover the same `trav`, the same front speed). It is placed
-            # by subtracting its full duration from `end`, i.e. it starts BEFORE
-            # t1 and eats the outgoing caption's tail, rather than starting at
-            # t1 and being clipped. The incoming fade-in is still fitted to the
-            # gap below exactly as before, so caption N+1 does not move.
-            anch = kinds[i] == "wipe" and \
-                str(tr.get("wipe_out_anchor", "start")).lower() == "end"
-            if d_out + d_in + guard > gap:            # shrink both, in ratio
-                k = max(0.0, gap - guard) / (d_out + d_in)
-                d_out, d_in = max(minf, d_out * k), max(minf, d_in * k)
-            if anch:                                  # ...but not the wipe-out
-                d_out = nom_out
-            t_in = snap(t0n - d_in)                   # up on the word onset
-            end = t_in - guard                        # outgoing gone by here
-            slack = end - d_out - snap(t1c)
-            if slack > 0 and not anch:                # spare gap: fade slower
-                d_out = min(nom_out, d_out + slack)
-            t_out = end - d_out
-            floor = sched[i][1] + sched[i][2]         # fully up only by here
-            if t_out < floor:                         # -> cannot fade at all
-                d_out = max(1.0 / fps, end - floor)
-                t_out = end - d_out
-                cuts.append(i + 1)
-            sched[i + 1][2], sched[i + 1][1] = d_in, t_in
-            sched[i][4], sched[i][3] = d_out, t_out
-    sched = [tuple(x) for x in sched]
+    sched, cuts = qc.timeline.schedule(
+        phrases, dur, fps=fps, kinds=kinds, crossfade_s=xf,
+        wipe_in_s=float(tr["wipe_in_s"]), wipe_out_s=float(tr["wipe_out_s"]),
+        sequential=seq, min_fade_s=minf,
+        wipe_out_anchor=tr.get("wipe_out_anchor", "start"))
 
     # ---- audio ---------------------------------------------------------------
     lufs, tp, lra = float(aud["lufs"]), float(aud["true_peak_dbtp"]), float(aud["lra"])

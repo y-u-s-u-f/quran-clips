@@ -33,6 +33,7 @@ import render_text  # noqa: E402
 # re-exported: build_bars.py and the golden harness reach for these through
 # this module, which is the pipeline's entrypoint.
 from qc.proc import FFMPEG, FFPROBE, run  # noqa: E402,F401
+import qc.timeline  # noqa: E402
 from qc.timeline import hms  # noqa: E402,F401
 from qc.audio import (LUFS, TP, LRA, measure_loudness,  # noqa: E402,F401
                       loudnorm_filter, afade_filter)
@@ -164,18 +165,13 @@ def build(clip_dir, dry_run=False):
                    for i in range(len(phrases))]
 
     # ---- text fade schedule (dissolve = overlapping fade-out / fade-in) ----
-    # Same schedule as the original fixed 2-card template, applied per card:
-    #   first card fades in just before its words (t0-0.05, clamped to 0);
-    #   later cards fade in EARLY (t0-0.24) so the incoming fade overlaps the
-    #   outgoing card's fade-out (t1+0.02) -> fixed-position dissolve;
-    #   last card fades out early (t1-0.15) and never past dur-CROSSFADE.
+    # The default style is the OVERLAPPING case of the shared scheduler: every
+    # card fades with the same duration, later cards come up early enough to
+    # straddle the outgoing card's fade-out -> fixed-position dissolve. (The
+    # bars style drives the same function with sequential=True + wipes.)
     half = CROSSFADE
-    fades = []                      # (in_st, out_st) per phrase
-    for i, ph in enumerate(phrases):
-        f_in = max(0.0, ph["t0"] - 0.05) if i == 0 else ph["t0"] - 0.24
-        f_out = (min(dur - half, ph["t1"] - 0.15)
-                 if i == len(phrases) - 1 else ph["t1"] + 0.02)
-        fades.append((f_in, f_out))
+    sched, _ = qc.timeline.schedule(phrases, dur, crossfade_s=half)
+    fades = [(t_in, t_out) for _, t_in, _, t_out, _ in sched]
 
     # ---- audio: two-pass loudnorm ----
     st = measure_loudness(src, ss, dur)
