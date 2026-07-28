@@ -59,7 +59,9 @@ def emit_dry_run(cmd, fc):
     print(DRY_END_MARK)
 
 
-def build(clip_dir, dry_run=False):
+def build(clip_dir, dry_run=False, opts=None):
+    """`opts` (qc.scale.Opts) is the preview / stills machinery; it is only
+    implemented for the bars style, and its default is the shipped behaviour."""
     clip = render_text.load_yaml(os.path.join(clip_dir, "clip.yaml"))
 
     # ---- resolve the trim, splicing out any segment.cuts, BEFORE the style
@@ -71,7 +73,11 @@ def build(clip_dir, dry_run=False):
     if render_text.style_of(clip) != "default":
         import build_bars
         return build_bars.build(clip_dir, dry_run=dry_run,
-                                ctx=(clip, src, ss, dur))
+                                ctx=(clip, src, ss, dur), opts=opts)
+    if opts is not None and not opts.is_default:
+        sys.exit("preview / stills are implemented for the `bars` style only; "
+                 "%s is the default landscape style, whose full render is "
+                 "already cheap" % os.path.basename(clip_dir.rstrip("/")))
     style = render_text.load_yaml(render_text.template_path(clip))
 
     # Two video-track modes:

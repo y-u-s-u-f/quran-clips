@@ -59,6 +59,18 @@ def make_alias(clip_dir, reel_path, stem):
             print(f"  warn: no alias created ({e2})")
 
 
+def is_preview(path):
+    """`qc render --preview` writes output/preview.mp4 and tags the container
+    `comment=qc-preview`. The tag is what makes the refusal below survive
+    someone renaming the file, which is the only way a preview can reach here
+    at all."""
+    p = subprocess.run(
+        ["/opt/homebrew/bin/ffprobe", "-v", "error", "-show_entries",
+         "format_tags=comment", "-of", "default=nw=1:nk=1", path],
+        capture_output=True, text=True)
+    return p.stdout.strip().startswith("qc-preview")
+
+
 def export(name):
     clip_dir = os.path.join(status.CLIPS, name)
     tags_p = os.path.join(clip_dir, "tags.yaml")
@@ -68,6 +80,11 @@ def export(name):
         return False
     if not os.path.isfile(final):
         print(f"skip {name}: no output/final.mp4")
+        return False
+    if is_preview(final):
+        print(f"REFUSED {name}: output/final.mp4 is a PREVIEW render (half "
+              f"canvas, no heat/snow/glow passes, crf 28). Re-render it "
+              f"properly with `qc render {name}` before exporting.")
         return False
     meta = render_text.load_yaml(tags_p)
     clip_p = os.path.join(clip_dir, "clip.yaml")

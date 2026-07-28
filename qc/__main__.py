@@ -9,12 +9,19 @@
                                        align + time a window into clip.yaml
     qc check <clip> [<clip>...] | all  validate clip.yaml before rendering
     qc check --output <clip>...        validate a rendered output/final.mp4
+    qc render <clip> [--preview]       render (preview = half size, <=30s)
+    qc frames <clip> --at 0,6,12,18    full-fidelity stills at these seconds
+    qc export <clip> [<clip>...] | all export a finished clip to reels/
 
 `check` runs no ffmpeg and takes under a second: clip.yaml schema (an unknown
 key is an ERROR -- a typo'd one is silently ignored by the renderer), phrase
 and cut ordering, that every codepoint has a glyph, that the Arabic is the
 mushaf text, the bars caption geometry, and that no caption changeover is a
 hard cut. `--output` needs a rendered file and takes a few seconds.
+
+`render --preview` writes output/preview.mp4 and never final.mp4: half canvas,
+no heat/snow/barglow/textglow/scan. Use it for timing and layout, never for
+the look. `qc export` refuses a preview.
 
 `propose` options:
     --style S     bars | default   (default: bars) -- changes the ranking
@@ -132,6 +139,48 @@ def main(argv=None):
                   file=sys.stderr)
             return 2
         return check.run_output(dirs) if out else check.run(dirs)
+
+    if cmd == "render":
+        from . import render
+        prev = "--preview" in argv
+        rest = _clip_dirs([a for a in argv if not a.startswith("-")])
+        if len(rest) != 1:
+            print("usage: qc render <clip> [--preview]", file=sys.stderr)
+            return 2
+        if prev:
+            render.preview(rest[0])
+        else:
+            import os
+            sys.path.insert(0, os.path.join(_root(), "scripts"))
+            import build_render
+            build_render.build(rest[0])
+        return 0
+
+    if cmd == "frames":
+        from . import render
+        at = _opt(argv, "--at", "0")
+        out = _opt(argv, "-o")
+        rest = _clip_dirs([a for a in argv if not a.startswith("-")])
+        if len(rest) != 1:
+            print("usage: qc frames <clip> --at 0,6,12,18 [-o DIR]",
+                  file=sys.stderr)
+            return 2
+        render.frames(rest[0], [float(x) for x in at.split(",") if x != ""],
+                      out_dir=out)
+        return 0
+
+    if cmd == "export":
+        import os
+        sys.path.insert(0, os.path.join(_root(), "scripts"))
+        import export_reel
+        names = [os.path.basename(d.rstrip("/"))
+                 for d in _clip_dirs([a for a in argv
+                                      if not a.startswith("-")])]
+        if not names:
+            print("usage: qc export <clip> [<clip>...] | all", file=sys.stderr)
+            return 2
+        # export_reel refuses a preview render; see its is_preview()
+        return 0 if all([export_reel.export(n) for n in names]) else 1
 
     print("unknown command %r\n\n%s" % (cmd, USAGE.strip()), file=sys.stderr)
     return 2

@@ -57,22 +57,56 @@ sys.path.insert(0, ROOT)
 import qc.audio             # noqa: E402
 import qc.ffgraph           # noqa: E402
 import qc.fx                # noqa: E402
+import qc.scale             # noqa: E402
 import qc.timeline          # noqa: E402
 
 FFMPEG = build_render.FFMPEG
 
 
-def build(clip_dir, dry_run=False, ctx=None):
+def _alpha_at(t, t_in, d_in, t_out, d_out):
+    """A caption layer's alpha at one instant -- the closed form of the
+    fade-in / hold / fade-out pair the moving render builds out of `fade`."""
+    if t < t_in:
+        return 0.0
+    if d_in > 0 and t < t_in + d_in:
+        return (t - t_in) / d_in
+    if t < t_out:
+        return 1.0
+    if d_out > 0 and t < t_out + d_out:
+        return max(0.0, 1.0 - (t - t_out) / d_out)
+    return 0.0
+
+
+def build(clip_dir, dry_run=False, ctx=None, opts=None):
     """`ctx` is the (clip, src, ss, dur) build_render.build() already resolved
     -- it owns loading clip.yaml and applying segment.cuts, and its phrase times
     are on the cut timeline. Absent (i.e. this module run directly), do it
-    here; the two paths must stay equivalent."""
+    here; the two paths must stay equivalent.
+
+    `opts` (qc.scale.Opts) is the preview/stills machinery: a canvas scale, a
+    set of effects to switch off, an encode override, and an optional render
+    WINDOW. Its default is the shipped behaviour in every respect, and every
+    branch below is gated on a non-default field, so a final render emits the
+    same argv and the same filtergraph it always did."""
+    opts = opts or qc.scale.DEFAULT
     if ctx is None:
         clip = render_text.load_yaml(os.path.join(clip_dir, "clip.yaml"))
         src, ss, dur = qc.timeline.segment(clip_dir, clip)
     else:
         clip, src, ss, dur = ctx
-    style = render_text.load_yaml(render_text.template_path(clip))
+    clip = qc.scale.with_disabled(clip, opts.disable)
+    style = qc.scale.scale_style(
+        render_text.load_yaml(render_text.template_path(clip)), opts.scale)
+
+    # A render WINDOW keeps the caption schedule of the whole clip but encodes
+    # only [t_off, t_off+dur_w) of it: the source seek moves up by t_off and
+    # every time in the graph moves down by it. Everything the graph derives
+    # from `dur` (plate lengths, the tail fade, the `-t`) is the WINDOW's
+    # length, so a one-frame still costs one frame of work.
+    t_off, full_dur = 0.0, dur
+    if opts.window:
+        t_off, dur = float(opts.window[0]), float(opts.window[1])
+        ss = ss + t_off
 
     W = int(style["canvas"]["width"])
     H = int(style["canvas"]["height"])
@@ -85,10 +119,11 @@ def build(clip_dir, dry_run=False, ctx=None):
     enc = style["encode"]
 
     # ---- (re)build overlays + the particle layer; also derives the bar colour
-    rep = render_bars.build(clip_dir)
+    rep = opts.reuse or render_bars.build(clip_dir, clip=clip, style=style,
+                                          out_sub=opts.overlay_sub)
     # inputs are interleaved bar,text per phrase (see the -i loop below)
     phrase_pngs = [p[k] for p in rep["phrases"] for k in ("bar", "text")]
-    snow = rep["snow"]
+    snow = rep.get("snow")
     phrases = clip["phrases"]
     assert len(phrases) == len(rep["phrases"]), "phrase/overlay count mismatch"
 
@@ -104,17 +139,27 @@ def build(clip_dir, dry_run=False, ctx=None):
     kinds = [str(tr["first"] if i == 0 else tr["rest"]).lower()
              for i in range(len(phrases))]
     sched, cuts = qc.timeline.schedule(
-        phrases, dur, fps=fps, kinds=kinds, crossfade_s=xf,
+        phrases, full_dur, fps=fps, kinds=kinds, crossfade_s=xf,
         wipe_in_s=float(tr["wipe_in_s"]), wipe_out_s=float(tr["wipe_out_s"]),
         sequential=seq, min_fade_s=minf,
         wipe_out_anchor=tr.get("wipe_out_anchor", "start"))
+    if t_off:
+        sched = [(k, ti - t_off, di, to - t_off, do)
+                 for k, ti, di, to, do in sched]
 
     # ---- audio ---------------------------------------------------------------
-    lufs, tp, lra = float(aud["lufs"]), float(aud["true_peak_dbtp"]), float(aud["lra"])
-    st = qc.audio.measure_loudness(src, ss, dur, lufs, tp, lra)
-    ln = qc.audio.loudnorm_filter(st, lufs, tp, lra)
-    afi, afo = float(aud["fade_in_s"]), float(aud["fade_out_s"])
-    afade = qc.audio.afade_filter(dur, afi, afo)
+    # A still has no audio track at all; a preview keeps one but skips the
+    # loudnorm MEASUREMENT pass (a whole extra decode of the segment) -- nothing
+    # about the picture depends on it.
+    ln = afade = None
+    if not opts.still:
+        afi, afo = float(aud["fade_in_s"]), float(aud["fade_out_s"])
+        afade = qc.audio.afade_filter(dur, afi, afo)
+        if not opts.skip_loudnorm:
+            lufs, tp, lra = (float(aud["lufs"]), float(aud["true_peak_dbtp"]),
+                             float(aud["lra"]))
+            st = qc.audio.measure_loudness(src, ss, dur, lufs, tp, lra)
+            ln = qc.audio.loudnorm_filter(st, lufs, tp, lra)
 
     # ---- the effect chain ----------------------------------------------------
     # `fx.order` in the template is the chain order; every effect resolves its
@@ -133,7 +178,9 @@ def build(clip_dir, dry_run=False, ctx=None):
     g_ = qc.ffgraph.Graph()
     vin = g_.input(src, ss=f"{ss:.3f}", t=f"{dur:.3f}")
     ph_in = [g_.input(png, framerate=fps, loop=1) for png in phrase_pngs]
-    snow_in = g_.input(snow, stream_loop=-1)
+    # the snow layer only exists when the effect is on (render_bars does not
+    # evaluate the shader otherwise), so its input goes with it
+    snow_in = g_.input(snow, stream_loop=-1) if snow else None
     # the scrim is the LAST input, so dropping it cannot shift any other index
     scrim_in = g_.input(rep["scrim"], framerate=fps, loop=1) if scrim_on else None
 
@@ -204,6 +251,17 @@ def build(clip_dir, dry_run=False, ctx=None):
                 g_.chain([f"a{lbl}", masks[name]],
                          "blend=all_mode=multiply:shortest=1", f"am{lbl}")
                 g_.chain([f"p{lbl}", f"am{lbl}"], "alphamerge", f"x{lbl}")
+            elif opts.still:
+                # A still cannot use `fade`: with the window shifted, a fade
+                # that began before it has a negative `st`, which the filter
+                # rejects outright. One frame has ONE alpha anyway, so it is
+                # evaluated here and applied flat -- exactly the value the
+                # moving render would have reached at this instant.
+                g_.chain(ph_in[sidx - ph_base],
+                         ["format=rgba",
+                          "colorchannelmixer=aa=%.4f"
+                          % _alpha_at(0.0, t_in, d_in, t_out, d_out)],
+                         f"x{lbl}")
             else:
                 g_.chain(ph_in[sidx - ph_base],
                          ["format=rgba",
@@ -232,28 +290,40 @@ def build(clip_dir, dry_run=False, ctx=None):
     band_lbl = g_.tap("band", "fxbase")
     for eff in fx_chain:
         band_lbl = eff.apply(g_, band_lbl, fxctx)
-    g_.chain([full, band_lbl],
-             [f"overlay=0:{BY}:shortest=1",
-              f"fade=t=in:st=0:d={mot['video_fade_in_s']}",
-              f"fade=t=out:st={dur - float(mot['video_fade_out_s']):.3f}:"
-              f"d={mot['video_fade_out_s']}", "format=yuv420p"], "vout")
-    g_.chain(vin.a, [ln, afade], "aout")
+    if opts.still:
+        # A still is judged on crop, colour and position, so it must NOT carry
+        # the whole-frame fade from black -- at t=0 that is a black frame.
+        g_.chain([full, band_lbl], [f"overlay=0:{BY}:shortest=1",
+                                    "format=yuv420p"], "vout")
+    else:
+        g_.chain([full, band_lbl],
+                 [f"overlay=0:{BY}:shortest=1",
+                  f"fade=t=in:st=0:d={mot['video_fade_in_s']}",
+                  f"fade=t=out:st={dur - float(mot['video_fade_out_s']):.3f}:"
+                  f"d={mot['video_fade_out_s']}", "format=yuv420p"], "vout")
+        g_.chain(vin.a, [f for f in (ln, afade) if f], "aout")
     fc, in_argv = g_.render()
 
     out_dir = os.path.join(clip_dir, "output")
     if not dry_run:
         os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "final.mp4")
+    out_path = os.path.join(out_dir, opts.out_name)
 
     cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv
-    cmd += ["-filter_complex", fc,
-            "-map", "[vout]", "-map", "[aout]",
-            "-t", f"{dur:.3f}",
-            "-c:v", "libx264", "-crf", str(enc["crf"]),
-            "-preset", str(enc["preset"]),
-            "-pix_fmt", "yuv420p", "-r", str(fps),
-            "-c:a", "aac", "-b:a", str(enc["audio_bitrate"]),
-            "-movflags", "+faststart", out_path]
+    cmd += ["-filter_complex", fc, "-map", "[vout]"]
+    if opts.still:
+        cmd += ["-frames:v", "1", out_path]
+    else:
+        cmd += ["-map", "[aout]",
+                "-t", f"{dur:.3f}",
+                "-c:v", "libx264", "-crf", str(opts.crf or enc["crf"]),
+                "-preset", str(opts.preset or enc["preset"]),
+                "-pix_fmt", "yuv420p", "-r", str(fps),
+                "-c:a", "aac", "-b:a", str(enc["audio_bitrate"])]
+        if opts.label:
+            # so `qc export` can refuse a file that is not a real render
+            cmd += ["-metadata", "comment=qc-%s" % opts.label]
+        cmd += ["-movflags", "+faststart", out_path]
     if dry_run:
         build_render.emit_dry_run(cmd, fc)
         return out_path
