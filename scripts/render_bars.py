@@ -40,6 +40,9 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, features
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from render_text import ROOT, load_yaml, hexrgb, truetype  # noqa: E402
 
+sys.path.insert(0, ROOT)
+from qc.timeline import hms  # noqa: E402
+
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow RAQM (HarfBuzz+FriBiDi) not available. "
              "Use tools/render-venv/bin/python.")
@@ -102,11 +105,6 @@ def band_source_chain(clip, style):
                "force_original_aspect_ratio=increase,"
                f"crop={band['width']}:{band['height']}")
     return pre + "," + grade_chain(style)
-
-
-def hms(t):
-    h, m, s = t.split(":")
-    return int(h) * 3600 + int(m) * 60 + float(s)
 
 
 def derive_bar_color(clip_dir, clip, style):

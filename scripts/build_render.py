@@ -28,7 +28,9 @@ import os, sys, json, subprocess, shlex
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
+sys.path.insert(0, ROOT)
 import render_text  # noqa: E402
+from qc.timeline import hms  # noqa: E402,F401  (re-exported for the siblings)
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
@@ -39,12 +41,6 @@ FADE_OUT_A = 0.5   # style.yaml audio.fade_out_s
 LUFS = -14.0
 TP = -1.0
 LRA = 11.0
-
-
-def hms(t):
-    """'HH:MM:SS.mmm' -> seconds (float)."""
-    h, m, s = t.split(":")
-    return int(h) * 3600 + int(m) * 60 + float(s)
 
 
 def run(cmd, **kw):
