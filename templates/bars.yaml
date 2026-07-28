@@ -104,7 +104,7 @@ bar:
   # its yMax (2409) far exceeds hhea ascent (1946), so both of those would
   # place the bar wrong. The tashkeel-stripped ink band is measured anyway and
   # the bar is clamped into it (see render_bars.py).
-  baseline_below_center_px: 12
+  baseline_below_center_px: 6
   # The colour below is the bar as it must READ IN THE FINISHED FRAME (that is
   # what the spec measured). render_bars pre-darkens the painted pill so that
   # the Glow / Glow Scan screen passes land it on this value.
