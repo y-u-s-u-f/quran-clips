@@ -6,8 +6,16 @@
 # ==========================================================================
 
 # --- Downloaded / exported / recreatable trees -----------------------------
-# downloaded YouTube source videos + subtitles (re-downloadable)
-sources/
+# downloaded YouTube source videos + subtitles (re-downloadable).
+# EXCEPT sources/meta/: one small yaml per video (title, duration, fps,
+# dimensions, uploader) written by `qc source add`. That is derived knowledge
+# we paid a network round-trip for and that `qc locate` reads, so it must
+# survive a clean checkout even though the .mp4 next to it does not.
+# Git will not descend into an excluded DIRECTORY, so the exclusion has to be
+# `sources/*` (contents) rather than `sources/` for the negation to be
+# reachable at all.
+sources/*
+!sources/meta/
 # exported final reels (regenerable from clip.yaml)
 reels/
 # python venv for ASR (recreate with pip install)

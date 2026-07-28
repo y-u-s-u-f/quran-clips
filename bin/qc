@@ -1,0 +1,10 @@
+#!/bin/sh
+# `qc` front-end CLI. Always runs under tools/render-venv (PyYAML + the RAQM
+# Pillow build); NEVER under /opt/homebrew/bin/python3 directly, and nothing in
+# this repo may pip-install into that interpreter -- a past install there wiped
+# the RAQM Pillow the renderer depends on. If tools/render-venv is missing (it
+# is gitignored), recreate it per SKILL.md:76-82.
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+PY="$ROOT/tools/render-venv/bin/python"
+[ -x "$PY" ] || PY=python3
+exec "$PY" -c "import sys; sys.path.insert(0, '$ROOT'); import qc.__main__ as m; sys.exit(m.main())" "$@"
