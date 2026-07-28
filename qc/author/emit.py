@@ -291,8 +291,9 @@ def clip_yaml(p, meta=None, style="bars"):
         L.append("# TODO reciter: name_en / name_ar")
     bg = meta.get("video_bg")
     if bg:
-        L.append("# Framing carried over unchanged from a shipped clip on this")
-        L.append("# source -- crop solving is not this stage's job.")
+        L.append("# Framing is a property of the SOURCE (fixed camera), not of")
+        L.append("# this clip: %s." % (meta.get("framing_from") or
+                                       "carried over unchanged from a shipped clip"))
         L.append("video_bg:")
         L.append("  mode: %s" % bg.get("mode", "live"))
         if bg.get("crop"):

@@ -8,6 +8,9 @@ first place. It is the code replacing the prose procedure in
 Present:
     fetch    `qc source add <url>` -- yt-dlp download + metadata + auto-captions
     locate   `qc locate <id>`      -- which surah/ayat does this video recite?
+    crop     `qc crop <id>`        -- the 16:9 framing, solved once per SOURCE
+                                      and cached in sources/meta/<id>.yaml
+                                      (needs tools/author-venv, not render-venv)
 
 Nothing here imports from qc.fx / qc.ffgraph, and nothing here may change
 render output.

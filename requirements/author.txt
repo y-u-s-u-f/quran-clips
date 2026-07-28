@@ -1,0 +1,14 @@
+# tools/author-venv -- authoring-side deps, kept OUT of tools/render-venv so the
+# renderer's frozen pillow/RAQM build is never touched by a resolver.
+#
+#   python3.14 -m venv tools/author-venv
+#   tools/author-venv/bin/pip install -r requirements/author.txt
+#
+# NEVER pip-install any of this into /opt/homebrew/bin/python3: a prior install
+# there destroyed the RAQM-enabled Pillow and it is not reproducible from PyPI.
+#
+# The YuNet face model is a separate ~230 KB download (git-lfs media URL):
+#   curl -sSL -o tools/models/face_detection_yunet_2023mar.onnx \
+#     https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+opencv-python-headless==5.0.0.93
+numpy==2.5.1

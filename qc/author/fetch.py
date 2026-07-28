@@ -115,7 +115,12 @@ def read_meta(vid):
     out = {}
     for line in open(path, encoding="utf-8"):
         line = line.rstrip("\n")
-        if not line or line.lstrip().startswith("#") or ":" not in line:
+        # Skip indented lines: `qc crop` appends a nested `framing:` block to
+        # this file and this reader only understands the flat fetched fields.
+        if (not line or line[:1] in (" ", "\t") or line.lstrip().startswith("#")
+                or ":" not in line):
+            continue
+        if line.rstrip().endswith(":"):
             continue
         k, _, v = line.partition(":")
         v = v.strip()

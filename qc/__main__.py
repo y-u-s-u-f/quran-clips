@@ -3,6 +3,7 @@
     qc source add <url> [--no-video]   download + metadata + auto-captions
     qc locate <video_id> [-v]          which surah/ayat does this video recite?
     qc ayah <surah>:<ayah>[-<ayah>]    print the mushaf text (Uthmani + Sahih)
+    qc crop <video_id> [options]       solve the 16:9 framing once per source
     qc propose <video_id> [options]    ranked clip-worthy candidate windows
     qc author <video_id> <surah>:<a>[-<b>] <start> <end> [options]
                                        align + time a window into clip.yaml
@@ -13,6 +14,17 @@
     --range MM:SS-MM:SS   skip proposal, score this window instead
     --verses S:A[-B]      skip proposal, score these ayat instead
     --json        machine-readable only, to stdout
+
+`crop` options (needs tools/author-venv -- see requirements/author.txt):
+    --style S     bars | default   (default: bars)
+    --frames N    how many frames to sample (default: 40)
+    --side L      force the caption side: left | right
+    --face X,Y[,W] hand-entered face centre (+ optional width) in source px
+    --exclude X,Y,W,H   an extra no-go box (repeatable) -- for an INTERMITTENT
+                  banner, which a temporal-variance test cannot see
+    --annotate P  write an annotated frame to P
+    --sheet P     write a contact sheet to P
+    --write       cache the result in sources/meta/<id>.yaml
 
 `author` options:
     -o DIR        where to write clip.yaml + tags.yaml (default: a temp dir)
@@ -75,6 +87,30 @@ def main(argv=None):
 
     if cmd == "propose":
         return _propose(argv)
+
+    if cmd == "crop":
+        from .author import crop, fetch
+        style = _opt(argv, "--style", "bars")
+        frames = int(_opt(argv, "--frames", "40"))
+        side = _opt(argv, "--side")
+        face = _opt(argv, "--face")
+        ann = _opt(argv, "--annotate")
+        sheet = _opt(argv, "--sheet")
+        write = "--write" in argv
+        ex = []
+        while "--exclude" in argv:
+            ex.append([int(v) for v in _opt(argv, "--exclude").split(",")])
+        rest = [a for a in argv if not a.startswith("-")]
+        if not rest:
+            print("usage: qc crop <video_id> [--style bars|default] [--frames N] "
+                  "[--side left|right] [--face X,Y[,W]] [--exclude X,Y,W,H] "
+                  "[--annotate P] [--sheet P] [--write]", file=sys.stderr)
+            return 2
+        xy = tuple(float(v) for v in face.split(",")) if face else None
+        crop.run(fetch.video_id(rest[0]), style=style, frames=frames, side=side,
+                 face_xy=xy, extra_boxes=ex, annotate_path=ann, sheet_path=sheet,
+                 write=write)
+        return 0
 
     if cmd == "author":
         return _author(argv)
@@ -149,6 +185,17 @@ def _author(argv):
         return 2
 
     meta = {"source_url": "https://www.youtube.com/watch?v=%s" % vid}
+    # The framing is a property of the SOURCE, so if `qc crop` has already
+    # solved this video every clip cut from it inherits that crop for free.
+    # An explicit --like still wins: a shipped clip's approved numbers beat a
+    # solver's.
+    from .author import crop as _crop
+    fr = _crop.read_framing(vid)
+    if fr.get("crop"):
+        meta["video_bg"] = {"mode": "live", "crop": fr["crop"]}
+        meta["text"] = {"center_x_frac": fr.get("text_center_x_frac", 0.30)}
+        meta["framing_from"] = "solved once by `qc crop` and cached in " \
+                               "sources/meta/%s.yaml" % vid
     if like:
         meta.update(_carry_over(like))
     # Scratch audio + cached ASR live under sources/, which is gitignored
