@@ -83,8 +83,11 @@ What each one does:
   "Not Posted" Finder marker, and drops an alias in the clip folder. Idempotent;
   refuses a preview render. `reels/` is the permanent library — once posted, the
   clip folder is disposable.
-- **`status.py`** `list` / `post <name>` / `unpost <name>` / `sync` flips
-  tags.yaml + the Finder markers on both the clip folder and the reel.
+- **`status.py`** `list` / `post <name>` / `unpost <name>` flip tags.yaml + the
+  Finder markers on both the clip folder and the reel. `sync` pulls the other
+  way — the green/red Finder marker is truth, tags.yaml `posted:` is updated to
+  match; it never demotes (reports conflicts instead). `sync --to-finder` is the
+  old tags.yaml -> Finder direction, only for a fresh checkout with no xattrs.
 
 Fixing a clip: edit `clips/<name>/clip.yaml` (segment start/end, `segment.cuts`,
 the card split, `bar_color`), re-run `qc check`, re-render. Per-clip problems get

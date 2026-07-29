@@ -1,28 +1,39 @@
 #!/usr/bin/env python3
 """Clip + reel post-tracker and tagger.
 
+THE FINDER MARKER WINS. The owner marks a reel posted by hand in Finder
+(green = posted, red = not posted), so the macOS Finder tag on
+reels/<NAME>.mp4 — or, for a clip whose reel does not exist yet, on the
+clips/<name>/ folder — is the SOURCE OF TRUTH. `tags.yaml`'s `posted:` is a
+downstream, git-tracked mirror of it and goes stale.
+
 Two kinds of artifacts:
-  clips/<name>/   WIP authoring folders. Source of truth while they exist =
-                  their `tags.yaml` (`tags` list + `posted` bool). Mirrored to
-                  the folder's macOS Finder tags.
+  clips/<name>/   WIP authoring folders. `tags.yaml` owns the keyword `tags`
+                  list; its `posted:` bool is a mirror of the Finder marker.
+                  The folder's Finder tags = keywords + green/red marker.
   reels/<NAME>.mp4  Permanent exported reels (see scripts/export_reel.py).
                   A reel carries exactly ONE Finder tag and nothing else:
                   plain Green (posted) or plain Red (not posted). Keyword tags
                   live in the clip's tags.yaml, never on the reel.
-                  While the owning clip folder exists its tags.yaml is truth and
-                  the reel's marker is mirrored from it; once the clip folder is
-                  deleted, the reel's own green/red marker IS the source of
-                  truth. `sync` never touches markers on ownerless reels.
+
+An ABSENT or unreadable marker means UNKNOWN, never "not posted" — a fresh
+checkout has no xattrs at all. `sync` skips unknowns and never demotes.
 
 Usage (run with Homebrew python so it matches the rest of the pipeline):
     tools/render-venv/bin/python scripts/status.py list
     tools/render-venv/bin/python scripts/status.py post   <clip-or-reel> [...]
     tools/render-venv/bin/python scripts/status.py unpost <clip-or-reel> [...]
-    tools/render-venv/bin/python scripts/status.py sync            # re-apply Finder tags
+    tools/render-venv/bin/python scripts/status.py sync
+        Finder -> tags.yaml (the safe default). Promotes `posted:` to match a
+        green marker; when the marker says not-posted but tags.yaml says
+        posted it reports a CONFLICT and changes NOTHING.
+    tools/render-venv/bin/python scripts/status.py sync --to-finder [--force]
+        tags.yaml -> Finder. ONLY correct on a fresh checkout where the xattrs
+        do not exist yet. Refuses to demote an already-green file unless
+        --force is also given.
 
-`post`/`unpost` also accept `all` (all clips + any ownerless reels). Editing
-`posted:` in a tags.yaml by hand and then running `sync` (or `list`) achieves
-the same thing for clips that still exist.
+`post`/`unpost` write BOTH records at once and are the only commands that may
+demote. They also accept `all` (all clips + any ownerless reels).
 
 This module doubles as the shared library for reel naming + xattr helpers
 (imported by export_reel.py).
@@ -183,16 +194,26 @@ def set_finder_tags(path, names):
 
 
 def get_finder_tags(path):
-    """Read Finder user-tags back; [] if the xattr is missing/unreadable."""
+    """Read Finder user-tags back.
+
+    Returns None when the xattr is ABSENT or unreadable (state unknown — e.g. a
+    fresh checkout, where no file has any xattr), and a list otherwise. The
+    None/[] distinction matters: absent must never be read as "not posted".
+    Use `finder_tags()` if you just want a list to iterate."""
     r = subprocess.run(
         ["xattr", "-px", TAG_ATTR, path], capture_output=True, text=True
     )
     if r.returncode != 0:
-        return []
+        return None
     try:
         return list(plistlib.loads(bytes.fromhex("".join(r.stdout.split()))))
     except Exception:
-        return []
+        return None
+
+
+def finder_tags(path):
+    """Finder user-tags as a list, [] if absent/unreadable (lossy — see above)."""
+    return get_finder_tags(path) or []
 
 
 def set_marker(path, posted):
@@ -200,10 +221,24 @@ def set_marker(path, posted):
     set_finder_tags(path, [POSTED_TAG if posted else NOT_POSTED_TAG])
 
 
+def finder_state(path):
+    """The Finder marker as True (green/posted) / False (red/not posted) /
+    None (UNKNOWN: no xattr, unreadable, or tags carrying no colour marker)."""
+    tags = get_finder_tags(path)
+    if tags is None:
+        return None
+    for t in tags:
+        if t in (POSTED_TAG, "Green") or t in LEGACY_POSTED:
+            return True
+    for t in tags:
+        if t in (NOT_POSTED_TAG, "Red") or t in LEGACY_NOT_POSTED:
+            return False
+    return None
+
+
 def is_posted(path):
     """True if the file carries a green marker (incl. legacy 'Posted' label)."""
-    tags = get_finder_tags(path)
-    return any(t in (POSTED_TAG, "Green") or t in LEGACY_POSTED for t in tags)
+    return finder_state(path) is True
 
 
 def apply_finder(name, meta):
@@ -243,11 +278,15 @@ def resolve(arg):
     return None, None
 
 
-def set_posted(name, value):
-    """Flip `posted:` (and stamp `posted_at`) in tags.yaml, preserving comments."""
+def set_posted(name, value, at=None):
+    """Flip `posted:` (and stamp `posted_at`) in tags.yaml, preserving comments.
+
+    `at` overrides the stamp written to `posted_at` (sync passes the existing
+    date, or "unknown" when there is none — it must never fabricate a date).
+    Default: today's date when posting, empty when unposting."""
     p = os.path.join(CLIPS, name, "tags.yaml")
     lines = open(p, encoding="utf-8").read().splitlines()
-    stamp = time.strftime("%Y-%m-%d") if value else ""
+    stamp = at if at is not None else (time.strftime("%Y-%m-%d") if value else "")
     saw_posted = saw_at = False
     for i, ln in enumerate(lines):
         if re.match(r"^\s*posted\s*:", ln):
@@ -338,19 +377,80 @@ def cmd_toggle(value, args):
             print(f"skip {arg}: no clip tags.yaml or reel found")
 
 
+def marker_source(name, meta=None):
+    """The path whose Finder marker is truth for a clip: its exported reel if
+    that exists, else the clip folder itself. Returns (path, label)."""
+    meta = meta or load(name)
+    rp = clip_reel_path(name, meta)
+    if rp:
+        return rp, f"reel {os.path.basename(rp)}"
+    return os.path.join(CLIPS, name), "clip folder"
+
+
 def cmd_sync():
-    """Re-apply Finder tags from each tags.yaml onto the clip folder AND its
-    exported reel (if any). Ownerless reels are the truth themselves — never
-    touched here."""
+    """SAFE DEFAULT: Finder -> tags.yaml.
+
+    The green/red marker on the reel (or on the clip folder, when the reel does
+    not exist yet) is the source of truth; `posted:` in tags.yaml is updated to
+    match. Never demotes: a not-posted marker against a posted tags.yaml is
+    ambiguous (fresh checkout vs. a real unpost) and is reported as a conflict
+    with both records left untouched."""
+    n_ok = n_up = n_unknown = n_conflict = 0
     for name in clip_dirs():
         meta = load(name)
-        apply_finder(name, meta)
+        src, label = marker_source(name, meta)
+        state = finder_state(src)
+        yaml_posted = bool(meta.get("posted"))
+        if state is None:
+            n_unknown += 1
+            print(f"unknown  {name}: no Finder marker on {label} "
+                  f"— left as posted={yaml_posted} (UNKNOWN != not posted)")
+        elif state == yaml_posted:
+            n_ok += 1
+            print(f"ok       {name}: {label} and tags.yaml agree (posted={yaml_posted})")
+        elif state:  # green, tags.yaml stale -> promote
+            at = str(meta.get("posted_at") or "").strip() or "unknown"
+            set_posted(name, True, at=at)
+            apply_finder(name, load(name))
+            n_up += 1
+            print(f"PROMOTED {name}: {label} is green -> tags.yaml posted: true "
+                  f'(posted_at: "{at}")')
+        else:  # red marker, tags.yaml says posted -> ambiguous, touch nothing
+            n_conflict += 1
+            print(f"CONFLICT {name}: {label} is not-posted but tags.yaml says posted.")
+            print(f"         Nothing changed. If it really was posted, re-apply the "
+                  f"marker with: status.py sync --to-finder")
+            print(f"         If it truly is not posted, demote both with: "
+                  f"status.py unpost {name}")
+    print(f"\n{n_up} promoted, {n_ok} already in sync, {n_unknown} unknown, "
+          f"{n_conflict} conflict(s)")
+    if n_conflict:
+        sys.exit(1)
+
+
+def cmd_sync_to_finder(force=False):
+    """OPT-IN, tags.yaml -> Finder. Only correct on a fresh checkout where the
+    xattrs do not exist yet; anywhere else the Finder marker is truth and this
+    direction can destroy it. Refuses to demote an already-green file unless
+    --force is given."""
+    for name in clip_dirs():
+        meta = load(name)
+        posted = bool(meta.get("posted"))
+        targets = [(os.path.join(CLIPS, name), "clip folder", True)]
         rp = clip_reel_path(name, meta)
         if rp:
-            set_marker(rp, meta.get("posted"))  # reels: colour marker only
-            print(f"synced Finder tags: {name}  (+ reel {os.path.basename(rp)})")
-        else:
-            print(f"synced Finder tags: {name}")
+            targets.append((rp, f"reel {os.path.basename(rp)}", False))
+        for path, label, is_clip in targets:
+            if not posted and finder_state(path) is True and not force:
+                print(f"REFUSED  {name}: {label} is green but tags.yaml says not "
+                      f"posted — would demote. Re-run with --force to override, "
+                      f"or run plain `sync` to trust Finder instead.")
+                continue
+            if is_clip:
+                apply_finder(name, meta)  # keywords + marker
+            else:
+                set_marker(path, posted)  # reels: colour marker only
+            print(f"wrote    {name}: {label} -> {'green' if posted else 'red'}")
 
 
 def main():
@@ -363,7 +463,18 @@ def main():
     elif cmd == "unpost":
         cmd_toggle(False, rest)
     elif cmd == "sync":
-        cmd_sync()
+        unknown = [a for a in rest if a not in ("--to-finder", "--force")]
+        if unknown:
+            print(f"sync: unknown option(s): {' '.join(unknown)}")
+            print(__doc__)
+            sys.exit(1)
+        if "--to-finder" in rest:
+            cmd_sync_to_finder(force="--force" in rest)
+        elif "--force" in rest:
+            print("sync: --force is only meaningful with --to-finder")
+            sys.exit(1)
+        else:
+            cmd_sync()
     else:
         print(__doc__)
         sys.exit(1)
