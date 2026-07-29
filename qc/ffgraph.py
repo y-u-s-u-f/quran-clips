@@ -73,6 +73,20 @@ class Graph(object):
         self._ninputs = 0
 
     # -- inputs -----------------------------------------------------------
+    #
+    # ffmpeg's per-input packet queue defaults to 8. A bars clip feeds ONE
+    # filtergraph from many inputs (source + a bar/text pair per phrase + snow
+    # + scrim -- 13 for a 5-card clip), and past roughly a dozen the graph
+    # deadlocks: one input's queue fills, which blocks the demuxer thread in
+    # tq_send, while the filter and encoder threads sit in tq_receive waiting
+    # on a DIFFERENT input. It parks at 0% CPU indefinitely and leaves an
+    # output with no moov atom. Observed on al-qamar-1-5 (5 cards, 13 inputs);
+    # 3- and 4-card clips on the same source render fine, which is what makes
+    # it look like a content problem rather than a plumbing one.
+    #
+    # This costs memory only, and does not change a single output byte.
+    THREAD_QUEUE_SIZE = 4096
+
     def input(self, path, **kw):
         """Record an ffmpeg input. Keyword args become the pre -i options, in
         the order given (ss=, t=, framerate=, loop=, stream_loop=...).
@@ -81,7 +95,8 @@ class Graph(object):
         self._ninputs += 1
         for k, val in kw.items():
             self._argv += ["-" + k, str(val)]
-        self._argv += ["-i", path]
+        self._argv += ["-thread_queue_size", str(self.THREAD_QUEUE_SIZE),
+                       "-i", path]
         return Ref("%d:v" % idx)
 
     # -- chains -----------------------------------------------------------

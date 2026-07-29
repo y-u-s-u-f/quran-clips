@@ -173,15 +173,21 @@ def build(clip_dir, dry_run=False, opts=None):
         os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "final.mp4")
 
+    # See qc.ffgraph.Graph.THREAD_QUEUE_SIZE: ffmpeg's default 8-packet input
+    # queue deadlocks a many-input filtergraph. Memory only; no output byte
+    # changes.
+    from qc.ffgraph import Graph as _G
+    TQS = ["-thread_queue_size", str(_G.THREAD_QUEUE_SIZE)]
+
     cmd = [
         FFMPEG, "-y", "-hide_banner",
-        "-ss", f"{ss:.3f}", "-t", f"{dur:.3f}", "-i", src,
+        "-ss", f"{ss:.3f}", "-t", f"{dur:.3f}", *TQS, "-i", src,
     ]
     if not live:   # STATIC mode: the scene still is a separate looped input
-        cmd += ["-framerate", "30", "-loop", "1", "-i", scene_png]
-    cmd += ["-framerate", "30", "-loop", "1", "-i", grd_png]
+        cmd += ["-framerate", "30", "-loop", "1", *TQS, "-i", scene_png]
+    cmd += ["-framerate", "30", "-loop", "1", *TQS, "-i", grd_png]
     for png in phrase_pngs:
-        cmd += ["-framerate", "30", "-loop", "1", "-i", png]
+        cmd += ["-framerate", "30", "-loop", "1", *TQS, "-i", png]
     cmd += [
         "-filter_complex", fc,
         "-map", "[vout]", "-map", "[aout]",

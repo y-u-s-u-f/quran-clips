@@ -1,0 +1,67 @@
+source_url: "https://www.youtube.com/watch?v=vqxYwdR4RvQ"
+# THIS clip = Surah Al-Qamar ayah 1-5, at abs 00:00:00.500-00:00:37.980 in
+# the source. Timings below were produced by `qc author`: mlx-whisper
+# (large-v3-turbo) word timestamps over this window only, force-aligned onto
+# the mushaf text with a repeat-permitting DP, then every boundary snapped
+# to the deepest trough of a 10 ms RMS envelope. Speech level in this window
+# measures -15 dB, room floor -32 dB.
+style: bars
+reciter:
+  name_en: "Ahmed bin Talib"
+  name_ar: "أحمد بن طالب"
+# Framing is a property of the SOURCE (fixed camera), not of
+# this clip: solved for the bars style by `qc crop` and cached in sources/meta/vqxYwdR4RvQ.yaml.
+video_bg:
+  mode: live
+  crop:
+    x: 136
+    y: 80
+    w: 794
+    h: 446
+text:
+  center_x_frac: 0.3
+segment:
+  # onset abs 0.62, MEASURED off the envelope (first sustained rise to within
+  # 7 dB of speech, preceded by 150 ms at least 12 dB down) rather than taken
+  # from the ASR, which put the first word at 0.62. start 0.50 -> onset rel
+  # 0.12 (IG hook). End 37.98 sits 0.37 s after the last word, at the deepest
+  # point of the following gap (18 dB below speech).
+  start: "00:00:00.500"   # absolute in source
+  end: "00:00:37.980"     # absolute in source; duration 37.48s
+surah: 54
+ayah_range: [1, 5]
+phrases:   # times RELATIVE to clip start (segment starts abs 0.500)
+  # REGROUPED BY HAND onto ayah boundaries. `qc author` had split 54:1 across
+  # two cards and put its last word (ٱلْقَمَرُ) on the same card as the opening
+  # of 54:2 -- a card must never straddle an ayah. Card boundaries now sit in
+  # the measured gaps: 54:1's ٱلْقَمَرُ ends voiced at abs 5.20, 54:2's وَإِن
+  # attacks at abs 6.195.
+  - t0: 0.12
+    t1: 4.70
+    ayah: 1
+    ar1: "ٱقْتَرَبَتِ ٱلسَّاعَةُ"
+    ar2: "وَٱنشَقَّ ٱلْقَمَرُ"
+  # 4|3, not 3|4: يُعْرِضُوا۟ on line 2 measures 521px against the 486px cap and
+  # would drag the WHOLE clip down to 89pt.
+  - t0: 5.70
+    t1: 12.76
+    ayah: 2
+    ar1: "وَإِن يَرَوْا۟ ءَايَةًۭ يُعْرِضُوا۟"
+    ar2: "وَيَقُولُوا۟ سِحْرٌۭ مُّسْتَمِرٌّۭ"
+  - t0: 13.62
+    t1: 21.07
+    ayah: 3
+    ar1: "وَكَذَّبُوا۟ وَٱتَّبَعُوٓا۟ أَهْوَآءَهُمْ"
+    ar2: "وَكُلُّ أَمْرٍۢ مُّسْتَقِرٌّۭ"
+  - t0: 22.04
+    t1: 30.29
+    ayah: 4
+    ar1: "وَلَقَدْ جَآءَهُم مِّنَ ٱلْأَنۢبَآءِ"
+    ar2: "مَا فِيهِ مُزْدَجَرٌ"
+  # 54:5 was two cards (حِكْمَةٌۢ بَٰلِغَةٌۭ alone, then فَمَا تُغْنِ ٱلنُّذُرُ);
+  # merged so the ayah reads as one thought.
+  - t0: 30.97
+    t1: 37.11
+    ayah: 5
+    ar1: "حِكْمَةٌۢ بَٰلِغَةٌۭ"
+    ar2: "فَمَا تُغْنِ ٱلنُّذُرُ"
