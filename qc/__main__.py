@@ -121,6 +121,10 @@ def main(argv=None):
                   "[--side left|right] [--face X,Y[,W]] [--exclude X,Y,W,H] "
                   "[--annotate P] [--sheet P] [--write]", file=sys.stderr)
             return 2
+        if style not in ("bars", "default"):
+            print("unknown style %r (the framing cache is keyed by style: "
+                  "bars | default)" % style, file=sys.stderr)
+            return 2
         xy = tuple(float(v) for v in face.split(",")) if face else None
         crop.run(fetch.video_id(rest[0]), style=style, frames=frames, side=side,
                  face_xy=xy, extra_boxes=ex, annotate_path=ann, sheet_path=sheet,
@@ -263,6 +267,9 @@ def _author(argv):
               "[-o DIR] [--like CLIP] [--style bars|default] [-n]",
               file=sys.stderr)
         return 2
+    if style not in ("bars", "default"):
+        print("unknown style %r (known: bars, default)" % style, file=sys.stderr)
+        return 2
     vid = fetch.video_id(rest[0])
     s, _, rng = rest[1].partition(":")
     a, _, b = rng.partition("-")
@@ -275,17 +282,29 @@ def _author(argv):
         return 2
 
     meta = {"source_url": "https://www.youtube.com/watch?v=%s" % vid}
-    # The framing is a property of the SOURCE, so if `qc crop` has already
-    # solved this video every clip cut from it inherits that crop for free.
-    # An explicit --like still wins: a shipped clip's approved numbers beat a
-    # solver's.
+    # The framing is a property of the SOURCE *and of the style* -- bars and
+    # default place the reciter and the caption by different rules -- so only
+    # the block solved for THIS style may be inherited. If there is none, say
+    # so; silently using the other one is what mis-framed al-qamar-7-9.
     from .author import crop as _crop
-    fr = _crop.read_framing(vid)
+    fr = _crop.read_framing(vid, style)
     if fr.get("crop"):
         meta["video_bg"] = {"mode": "live", "crop": fr["crop"]}
         meta["text"] = {"center_x_frac": fr.get("text_center_x_frac", 0.30)}
-        meta["framing_from"] = "solved once by `qc crop` and cached in " \
-                               "sources/meta/%s.yaml" % vid
+        meta["framing_from"] = "solved for the %s style by `qc crop` and " \
+                               "cached in sources/meta/%s.yaml" % (style, vid)
+    elif not like:
+        have = _crop.solved_styles(vid)
+        print("! no %s-style framing cached for %s%s.\n"
+              "  Solve it first:  qc crop %s --style %s --write\n"
+              "  (a crop solved for another style frames the reciter for that "
+              "style's caption anchor, so it is NOT reused here.)\n"
+              "  Continuing without video_bg -- the clip.yaml will carry a "
+              "TODO."
+              % (style, vid,
+                 " (this source has: %s)" % ", ".join(have) if have else
+                 " (this source has no framing at all)", vid, style),
+              file=sys.stderr)
     if like:
         meta.update(_carry_over(like))
     # Scratch audio + cached ASR live under sources/, which is gitignored

@@ -11,19 +11,35 @@ height: 720
 fps: 30
 has_ar_captions: true
 caption_langs: ["ar", "ar-orig"]
-# --- framing: solved by `qc crop` over 40 sampled frames.
-# Fixed camera -> one crop per SOURCE; clips inherit it. Hand-tunable.
+# --- framing: solved by `qc crop`, ONE BLOCK PER STYLE.
+# Fixed camera -> one crop per SOURCE, but the composition rules differ per
+# style, so bars and default are separate solves. Clips inherit the block
+# matching their own style, and nothing else. Hand-tunable.
 framing:
-  style: bars
-  crop: {x: 136, y: 80, w: 794, h: 446}
-  text_center_x_frac: 0.300
-  caption_side: left
-  faces: left
-  face_px: {cx: 678, cy: 206, w: 65, h: 140}  # median over 39/40 frames
-  face_frac: {x: 0.682, y: 0.282}   # y rule: ~0.275
-  reciter_w_frac: 0.395
-  camera_spread_px: {cx: 47, cy: 12}
-  exclude_boxes:
-    - {x: 925, y: 545, w: 323, h: 73}
-    - {x: 1136, y: 30, w: 123, h: 84}
-    - {x: 0, y: 647, w: 159, h: 64}
+  bars:
+    crop: {x: 136, y: 80, w: 794, h: 446}
+    text_center_x_frac: 0.300
+    caption_side: left
+    faces: left
+    face_px: {cx: 678, cy: 206, w: 65, h: 140}  # median over 39/40 frames
+    face_frac: {x: 0.682, y: 0.282}   # y rule: ~0.275
+    reciter_w_frac: 0.395
+    camera_spread_px: {cx: 47, cy: 12}
+    exclude_boxes:
+      - {x: 925, y: 545, w: 323, h: 73}
+      - {x: 1136, y: 30, w: 123, h: 84}
+      - {x: 0, y: 647, w: 159, h: 64}
+  default:
+    crop: {x: 0, y: 72, w: 870, h: 490}
+    text_center_x_frac: 0.298
+    caption_side: left
+    faces: left
+    face_px: {cx: 678, cy: 206, w: 65, h: 140}  # median over 39/40 frames
+    face_frac: {x: 0.779, y: 0.273}   # y rule: ~0.275
+    reciter_w_frac: 0.361
+    camera_spread_px: {cx: 47, cy: 12}
+    solved_over_frames: 40
+    exclude_boxes:
+      - {x: 925, y: 545, w: 323, h: 73}
+      - {x: 1136, y: 30, w: 123, h: 84}
+      - {x: 0, y: 647, w: 159, h: 64}

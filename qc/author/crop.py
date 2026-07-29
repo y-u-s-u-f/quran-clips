@@ -432,17 +432,95 @@ def contact_sheet(times, frames, out_path, cols=5):
 
 # --- the cache -------------------------------------------------------------
 
+# --- the cache is PER STYLE, and that is not a detail ----------------------
+#
+# The crop solved for `--style bars` is not the crop for `--style default`:
+# bars pins the caption anchor at 0.30 W and only asks that the reciter clear
+# 0.60 W, while default derives BOTH the reciter's position and the caption
+# centre from the equal-margin rule. Same camera, same face, different window.
+#
+# The first version of this file stored ONE `framing:` block with a `style:`
+# key saying what it had been solved for, and `qc author --style default`
+# inherited it regardless -- so al-qamar-7-9 was framed by the bars solve and
+# had its caption sitting where the default rule does not put it. So the cache
+# is keyed by style, `qc crop` replaces only the slot it solved, and
+# `read_framing` returns nothing at all rather than the wrong slot.
 MARK = "# --- framing"
+STYLES = ("bars", "default")
+
+
+def _framing_blocks(path):
+    """-> {style: [raw lines, indented by 4]} already cached in this file.
+
+    The other styles' blocks are carried across verbatim, because they may
+    have been hand-tuned after the solve and re-deriving them is not this
+    call's business.
+    """
+    if not os.path.exists(path):
+        return {}
+    lines = open(path, encoding="utf-8").read().splitlines()
+    # The MAP, not the word: the block above it is a comment that also says
+    # "framing:", and matching the substring made the reader start two lines
+    # early and mistake `exclude_boxes:` for a style.
+    at = next((i for i, l in enumerate(lines) if l.rstrip() == "framing:"), None)
+    if at is None:
+        return {}
+    body = lines[at + 1:]
+    # LEGACY: one flat block, tagged with the style it was solved for.
+    if body and body[0].startswith("  ") and not body[0].rstrip().endswith(":"):
+        style = "bars"
+        keep = []
+        for line in body:
+            s = line.strip()
+            if s.startswith("style:"):
+                style = s.split(":", 1)[1].strip()
+                continue
+            keep.append("  " + line if line.strip() else line)
+        return {style: keep}
+    out, cur = {}, None
+    for line in body:
+        if not line.strip():
+            continue
+        if line.startswith("  ") and not line.startswith("   ") \
+                and line.rstrip().endswith(":"):
+            cur = line.strip()[:-1]
+            out[cur] = []
+        elif cur:
+            out[cur].append(line)
+    return out
+
+
+def _framing_body(fr):
+    """One style's cached facts, as 4-space-indented yaml lines."""
+    L = ["    crop: {x: %d, y: %d, w: %d, h: %d}" % tuple(fr["crop"]),
+         "    text_center_x_frac: %.3f" % fr["text_center_x_frac"],
+         "    caption_side: %s" % fr["caption_side"],
+         "    faces: %s" % fr["faces"],
+         "    face_px: {cx: %d, cy: %d, w: %d, h: %d}  # median over %d/%d frames"
+         % (fr["face"][0], fr["face"][1], fr["face"][2], fr["face"][3],
+            fr["face_n"], fr["frames"]),
+         "    face_frac: {x: %.3f, y: %.3f}   # y rule: ~%.3f" % (
+             fr["face_frac"][0], fr["face_frac"][1], FACE_Y_FRAC),
+         "    reciter_w_frac: %.3f" % fr["reciter_w_frac"],
+         "    camera_spread_px: {cx: %.0f, cy: %.0f}" % tuple(fr["spread"]),
+         "    solved_over_frames: %d" % fr["frames"],
+         "    exclude_boxes:" if fr["exclude_boxes"] else "    exclude_boxes: []"]
+    for b in fr["exclude_boxes"]:
+        L.append("      - {x: %d, y: %d, w: %d, h: %d}" % tuple(b))
+    return L
 
 
 def write_framing(vid, fr):
-    """Append/replace a `framing:` block in sources/meta/<id>.yaml.
+    """Write this style's slot of the `framing:` map in sources/meta/<id>.yaml.
 
     Kept in the SAME file as the yt-dlp metadata because it is the same kind of
     thing: expensive to derive, cheap to store, and true of the video forever.
-    Everything above the marker is left byte-for-byte alone.
+    Everything above the marker -- and every OTHER style's block -- is left
+    alone.
     """
     path = os.path.join(META, "%s.yaml" % vid)
+    blocks = _framing_blocks(path)
+    blocks[fr["style"]] = _framing_body(fr)
     head = ""
     if os.path.exists(path):
         head = open(path, encoding="utf-8").read()
@@ -450,50 +528,51 @@ def write_framing(vid, fr):
             head = head[:head.index(MARK)]
     if head and not head.endswith("\n"):
         head += "\n"
-    L = [MARK + ": solved by `qc crop` over %d sampled frames." % fr["frames"],
-         "# Fixed camera -> one crop per SOURCE; clips inherit it. Hand-tunable.",
-         "framing:",
-         "  style: %s" % fr["style"],
-         "  crop: {x: %d, y: %d, w: %d, h: %d}" % tuple(fr["crop"]),
-         "  text_center_x_frac: %.3f" % fr["text_center_x_frac"],
-         "  caption_side: %s" % fr["caption_side"],
-         "  faces: %s" % fr["faces"],
-         "  face_px: {cx: %d, cy: %d, w: %d, h: %d}  # median over %d/%d frames"
-         % (fr["face"][0], fr["face"][1], fr["face"][2], fr["face"][3],
-            fr["face_n"], fr["frames"]),
-         "  face_frac: {x: %.3f, y: %.3f}   # y rule: ~%.3f" % (
-             fr["face_frac"][0], fr["face_frac"][1], FACE_Y_FRAC),
-         "  reciter_w_frac: %.3f" % fr["reciter_w_frac"],
-         "  camera_spread_px: {cx: %.0f, cy: %.0f}" % tuple(fr["spread"]),
-         "  exclude_boxes:" if fr["exclude_boxes"] else "  exclude_boxes: []"]
-    for b in fr["exclude_boxes"]:
-        L.append("    - {x: %d, y: %d, w: %d, h: %d}" % tuple(b))
+    L = [MARK + ": solved by `qc crop`, ONE BLOCK PER STYLE.",
+         "# Fixed camera -> one crop per SOURCE, but the composition rules "
+         "differ per",
+         "# style, so bars and default are separate solves. Clips inherit the "
+         "block",
+         "# matching their own style, and nothing else. Hand-tunable.",
+         "framing:"]
+    for st in sorted(blocks, key=lambda s: (s not in STYLES, s)):
+        L.append("  %s:" % st)
+        L += blocks[st]
     with open(path, "w", encoding="utf-8") as f:
         f.write(head + "\n".join(L) + "\n")
     return path
 
 
-def read_framing(vid):
-    """Read back the framing block. Returns {} if this source has not been solved."""
+def read_framing(vid, style):
+    """This source's cached framing FOR THIS STYLE, or {} if it has none.
+
+    Never falls back to another style's solve: a crop solved for `bars` frames
+    the reciter for a caption pinned at 0.30 W of a 9:16 band, and handing it
+    to a default-style clip is how al-qamar-7-9 got the wrong window.
+    """
     path = os.path.join(META, "%s.yaml" % vid)
-    if not os.path.exists(path):
-        return {}
-    txt = open(path, encoding="utf-8").read()
-    if "framing:" not in txt:
+    lines = _framing_blocks(path).get(style)
+    if not lines:
         return {}
     out, boxes = {}, []
-    for line in txt[txt.index("framing:"):].splitlines()[1:]:
+    for line in lines:
         s = line.strip()
         if s.startswith("- {"):
             boxes.append(_flow(s[2:]))
             continue
-        if not s or s.startswith("#") or ":" not in s or not line.startswith("  "):
+        if not s or s.startswith("#") or ":" not in s:
             continue
         k, _, v = s.partition(":")
         v = v.split("#")[0].strip()
         out[k.strip()] = _flow(v) if v.startswith("{") else _scalar(v)
     out["exclude_boxes"] = boxes
+    out["style"] = style
     return out
+
+
+def solved_styles(vid):
+    """Which styles this source has a cached solve for."""
+    return sorted(_framing_blocks(os.path.join(META, "%s.yaml" % vid)))
 
 
 def _scalar(v):
