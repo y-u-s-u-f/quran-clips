@@ -232,17 +232,21 @@ def radial_alpha(w, h, cx, cy, rx, ry, a_center, a_edge, ease=1.6, lo=48, hi=27)
 
 
 # ----------------------------------------------------------------------------
-# main build
+# layout
+#
+# Split out of build() so that the caption block's GEOMETRY can be measured
+# without writing any files -- `qc author` has to solve text.center_y_frac
+# before the clip exists, and the only honest way to do that is to lay the
+# block out exactly as the renderer will. Anything that decides where ink
+# lands belongs here, not in build().
 # ----------------------------------------------------------------------------
-def build(clip_dir):
-    clip = load_yaml(os.path.join(clip_dir, "clip.yaml"))
-    if style_of(clip) != "default":       # non-default styles have their own
-        import render_bars                # overlay generator
-        return render_bars.build(clip_dir)
-    style = load_yaml(template_path(clip))
+def layout(clip, style, cy_frac=None):
+    """-> the shared geometry of one default-style clip's caption overlays.
 
+    `cy_frac` overrides clip.text.center_y_frac (used when SOLVING for it).
+    """
     # Drop the small tajweed annotation marks (see qc.arabic for which and why;
-    # learned on al-ahzab-70-71).
+    # learned on al-ahzab-70-71). Idempotent, so callers need not do it first.
     for _ph in clip.get("phrases", []):
         if isinstance(_ph, dict) and _ph.get("ar"):
             _ph["ar"] = norm_ar(_ph["ar"])
@@ -266,7 +270,9 @@ def build(clip_dir):
     #     than mid-frame (config-driven per clip via clip.text.*). ---
     txt_cfg = clip.get("text", {}) or {}
     cx_frac = float(txt_cfg.get("center_x_frac", 0.30))
-    cy_frac = float(txt_cfg.get("center_y_frac", 0.34))
+    if cy_frac is None:
+        cy_frac = float(txt_cfg.get("center_y_frac", 0.34))
+    cy_frac = float(cy_frac)
     TEXT_CX = int(cx_frac * W)
     AR_CY   = int(cy_frac * H)  # arabic vertical centre
 
@@ -324,6 +330,150 @@ def build(clip_dir):
     # English line-width cap (QA: <=0.50 W so line ends clear the mic/reciter)
     max_en_w = float(enfrac.get("max_line_width", 0.50)) * W
 
+    return {
+        "cx_frac": cx_frac, "cy_frac": cy_frac,
+        "TEXT_CX": TEXT_CX, "AR_CY": AR_CY,
+        "AR_PT": AR_PT, "ar_font": ar_font, "ar_color": ar_color,
+        "cap_font": cap_font, "pet_font": pet_font, "en_color": en_color,
+        "EN_CAP_PT": EN_CAP_PT, "tracking_px": tracking_px,
+        "max_en_w": max_en_w, "max_line_w": max_line_w,
+        "gap_below": gap_below, "widest": widest,
+        "line_h": int(EN_CAP_PT * 1.62),
+        "cap_h": cap_font.getbbox("H")[3] - cap_font.getbbox("H")[1],
+        "med_suffix": med_suffix,
+        "shadow": (sh_off, sh_blur, sh_col, sh_alpha),
+    }
+
+
+def phrase_overlay(clip, L, idx, en_text=None):
+    """One phrase's finished RGBA overlay (Arabic + English + drop shadow).
+
+    `idx` is 1-based. `en_text` overrides the phrase's own `en:` -- which is
+    what lets center_y_frac be solved on a clip whose translations are still
+    the TODO placeholders `qc author` emits.
+    """
+    ph = clip["phrases"][idx - 1]
+    sh_off, sh_blur, sh_col, sh_alpha = L["shadow"]
+    ink = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(ink)
+
+    # ayah medallion whenever this phrase completes a full ayah (see
+    # med_suffix above). Medallion = the Arabic-Indic numerals alone
+    # (Uthmanic Hafs auto-encloses them in the decorative rosette).
+    suffix = L["med_suffix"](idx - 1)
+    ar_text = ph["ar"] + suffix
+
+    draw_rtl(d, (L["TEXT_CX"], L["AR_CY"]), ar_text, L["ar_font"],
+             L["ar_color"] + (255,))
+    arb = bbox_rtl(d, (L["TEXT_CX"], L["AR_CY"]), ar_text, L["ar_font"])
+    ar_bottom = arb[3]
+
+    # English small-caps, centred on TEXT_CX, below Arabic
+    en_lines = wrap_smallcaps(ph["en"] if en_text is None else en_text,
+                              L["cap_font"], L["pet_font"], L["tracking_px"],
+                              L["max_en_w"])
+    y = ar_bottom + int(L["gap_below"]) + L["cap_h"]
+    for ln in en_lines:
+        toks = smallcaps_tokens(ln, L["cap_font"], L["pet_font"])
+        wln = measure_smallcaps(toks, L["tracking_px"])
+        x0 = L["TEXT_CX"] - wln / 2.0
+        draw_smallcaps_line(ink, x0, y, toks, L["en_color"] + (240,),
+                            L["tracking_px"])
+        y += L["line_h"]
+
+    # soft drop shadow from the ink alpha
+    alpha = ink.split()[3]
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    solid = Image.new("RGBA", (W, H), sh_col + (sh_alpha,))
+    shadow.paste(solid, (0, 0), alpha)
+    shadow = shadow.transform(
+        (W, H), Image.AFFINE, (1, 0, -sh_off, 0, 1, -sh_off))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(sh_blur * 0.6))
+
+    final = Image.alpha_composite(shadow, ink)
+    return final, {"ar_w": arb[2] - arb[0], "en_lines": en_lines,
+                   "medallion": bool(suffix)}
+
+
+# ----------------------------------------------------------------------------
+# solving text.center_y_frac
+#
+# `text.center_y_frac` is NOT the centre of the caption block: it is the
+# vertical anchor of the ARABIC line, and the English sits below it, so the
+# block's centre lands somewhere under the anchor by an amount that depends on
+# the Arabic's ink height, the point size after shrink-to-fit, and -- most of
+# all -- how many lines the English wraps to. On al-qamar-7-9 that offset is
+# 0.024 H; the renderer's hardcoded 0.34 fallback put the block at 0.364 H,
+# well above the owner's rule (templates/style.yaml text_block.block_center_y:
+# 0.50, "the caption block is centred vertically").
+#
+# The offset is a pure translation -- move the anchor by n px and every pixel
+# of the block moves by n -- so one measurement solves it exactly. The block
+# is measured the way the owner measures it: the alpha bbox of the finished
+# overlay, shadow included.
+# ----------------------------------------------------------------------------
+# What a not-yet-written translation is assumed to look like. The vertical
+# extent of a one-line English band does not depend on the words, only on the
+# cap height and whether anything descends below the baseline -- so a comma is
+# the only thing this string has to contain.
+EN_PLACEHOLDER = "A LINE OF TRANSLATION,"
+
+
+def block_bounds(clip, style=None, cy_frac=None, en_text=None):
+    """Per-phrase (top, bottom) of the rendered caption block, in pixels."""
+    style = style or load_yaml(template_path(clip))
+    L = layout(clip, style, cy_frac=cy_frac)
+    out = []
+    for i in range(1, len(clip["phrases"]) + 1):
+        en = clip["phrases"][i - 1].get("en")
+        im, _ = phrase_overlay(clip, L, i,
+                               en_text=en_text if not (en or "").strip() else None)
+        bb = im.split()[3].getbbox()
+        out.append((bb[1], bb[3]) if bb else None)
+    return [b for b in out if b]
+
+
+def solve_center_y(clip, style=None, target=None, en_text=EN_PLACEHOLDER):
+    """-> the text.center_y_frac that centres the caption block vertically.
+
+    Each phrase's block is a different height (a two-line English fragment
+    hangs ~0.02 H lower than a one-line one), so no single anchor can centre
+    all of them; the MEDIAN phrase is centred and the spread is reported.
+
+    -> (cy_frac, [resulting per-phrase block centres as fractions of H]).
+    """
+    style = style or load_yaml(template_path(clip))
+    if target is None:
+        target = float(style["text_block"]["fractions_of_frame"]
+                       .get("block_center_y", 0.50))
+    trial = 0.5
+    mids = sorted(((t + b) / 2.0
+                   for t, b in block_bounds(clip, style, cy_frac=trial,
+                                            en_text=en_text)))
+    if not mids:
+        return target, []
+    med = mids[len(mids) // 2] - trial * H          # anchor -> block-centre
+    cy = round((target * H - med) / float(H), 3)
+    got = [round((m - trial * H + cy * H) / float(H), 4) for m in mids]
+    return cy, got
+
+
+# ----------------------------------------------------------------------------
+# main build
+# ----------------------------------------------------------------------------
+def build(clip_dir):
+    clip = load_yaml(os.path.join(clip_dir, "clip.yaml"))
+    if style_of(clip) != "default":       # non-default styles have their own
+        import render_bars                # overlay generator
+        return render_bars.build(clip_dir)
+    style = load_yaml(template_path(clip))
+    L = layout(clip, style)
+    AR_PT, TEXT_CX, AR_CY = L["AR_PT"], L["TEXT_CX"], L["AR_CY"]
+    NOMINAL_AR_PT = int((style["arabic"].get("render", {}) or {})
+                        .get("nominal_pt", 84))
+    cy_frac = L["cy_frac"]
+    max_line_w, widest = L["max_line_w"], L["widest"]
+
     out_dir = os.path.join(clip_dir, "work", "overlays")
     os.makedirs(out_dir, exist_ok=True)
 
@@ -331,48 +481,11 @@ def build(clip_dir):
               "phrases": []}
 
     # ----- per-phrase text overlays -----
-    for idx, ph in enumerate(clip["phrases"], start=1):
-        ink = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        d = ImageDraw.Draw(ink)
-
-        # ayah medallion whenever this phrase completes a full ayah (see
-        # med_suffix above). Medallion = the Arabic-Indic numerals alone
-        # (Uthmanic Hafs auto-encloses them in the decorative rosette).
-        suffix = med_suffix(idx - 1)
-        show_med = bool(suffix)
-        ar_text = ph["ar"] + suffix
-
-        draw_rtl(d, (TEXT_CX, AR_CY), ar_text, ar_font, ar_color + (255,))
-        arb = bbox_rtl(d, (TEXT_CX, AR_CY), ar_text, ar_font)
-        ar_bottom = arb[3]
-
-        # English small-caps, centred on TEXT_CX, below Arabic
-        en_lines = wrap_smallcaps(ph["en"], cap_font, pet_font, tracking_px, max_en_w)
-        line_h = int(EN_CAP_PT * 1.62)
-        cap_h = cap_font.getbbox("H")[3] - cap_font.getbbox("H")[1]
-        y = ar_bottom + int(gap_below) + cap_h
-        for ln in en_lines:
-            toks = smallcaps_tokens(ln, cap_font, pet_font)
-            wln = measure_smallcaps(toks, tracking_px)
-            x0 = TEXT_CX - wln / 2.0
-            draw_smallcaps_line(ink, x0, y, toks, en_color + (240,), tracking_px)
-            y += line_h
-
-        # soft drop shadow from the ink alpha
-        alpha = ink.split()[3]
-        shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        solid = Image.new("RGBA", (W, H), sh_col + (sh_alpha,))
-        shadow.paste(solid, (0, 0), alpha)
-        shadow = shadow.transform(
-            (W, H), Image.AFFINE, (1, 0, -sh_off, 0, 1, -sh_off))
-        shadow = shadow.filter(ImageFilter.GaussianBlur(sh_blur * 0.6))
-
-        final = Image.alpha_composite(shadow, ink)
+    for idx in range(1, len(clip["phrases"]) + 1):
+        final, info = phrase_overlay(clip, L, idx)
         p = os.path.join(out_dir, f"phrase{idx}.png")
         final.save(p)
-        report["phrases"].append(
-            {"file": p, "ar_w": arb[2]-arb[0], "en_lines": en_lines,
-             "medallion": show_med})
+        report["phrases"].append(dict(info, file=p))
 
     # ----- (reciter is baked into the scene image; no portrait overlay) -----
     from PIL import ImageChops

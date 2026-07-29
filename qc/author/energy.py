@@ -215,30 +215,95 @@ def chunk_points(ds, t_lo, t_hi, min_chunk=3.0):
     return pts
 
 
-def onset(ds, times, db, t_hint, speech, back=2.0, rise_db=18.0, hop=HOP):
+# --- the head -------------------------------------------------------------
+#
+# THE ASR IS NOT AN AUTHORITY ON WHERE THE PASSAGE STARTS, and this cost a
+# posted-quality clip. On al-qamar-7-9 mlx-whisper put the first word of 54:7
+# (خُشَّعًا) at 45.10. The envelope says otherwise: the last word of 54:6 stops
+# being voiced at 45.02, its REVERB TAIL decays to the room floor by 45.35,
+# there is genuine silence 45.35-45.95, and the real attack is at 45.97. What
+# Whisper labelled as the next word was the previous ayah's tail, so both the
+# head-tighten and the "don't cross the ayah boundary" guard agreed on the
+# same wrong answer, and the clip opened with a second of somebody else's word
+# decaying. Under any hall reverb this will happen again.
+#
+# So the head is measured, not asked for. A real attack is:
+#
+#   QUIET   the ONSET_QUIET_S before it never rises above speech-ONSET_QUIET_DB
+#           -- i.e. the previous phrase has fully decayed, tail included;
+#   RISE    the envelope crosses UP through speech-ONSET_ON_DB;
+#   HELD    and stays above speech-ONSET_HOLD_DB for ONSET_HOLD_S.
+#
+# All three are needed. A single threshold crossing is met by a reverb tail on
+# its way down and by the release of a geminated consonant; the HELD test is
+# what rejects them (they are back under within 20-60 ms), and the QUIET test
+# is what stops us calling the middle of a continuous phrase an onset.
+# Everything is relative to the clip's own speech level, so a dry studio and
+# the Haram are judged on the same scale (same reasoning as WAQF_DB).
+ONSET_ON_DB = 7.0      # crossing this far below speech = the attack
+ONSET_HOLD_DB = 11.0   # ...and it has to stay this loud...
+ONSET_HOLD_S = 0.08    # ...for this long, or it was a tail, not a word
+ONSET_QUIET_DB = 12.0  # the pause in front of it sits at least this far down
+ONSET_QUIET_S = 0.15   # ...for at least this long
+ONSET_BACK = 0.35      # ASR anchors on the vowel: allow the truth this early
+ONSET_FWD = 2.0        # ASR mistakes reverb for speech: allow it this late
+
+
+def attacks(times, db, speech, lo=None, hi=None, hop=HOP,
+            on_db=ONSET_ON_DB, hold_db=ONSET_HOLD_DB, hold_s=ONSET_HOLD_S,
+            quiet_db=ONSET_QUIET_DB, quiet_s=ONSET_QUIET_S):
+    """Every moment the envelope comes out of a real pause into sustained voice.
+
+    -> [times], ascending. See the note above for what "real" means here.
+    """
+    on = speech - on_db
+    hold = speech - hold_db
+    quiet = speech - quiet_db
+    nq = max(1, int(round(quiet_s / hop)))
+    nh = max(1, int(round(hold_s / hop)))
+    i0 = 1 if lo is None else max(1, _idx(times, lo, hop))
+    i1 = len(db) if hi is None else min(len(db), _idx(times, hi, hop) + 1)
+    out = []
+    for i in range(i0, i1):
+        if db[i] < on or db[i - 1] >= on:
+            continue                                   # not an upward crossing
+        if i < nq or max(db[i - nq:i]) > quiet:
+            continue                                   # no real pause in front
+        if i + nh > len(db) or min(db[i:i + nh]) < hold:
+            continue                                   # not sustained: a tail
+        out.append(times[i])
+    return out
+
+
+def onset(times, db, speech, t_hint, back=ONSET_BACK, fwd=ONSET_FWD, hop=HOP,
+          rise_db=18.0):
     """When recitation actually starts, for the IG hook.
 
-    The head has to begin ~0.1-0.3 s before the first sound (SKILL.md:96-99),
-    and Whisper's own first-word start is routinely 100-300 ms late because it
-    anchors on the vowel rather than the attack. So the onset is taken from
-    the envelope: the moment the silence BEFORE the passage climbs back
-    through the half-way level. If there is no such silence in the window
-    (the pad landed inside the previous ayah) fall back to a threshold walk.
+    `t_hint` is where the ASR thinks the first word begins; it is used only to
+    say WHERE to look, never as the answer. The head has to begin 0.1-0.3 s
+    before the first sound (SKILL.md:96-99), so what we want is the EARLIEST
+    real attack in [hint-back, hint+fwd] -- earliest, because Whisper is
+    usually 100-300 ms late (it anchors on the vowel) and only occasionally
+    early (reverb, as above); `back` is small enough that "earliest" can never
+    reach the previous word.
+
+    If nothing in the window qualifies -- which means the window opens inside
+    continuous recitation, with no pause to start from -- fall back to a plain
+    threshold walk and let the caller's own boundary guard clamp it.
     """
-    # `+ 0.5`: Whisper's first word in a decode chunk routinely starts BEFORE
-    # the audio does -- it anchors on the chunk, not the attack -- so the
-    # silence we are looking for can sit slightly after the hint.
-    cand = [d for d in ds if d["waqf"] and t_hint - back <= d["t"] <= t_hint + 0.5]
-    if cand:
-        return max(cand, key=lambda d: d["t"])["t0"]
+    lo = t_hint - back
+    hi = t_hint + fwd
+    got = attacks(times, db, speech, lo=lo, hi=hi, hop=hop)
+    if got:
+        return got[0]
     level = speech - rise_db
     i = _idx(times, t_hint, hop)
     j = i
-    while j > 0 and db[j] >= level:
+    while j > 0 and db[j] >= level and times[j] >= lo:
         j -= 1
     if j < i:
         return times[j + 1]
-    for k in range(_idx(times, max(0.0, t_hint - back), hop), len(db)):
+    for k in range(_idx(times, max(0.0, lo), hop), len(db)):
         if db[k] >= level:
             return times[k]
     return t_hint

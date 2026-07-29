@@ -189,8 +189,24 @@ def plan(src, surah, a, b, start, end, workdir, pad=A.PAD,
     wd = word_dips(ev, al["dips"])
     bounds, reason = split_cards(ev, wd)
 
-    # --- head: pull segment.start back to just before the first attack
-    on = E.onset(al["dips"], times, db, ev[0]["t0"], speech)
+    # --- head: pull segment.start back to just before the first attack.
+    # MEASURED from the envelope, not taken from the ASR -- see the note above
+    # E.onset. Whisper called the previous ayah's reverb tail the first word on
+    # al-qamar-7-9 and the clip opened on someone else's word decaying.
+    on = E.onset(times, db, speech, ev[0]["t0"])
+    # HARD FLOOR: the head may never walk back into the PREVIOUS ayah. The
+    # earliest defensible start is the aligned onset of the first word of the
+    # first claimed ayah, less the allowance the onset search itself needs for
+    # Whisper's habit of anchoring on the vowel rather than the attack. (This
+    # guard alone was not enough on al-qamar-7-9 -- the aligner had put that
+    # first word inside the previous ayah's tail too -- which is why the
+    # envelope, not this, is the arbiter.)
+    j0 = min((k for k, r in enumerate(al["ref"]) if r["ayah"] == a), default=0)
+    first = next((e for e in ev if e["ref"] == j0), ev[0])
+    head_floor = first["t0"] - E.ONSET_BACK
+    clamped = on < head_floor
+    if clamped:
+        on = head_floor
     seg_start = on - head_target
 
     # --- boundaries between cards
@@ -230,7 +246,8 @@ def plan(src, surah, a, b, start, end, workdir, pad=A.PAD,
         "align": al, "events": ev, "cards": cards, "edges": edges,
         "speech_db": speech, "floor_db": floor, "dips": al["dips"],
         "wav_t0": al["wav_t0"],
-        "onset": on, "seg_start": seg_start, "seg_end": seg_end,
+        "onset": on, "asr_onset": ev[0]["t0"], "head_clamped": clamped,
+        "seg_start": seg_start, "seg_end": seg_end,
         "tail_depth": tl["depth"], "tail": tl,
         "abs_start": al["wav_t0"] + seg_start,
         "abs_end": al["wav_t0"] + seg_end,
@@ -308,11 +325,22 @@ def clip_yaml(p, meta=None, style="bars"):
             L.append("  %s: %s" % (k, v))
 
     L.append("segment:")
+    drift = p["onset"] - p["asr_onset"]
     L += ["  " + x for x in _wrap(
-        "onset abs %.2f; start %.2f -> onset rel %.2f (IG hook). End %.2f sits "
-        "%.2f s after the last word, at the deepest point of the following "
-        "gap (%.0f dB below speech)%s."
-        % (p["abs_onset"], p["abs_start"], p["onset"] - p["seg_start"],
+        "onset abs %.2f, MEASURED off the envelope (first sustained rise to "
+        "within %.0f dB of speech, preceded by %.0f ms at least %.0f dB down) "
+        "rather than taken from the ASR, which put the first word at %.2f%s. "
+        "start %.2f -> onset rel %.2f (IG hook).%s End %.2f sits %.2f s after "
+        "the last word, at the deepest point of the following gap (%.0f dB "
+        "below speech)%s."
+        % (p["abs_onset"], E.ONSET_ON_DB, 1000 * E.ONSET_QUIET_S,
+           E.ONSET_QUIET_DB, p["wav_t0"] + p["asr_onset"],
+           " -- that was the previous phrase's reverb tail, not a word"
+           if drift > 0.25 else "",
+           p["abs_start"], p["onset"] - p["seg_start"],
+           " Head clamped to the first word of the opening ayah: without it "
+           "the start would have crossed into the previous ayah."
+           if p["head_clamped"] else "",
            p["abs_end"], p["seg_end"] - p["events"][-1]["t1"], p["tail_depth"],
            "" if p["tail_depth"] >= E.WAQF_DB else
            " -- SHALLOW: check by ear that nothing leaks into the tail"))]

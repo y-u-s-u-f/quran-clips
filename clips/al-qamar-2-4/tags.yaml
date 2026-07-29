@@ -1,0 +1,20 @@
+# Per-clip tags + post status. Edit `posted:` by hand (false/true) OR use
+#   /opt/homebrew/bin/python3 scripts/status.py post|unpost al-qamar-2-4
+# The same script mirrors `tags` + a green Posted / red "Not Posted" marker onto
+# the folder's macOS Finder tags (visible/filterable in Finder).
+surah: al-qamar
+surah_number: 54
+ayah_range: [2, 4]
+reciter: "Ahmed bin Talib"
+reciter_short: "AHMED-BIN-TALIB"
+title: "And if they see a miracle, they turn away and say, 'Passing magic"
+source_url: "https://www.youtube.com/watch?v=vqxYwdR4RvQ"
+tags:
+  - surah-al-qamar
+  - style-bars
+  - ahmed-bin-talib
+  - splitting-of-the-moon
+  - denial
+  - warning
+posted: false
+posted_at: ""

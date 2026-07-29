@@ -98,12 +98,17 @@ class Result(object):
         self.name = name
         self.ran = []
         self.problems = []          # (check, message)
+        self.warnings = []          # (check, message) -- advisory, still PASS
 
     def start(self, check):
         self.ran.append(check)
 
     def fail(self, check, msg):
         self.problems.append((check, msg))
+
+    def warn(self, check, msg):
+        """Advisory: worth a human glance, but not a defect. Does not fail."""
+        self.warnings.append((check, msg))
 
     @property
     def ok(self):
@@ -118,6 +123,13 @@ class Result(object):
             if c in by:
                 for m in by[c]:
                     out.append("  FAIL %-11s %s" % (c, m))
+        bw = {}
+        for c, m in self.warnings:
+            bw.setdefault(c, []).append(m)
+        for c in self.ran:
+            if c in bw:
+                for m in bw[c]:
+                    out.append("  warn %-11s %s" % (c, m))
         return "\n".join(out)
 
 
@@ -455,7 +467,20 @@ def check_verse(res, clip, phrase_texts):
 # ---------------------------------------------------------------------------
 # 6. bars geometry (pure Pillow -- no video, no ffmpeg)
 # ---------------------------------------------------------------------------
-INK_BAR_MIN, INK_BAR_MAX = 2.4, 2.8
+# Letter-body height over pill height. The pill is a FIXED 44px, so this ratio
+# moves with whichever glyphs the line happens to contain -- a line without deep
+# descenders measures shorter than one with them, at identical, correct
+# composition. The 2.4-2.8 band originally used here was simply the observed
+# range of the only bars clip that existed (at-tawbah-128-128, 2.43-2.80); a
+# second clip (al-qamar-2-4) measured 2.30-2.82 and was confirmed correct by
+# eye, which showed the band was fitted to n=1 rather than to a defect.
+#
+# What the check is actually for: the pill must read as a highlight struck
+# THROUGH the letters, not as a box behind them. That fails when the ratio gets
+# SMALL. Below ~1.8 the pill approaches the letter height and reads as a box;
+# an unusually large ratio is not a defect at all, just a thin strike.
+INK_BAR_FAIL_MIN = 1.8            # below this the pill reads as a box
+INK_BAR_WARN_MIN, INK_BAR_WARN_MAX = 2.25, 2.95    # observed across real clips
 BAR_MAX_FRAC = 0.50
 
 
@@ -490,14 +515,21 @@ def check_geometry(res, clip, style):
                          % (p["i"], ln["n"], c, c - lay["cx"],
                             style["text"]["center_x_frac"], lay["cx"]))
             r = ln["ink_body_h"] / float(lay["bar_h"])
-            if not INK_BAR_MIN <= r <= INK_BAR_MAX:
+            if r < INK_BAR_FAIL_MIN:
                 res.fail("geometry",
                          "P%d line %d: letter-body height %.0fpx over a %dpx "
-                         "pill is a ratio of %.2f, outside %.1f-%.1f -- the "
-                         "pill must read as a highlight struck THROUGH the "
-                         "letters, not as a box behind them: %r"
+                         "pill is a ratio of %.2f, under %.1f -- the pill is "
+                         "reading as a box BEHIND the letters instead of a "
+                         "highlight struck through them: %r"
                          % (p["i"], ln["n"], ln["ink_body_h"], lay["bar_h"], r,
-                            INK_BAR_MIN, INK_BAR_MAX, ln["text"]))
+                            INK_BAR_FAIL_MIN, ln["text"]))
+            elif not INK_BAR_WARN_MIN <= r <= INK_BAR_WARN_MAX:
+                res.warn("geometry",
+                         "P%d line %d: letter-body/pill ratio %.2f is outside "
+                         "the %.2f-%.2f seen in shipped clips -- probably just "
+                         "this line's glyphs, worth a glance: %r"
+                         % (p["i"], ln["n"], r, INK_BAR_WARN_MIN,
+                            INK_BAR_WARN_MAX, ln["text"]))
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,59 @@
+source_url: "https://www.youtube.com/watch?v=vqxYwdR4RvQ"
+# THIS clip = Surah Al-Qamar ayah 2-4, at abs 00:00:04.200-00:00:30.730 in
+# the source. Timings below were produced by `qc author`: mlx-whisper
+# (large-v3-turbo) word timestamps over this window only, force-aligned onto
+# the mushaf text with a repeat-permitting DP, then every boundary snapped
+# to the deepest trough of a 10 ms RMS envelope. Speech level in this window
+# measures -15 dB, room floor -32 dB.
+style: bars
+reciter:
+  name_en: "Ahmed bin Talib"
+  name_ar: "أحمد بن طالب"
+# Framing is a property of the SOURCE (fixed camera), not of
+# this clip: solved once by `qc crop` and cached in sources/meta/vqxYwdR4RvQ.yaml.
+video_bg:
+  mode: live
+  crop:
+    x: 136
+    y: 80
+    w: 794
+    h: 446
+text:
+  center_x_frac: 0.3
+segment:
+  # onset abs 4.32; start 4.20 -> onset rel 0.12 (IG hook). End 30.73 sits
+  # 0.00 s after the last word, at the deepest point of the following gap (0
+  # dB below speech) -- SHALLOW: check by ear that nothing leaks into the
+  # tail.
+  start: "00:00:06.075"   # absolute in source
+  end: "00:00:31.030"     # absolute in source; duration 26.53s
+surah: 54
+ayah_range: [2, 4]
+# CORRECTED START: the head-tighten walked back into 54:1 -- at abs 4.32 the
+# word is ٱلْقَمَرُ, its last word. mlx-whisper then put 54:2's وإن at 5.30,
+# which is ٱلْقَمَرُ's reverb tail, not a word. A 5ms RMS envelope shows that
+# tail decaying to the -32 dB floor by 5.6, silence to 6.19, and the true
+# onset at 6.195 (-29 -> -19 dB in 10ms). Start 6.075 = onset rel 0.12.
+phrases:   # times RELATIVE to clip start
+  - t0: 0.12
+    t1: 7.19
+    ayah: 2
+    # line break: width heuristic (LLM split overflowed the width cap)
+    ar1: "وَإِن يَرَوْا۟ ءَايَةًۭ يُعْرِضُوا۟"
+    ar2: "وَيَقُولُوا۟ سِحْرٌۭ مُّسْتَمِرٌّۭ"
+  # P1->P2: true waqf, 0.52s of silence. The 50 ms RMS envelope troughs to -37
+  # dB at rel 9.72, 22 dB below the -15 dB speech level.
+  - t0: 8.04
+    t1: 15.50
+    ayah: 3
+    # line break: LLM (syntactic seam, cached)
+    ar1: "وَكَذَّبُوا۟ وَٱتَّبَعُوٓا۟ أَهْوَآءَهُمْ"
+    ar2: "وَكُلُّ أَمْرٍۢ مُّسْتَقِرٌّۭ"
+  # P2->P3: true waqf, 0.80s of silence. The 50 ms RMS envelope troughs to -37
+  # dB at rel 18.33, 22 dB below the -15 dB speech level.
+  - t0: 16.46
+    t1: 24.66
+    ayah: 4
+    # line break: LLM (syntactic seam, cached) -- the width heuristic agreed
+    ar1: "وَلَقَدْ جَآءَهُم مِّنَ ٱلْأَنۢبَآءِ"
+    ar2: "مَا فِيهِ مُزْدَجَرٌ"
