@@ -32,8 +32,10 @@ META = os.path.join(SOURCES, "meta")
 # rather than something the caller has to know about.
 EMBED_ARGS = ["--extractor-args", "youtube:player_client=web_embedded"]
 
-# Prefer a real <=1080p video+audio pair; fall back to any progressive <=1080p.
-FORMAT = "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b"
+# Prefer a real <=1080p video+audio pair, AND PREFER M4A (AAC) AUDIO -- see
+# `ensure_aac` below for why an Opus track in an MP4 is not acceptable here.
+FORMAT = ("bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/"
+          "b[height<=1080]/bv*+ba/b")
 
 
 def yt_dlp():
@@ -89,11 +91,22 @@ def _yaml_scalar(v):
     return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
 
 
+FRAMING_MARK = "# --- framing"
+
+
 def write_meta(vid, meta):
     os.makedirs(META, exist_ok=True)
     path = os.path.join(META, "%s.yaml" % vid)
     order = ["id", "url", "title", "uploader", "upload_date", "duration",
              "width", "height", "fps", "has_ar_captions", "caption_langs"]
+    # `qc crop` appends its solved framing to this same file. Re-running
+    # `qc source add` on a source that already has one must not throw away a
+    # solve that cost 40 sampled frames (and possibly a hand-tune).
+    tail = ""
+    if os.path.exists(path):
+        old = open(path, encoding="utf-8").read()
+        if FRAMING_MARK in old:
+            tail = old[old.index(FRAMING_MARK):]
     with open(path, "w", encoding="utf-8") as f:
         f.write("# written by `qc source add` -- do not hand-edit the fetched\n"
                 "# fields; anything below is what yt-dlp reported for this video.\n")
@@ -104,6 +117,8 @@ def write_meta(vid, meta):
                     f.write("%s: [%s]\n" % (k, ", ".join(_yaml_scalar(x) for x in v)))
                 else:
                     f.write("%s: %s\n" % (k, _yaml_scalar(v)))
+        if tail:
+            f.write(tail if tail.startswith("\n") else tail)
     return path
 
 
@@ -170,6 +185,51 @@ def probe(url):
     }
 
 
+def audio_codec(path):
+    """The first audio stream's codec name, or "" if there is none."""
+    from ..proc import FFPROBE
+    p = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "a:0",
+                        "-show_entries", "stream=codec_name",
+                        "-of", "default=nw=1:nk=1", path],
+                       capture_output=True, text=True)
+    return (p.stdout or "").strip().splitlines()[0].strip() \
+        if (p.stdout or "").strip() else ""
+
+
+def ensure_aac(path):
+    """Guarantee the source's audio is AAC. -> True if it had to transcode.
+
+    OPUS-IN-MP4 DEADLOCKS FFMPEG, and it costs an entire render to find out.
+    yt-dlp is happy to mux YouTube's AV1 video with an Opus audio track into
+    an .mp4; at some seek points the resulting file wedges ffmpeg completely --
+    the demuxer blocks in tq_send while the filter and encoder threads block in
+    tq_receive, 0% CPU, forever, and the output is left with no moov atom.
+    Confirmed on al-qamar-7-9's source: `-ss 43.920` rendered fine and
+    `-ss 45.000` hung reliably, and transcoding the audio to AAC fixed it
+    outright (28 s render).
+
+    The VIDEO IS COPIED, never re-encoded: the crop numbers in every clip.yaml
+    were solved against these exact pixels.
+    """
+    from ..proc import FFMPEG
+    codec = audio_codec(path)
+    if codec in ("aac", ""):
+        return False
+    tmp = path + ".aac.mp4"
+    print("  audio   : %s -> aac (opus in mp4 deadlocks ffmpeg at some seek "
+          "points; video is copied)" % codec)
+    rc, _, _ = _run([FFMPEG, "-hide_banner", "-nostats", "-loglevel", "error",
+                     "-y", "-i", path, "-map", "0:v:0", "-map", "0:a:0",
+                     "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                     "-movflags", "+faststart", tmp])
+    if rc != 0 or not os.path.exists(tmp):
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise SystemExit("could not transcode %s audio to AAC" % path)
+    os.replace(tmp, path)
+    return True
+
+
 def download(vid, url):
     """Fetch <=1080p to sources/<id>.mp4. Reuses an existing file untouched."""
     dst = os.path.join(SOURCES, "%s.mp4" % vid)
@@ -182,6 +242,9 @@ def download(vid, url):
         "-o", os.path.join(SOURCES, "%(id)s.%(ext)s"), url])
     if rc != 0 or not os.path.exists(dst):
         raise SystemExit("download failed for %s" % vid)
+    # The format selector asks for m4a first, but YouTube does not always have
+    # one, so the guarantee is enforced on the file rather than requested.
+    ensure_aac(dst)
     return dst, True
 
 
@@ -216,8 +279,15 @@ def add(url, skip_video=False):
         print("  video   : skipped (--no-video)")
     else:
         mp4, fresh = download(vid, canonical)
-        print("  video   : %s%s" % (os.path.relpath(mp4, ROOT),
-                                    "" if fresh else "  (reused)"))
+        codec = audio_codec(mp4)
+        print("  video   : %s%s  [audio %s]"
+              % (os.path.relpath(mp4, ROOT), "" if fresh else "  (reused)",
+                 codec or "none"))
+        if codec not in ("aac", "none", ""):
+            print("! %s has %s audio, not AAC. Opus in an MP4 deadlocks ffmpeg "
+                  "at some seek points -- fix it in place with:\n"
+                  "  ffmpeg -i %s -c:v copy -c:a aac -b:a 192k out.mp4"
+                  % (os.path.basename(mp4), codec, mp4), file=sys.stderr)
 
     vtt, cfresh = captions(vid, canonical)
     if vtt:
