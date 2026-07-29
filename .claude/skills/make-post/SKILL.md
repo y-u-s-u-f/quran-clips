@@ -63,8 +63,11 @@ What each one does:
   `--verses S:A-B` to skip proposing and score a chosen window, `--no-judge`,
   `--json`. Give the user the top candidates and let them pick.
 - **`author`** aligns the window against the mushaf, measures the envelope, sets
-  the head, splits the cards at real waqf gaps, breaks the lines, and writes
-  `clip.yaml` + `tags.yaml`. `-o DIR`, `--like CLIP` (carry reciter/crop/url off
+  the head, splits the cards at real waqf gaps, breaks the lines, fills the
+  default style's `en:` from the committed Sahih International edition (cut to
+  match the cards by the same indices-only judge), and writes `clip.yaml` +
+  `tags.yaml`. A `PROPORTIONAL word split -- CHECK BY HAND` comment on an `en:`
+  means the judge was unavailable and that fragment needs an eye. `-o DIR`, `--like CLIP` (carry reciter/crop/url off
   a shipped clip), `-n` to print without writing. It prints warnings on stderr —
   `! restart detected` (ibtidāʾ) and `! Pn->Pn+1 is NOT a true waqf` — pass those
   up to the user; they are judgement calls, not bugs.

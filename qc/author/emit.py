@@ -28,6 +28,7 @@ from .. import quran as Q
 from . import align as A
 from . import energy as E
 from . import linebreak as LB
+from . import translate as T
 
 # Card splitting. A true waqf is always a caption swap. Beyond that, a card is
 # split only because it is too long to read or too wide to set: the bars
@@ -186,6 +187,44 @@ def split_lines(words):
     return [" ".join(words[:k]), " ".join(words[k:])]
 
 
+def english(p, use_llm=True):
+    """-> [(fragment, reason or None), ...], one per card, in card order.
+
+    A card's `en:` is the part of its ayah's Sahih International translation
+    that matches the Arabic words the card carries -- so an ayah's cards have
+    to be solved TOGETHER, not one at a time: `qc.author.translate` cuts that
+    ayah's English once, at all of its card seams at the same moment. Here we
+    only work out WHICH words of the ayah each card holds, which the alignment
+    already knows: every event points at a reference word, and the reference
+    is the ayah's display words in order.
+    """
+    ref, ev = p["align"]["ref"], p["events"]
+    first = {}                       # ayah -> index in ref of its first word
+    for j, r in enumerate(ref):
+        first.setdefault(r["ayah"], j)
+
+    groups = {}                      # ayah -> [(card index, (w0, w1)), ...]
+    for n, c in enumerate(p["cards"]):
+        ay = c["ayah"]
+        js = [ev[k]["ref"] for k in range(c["lo"], c["hi"] + 1)
+              if ref[ev[k]["ref"]]["ayah"] == ay]
+        if not js:
+            groups.setdefault(ay, []).append((n, (0, 0)))
+            continue
+        # A restart replays words, so take the EXTENT of the card rather than
+        # its first and last event: after a jump those are not the endpoints.
+        base = first[ay]
+        groups.setdefault(ay, []).append((n, (min(js) - base, max(js) - base)))
+
+    out = [None] * len(p["cards"])
+    for ay, items in groups.items():
+        got = T.fragments(p["surah"], ay, [s for _, s in items],
+                          use_llm=use_llm)
+        for (n, _), g in zip(items, got):
+            out[n] = g
+    return out
+
+
 def _gap_edge(events, k, speech):
     """A card boundary between events k and k+1 that no envelope dip matched.
 
@@ -311,7 +350,7 @@ def plan(src, surah, a, b, start, end, workdir, pad=A.PAD,
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-def center_y_frac(p, cx_frac, style="default"):
+def center_y_frac(p, cx_frac, style="default", ens=None):
     """Solve `text.center_y_frac` so the caption block is CENTRED vertically.
 
     The renderer's fallback is 0.34, which is not a centred block and never
@@ -323,10 +362,10 @@ def center_y_frac(p, cx_frac, style="default"):
 
     So it is measured, not guessed: `render_text.solve_center_y` lays the
     block out exactly as the renderer will and reads the alpha bbox back. The
-    English is still a TODO at this point, so it is measured against a
-    one-line placeholder -- which is what the default style's cards nearly
-    always are; a card whose fragment wraps to two lines will sit ~0.02 H
-    lower, and the returned per-card centres say so.
+    English used to be a TODO at this point, so the block was measured against
+    an empty placeholder; it is now filled in from en.sahih before this runs
+    (see `english`), so the block laid out here is the one that will be drawn,
+    wraps and all.
 
     -> (cy_frac, [per-card block centres, ascending]).
     """
@@ -334,12 +373,14 @@ def center_y_frac(p, cx_frac, style="default"):
     if os.path.join(ROOT, "scripts") not in sys.path:
         sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import render_text as R
+    ens = ens or [("", None)] * len(p["cards"])
     clip = {
         "style": style, "surah": p["surah"],
         "ayah_range": list(p["ayah_range"]),
         "text": {"center_x_frac": cx_frac},
-        "phrases": [{"ar": Q.nfc(" ".join(c["words"])), "en": "",
-                     "ayah": c["ayah"]} for c in p["cards"]],
+        "phrases": [{"ar": Q.nfc(" ".join(c["words"])), "en": e[0],
+                     "ayah": c["ayah"]}
+                    for c, e in zip(p["cards"], ens)],
     }
     return R.solve_center_y(clip)
 
@@ -359,10 +400,24 @@ def _wrap(text, width=74, prefix="# "):
     return out
 
 
+def _sq(s):
+    """A single-quoted YAML scalar -- the form every shipped `en:` already uses.
+
+    Sahih International is full of double quotes (it puts reported speech in
+    them) and the odd apostrophe, and single quoting takes both: only the
+    apostrophe needs escaping, by doubling.
+    """
+    return "'%s'" % str(s).replace("'", "''")
+
+
 def clip_yaml(p, meta=None, style="bars"):
     """Render the plan as clip.yaml text, comments and all."""
     meta = dict(meta or {})
     L = []
+    # Solved before anything is written: the vertical anchor below is measured
+    # off the laid-out block, and the English is part of that block.
+    ens = (english(p, use_llm=meta.get("llm_translate", True))
+           if style != "bars" else None)
     s, a, b = p["surah"], p["ayah_range"][0], p["ayah_range"][1]
     ay = "%d" % a if a == b else "%d-%d" % (a, b)
     src_url = meta.get("source_url")
@@ -406,7 +461,8 @@ def clip_yaml(p, meta=None, style="bars"):
     if style != "bars" and "center_y_frac" not in txt:
         # The bars style anchors its captions from templates/bars.yaml and has
         # no per-clip vertical anchor; only the default style needs this.
-        cy, got = center_y_frac(p, txt.get("center_x_frac", 0.30), style=style)
+        cy, got = center_y_frac(p, txt.get("center_x_frac", 0.30), style=style,
+                                ens=ens)
         txt["center_y_frac"] = cy
     else:
         cy, got = None, []
@@ -419,9 +475,9 @@ def clip_yaml(p, meta=None, style="bars"):
                     "text_block.block_center_y). This anchors the ARABIC line, "
                     "not the block: the English hangs below it, so the block "
                     "centre sits %.3f H under the anchor. Measured off the "
-                    "rendered overlay with one English line per card -- the "
-                    "cards then centre at %s; a fragment that wraps to two "
-                    "lines pulls its card ~0.02 H lower."
+                    "rendered overlay with each card's own Sahih fragment "
+                    "under it -- the cards then centre at %s; a fragment that "
+                    "wraps to two lines pulls its card ~0.02 H lower."
                     % (got[len(got) // 2] - cy,
                        ", ".join("%.3f" % g for g in got)))]
             L.append("  %s: %s" % (k, v))
@@ -498,9 +554,14 @@ def clip_yaml(p, meta=None, style="bars"):
             L.append('    ar1: "%s"' % Q.nfc(lines[0]))
             L.append('    ar2: "%s"' % Q.nfc(lines[1]))
         if style != "bars":
-            L.append('    en: ""   # TODO: translation fragment for this card '
-                     '-- splitting en.sahih to match an arbitrary phrase is a '
-                     'human job, not an alignment one')
+            # The translation is verbatim en.sahih; only WHERE an ayah's
+            # translation is cut between its cards is decided, and by a model
+            # that is handed the English and Arabic WORD COUNTS and returns
+            # indices -- see qc/author/translate.
+            en, why = ens[n]
+            if why:
+                L += ["    " + x for x in _wrap("en: " + why)]
+            L.append("    en: %s" % _sq(en))
     return "\n".join(L) + "\n"
 
 

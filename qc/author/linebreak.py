@@ -19,6 +19,11 @@ this module buys.
     standing rule in this repo is that no model ever retypes them. A split
     index cannot be misspelled.
 
+`judge()` below is the shared plumbing for that pattern -- one binary, one
+model, one effort setting, one set of failure reasons -- and is reused by
+`qc.author.translate`, which splits an ayah's ENGLISH across its cards the
+same way: numbered list in, one integer out.
+
 Everything here degrades to the width heuristic in silence: a missing CLI, a
 timeout, unparseable output, an out-of-range index, or a proposal that blows
 the template's own width cap. `qc author` must never fail because the
@@ -116,21 +121,26 @@ def _key(words, max_line_words):
     return h.hexdigest()
 
 
-def _cache_read():
+def cache_read(path=None):
     try:
-        with open(CACHE, encoding="utf-8") as f:
+        with open(path or CACHE, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {}
 
 
-def _cache_write(d):
+def cache_write(d, path=None):
+    path = path or CACHE
     try:
-        os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-        with open(CACHE, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=1, sort_keys=True)
     except Exception:
         pass
+
+
+_cache_read = cache_read
+_cache_write = cache_write
 
 
 # ---------------------------------------------------------------------------
@@ -157,16 +167,18 @@ Output the integer and nothing else. No Arabic, no explanation, no punctuation.
 """
 
 
-def _ask(words, max_line_words):
-    """-> (k, reason) with k an int, or (None, reason)."""
+def judge(prompt):
+    """Put one question to the model. -> (answer text, None) | (None, reason).
+
+    THE one place in the authoring pipeline that shells out to a model, so
+    that everything asking for a judgement uses the same binary, the same
+    model, the same effort and the same failure semantics. Callers get a bare
+    string back and must parse it strictly themselves -- see the note at the
+    top of this module: what comes back is only ever an INDEX, never text we
+    are going to display.
+    """
     if not (os.path.isfile(CLAUDE) and os.access(CLAUDE, os.X_OK)):
         return None, R_MISSING
-    lo, hi = 1, len(words) - 1
-    prompt = PROMPT % {
-        "list": "\n".join("%d. %s" % (i + 1, w) for i, w in enumerate(words)),
-        "hi": hi,
-        "maxw": max_line_words,
-    }
     cmd = [CLAUDE, "-p", "--model", MODEL, "--effort", EFFORT,
            "--output-format", "json"]
     try:
@@ -182,6 +194,20 @@ def _ask(words, max_line_words):
         out = str(d.get("result", "")).strip()
     except Exception:
         pass                      # `--output-format json` unavailable: use raw
+    return out, None
+
+
+def _ask(words, max_line_words):
+    """-> (k, reason) with k an int, or (None, reason)."""
+    lo, hi = 1, len(words) - 1
+    prompt = PROMPT % {
+        "list": "\n".join("%d. %s" % (i + 1, w) for i, w in enumerate(words)),
+        "hi": hi,
+        "maxw": max_line_words,
+    }
+    out, reason = judge(prompt)
+    if out is None:
+        return None, reason
     # Strict: the whole answer must be one integer. Anything chattier is a
     # failed instruction-follow, and guessing at which number it meant is how
     # a caption ends up split in the wrong place.
