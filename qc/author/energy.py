@@ -244,14 +244,19 @@ ONSET_ON_DB = 7.0      # crossing this far below speech = the attack
 ONSET_HOLD_DB = 11.0   # ...and it has to stay this loud...
 ONSET_HOLD_S = 0.08    # ...for this long, or it was a tail, not a word
 ONSET_QUIET_DB = 12.0  # the pause in front of it sits at least this far down
-ONSET_QUIET_S = 0.15   # ...for at least this long
+ONSET_QUIET_S = 0.15   # ...for at least this long...
+ONSET_GUARD_S = 0.06   # ...ending this long before the crossing: the 50 ms
+                       # analysis window smears an attack over ~60 ms, so the
+                       # foot of the ramp is already loud and would otherwise
+                       # disqualify the very silence it rises out of.
 ONSET_BACK = 0.35      # ASR anchors on the vowel: allow the truth this early
 ONSET_FWD = 2.0        # ASR mistakes reverb for speech: allow it this late
 
 
 def attacks(times, db, speech, lo=None, hi=None, hop=HOP,
             on_db=ONSET_ON_DB, hold_db=ONSET_HOLD_DB, hold_s=ONSET_HOLD_S,
-            quiet_db=ONSET_QUIET_DB, quiet_s=ONSET_QUIET_S):
+            quiet_db=ONSET_QUIET_DB, quiet_s=ONSET_QUIET_S,
+            guard_s=ONSET_GUARD_S):
     """Every moment the envelope comes out of a real pause into sustained voice.
 
     -> [times], ascending. See the note above for what "real" means here.
@@ -260,6 +265,7 @@ def attacks(times, db, speech, lo=None, hi=None, hop=HOP,
     hold = speech - hold_db
     quiet = speech - quiet_db
     nq = max(1, int(round(quiet_s / hop)))
+    ng = max(0, int(round(guard_s / hop)))
     nh = max(1, int(round(hold_s / hop)))
     i0 = 1 if lo is None else max(1, _idx(times, lo, hop))
     i1 = len(db) if hi is None else min(len(db), _idx(times, hi, hop) + 1)
@@ -267,7 +273,7 @@ def attacks(times, db, speech, lo=None, hi=None, hop=HOP,
     for i in range(i0, i1):
         if db[i] < on or db[i - 1] >= on:
             continue                                   # not an upward crossing
-        if i < nq or max(db[i - nq:i]) > quiet:
+        if i < nq + ng or max(db[i - nq - ng:i - ng]) > quiet:
             continue                                   # no real pause in front
         if i + nh > len(db) or min(db[i:i + nh]) < hold:
             continue                                   # not sustained: a tail

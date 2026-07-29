@@ -3,11 +3,12 @@ qc.check -- the committed assertions that replace the QA agent.
 
 Everything here is CHEAP and CONFIG-TIME: it loads clip.yaml and the style
 template, measures text with Pillow, and runs the real scheduler. It never
-touches ffmpeg and never looks at a rendered frame, so the whole pass is well
-under a second per clip and can be run before a 6-minute render rather than
-after it.
+looks at a rendered frame, and the only ffmpeg it runs is one audio extract
+for the `head` check (skipped when the source is not in sources/), so the
+whole pass is a second or two per clip and can be run before a 6-minute render
+rather than after it.
 
-The nine checks exist because each one is a failure this pipeline has actually
+The ten checks exist because each one is a failure this pipeline has actually
 shipped, and every one of them is silent at render time:
 
   schema      a typo'd key (`ar_2:` for `ar2:`) is not an error to yaml.
@@ -30,6 +31,10 @@ shipped, and every one of them is silent at render time:
   english     `en:` is required by the default style and must not exist on a
               bars clip (the bars references carry no translation).
   fx          an unknown name in a clip's `fx:` map.
+  head        the clip opens on the first word of the ayah it claims -- in the
+              text AND in the audio. al-qamar-7-9 started 2 s early, inside
+              the last word of the PREVIOUS ayah, and nothing else here could
+              see it.
 
 `qc check --output` is the other half: the handful of facts about a finished
 file that are worth asserting mechanically (container geometry, letterbox
@@ -587,6 +592,115 @@ def check_english(res, clip, style_name):
 
 
 # ---------------------------------------------------------------------------
+# 10. the head
+#
+# The clip must OPEN ON THE FIRST WORD OF THE AYAH IT CLAIMS -- and it is the
+# only check here that listens to the audio, because that is the only place
+# the failure is visible. al-qamar-7-9 shipped a `segment.start` of 43.920,
+# which sits inside نُّكُرٍ, the last word of 54:6: the caption said 54:7 and
+# the first thing you heard was the end of the previous ayah. Every text-side
+# check passed, because the TEXT was right; only the recording was wrong. The
+# owner heard it in one play, after a six-minute render.
+#
+# Two assertions, cheapest first:
+#
+#   text   phrase 1 must begin with the first word of ayah_range[0]. Free, and
+#          it catches a clip that claims an ayah it does not open with.
+#   audio  the first real attack after segment.start must land on P1's t0.
+#          One ffmpeg extract of the segment (plus a second of pre-roll so the
+#          pause in front of the first word is visible) and the same envelope
+#          the author used -- about a second per clip.
+#
+# The audio half is SKIPPED, not failed, when the source is not in sources/
+# (which is gitignored, so a fresh checkout has none) or when the head sits in
+# continuous recitation with no pause to measure against -- there, "did the
+# start land in the right place" is not a question the envelope can answer.
+# ---------------------------------------------------------------------------
+HEAD_PRE = 1.0       # seconds of pre-roll: the pause before the first word
+HEAD_LOOK = 3.0      # how far into the clip to look for the first attack
+HEAD_TOL = 0.35      # how far the attack may be from P1's t0
+HEAD_TIMEOUT = 90    # an Opus-in-MP4 source can wedge ffmpeg outright
+
+
+def _source_path(clip):
+    m = re.search(r"(?:v=|youtu\.be/|/live/)([A-Za-z0-9_-]{11})",
+                  str(clip.get("source_url") or ""))
+    if not m:
+        return None
+    p = os.path.join(ROOT, "sources", "%s.mp4" % m.group(1))
+    return p if os.path.exists(p) else None
+
+
+def check_head(res, clip):
+    res.start("head")
+    from qc import quran as Q
+    phrases = clip.get("phrases") or []
+    surah, ayat = clip.get("surah"), clip.get("ayah_range")
+    if not phrases or not isinstance(surah, int) or not isinstance(ayat, list):
+        return
+    a = ayat[0]
+    try:
+        want = strict_ar(Q.ayah(surah, a)["ar"]).split()[0]
+    except Exception:
+        return
+    got = strict_ar(phrase_texts(clip)[0]).split()
+    if got and got[0] != want:
+        res.fail("head",
+                 "P1 opens with %r [%s] but ayah_range starts at %d:%d, whose "
+                 "first word is %r [%s]. Either the clip starts mid-ayah (say "
+                 "so in ayah_range) or segment.start is in the wrong verse."
+                 % (got[0], _cp(got[0]), surah, a, want, _cp(want)))
+
+    src = _source_path(clip)
+    t0 = phrases[0].get("t0")
+    if not src or not _num(t0):
+        return
+    import subprocess
+    import tempfile
+    from qc.author import energy as E
+    from qc.proc import FFMPEG
+    seg = clip["segment"]
+    s0, s1 = _hms(seg["start"]), _hms(seg["end"])
+    pre = min(HEAD_PRE, s0)
+    wav = tempfile.mktemp(prefix="qc-head-", suffix=".wav")
+    try:
+        p = subprocess.run(
+            [FFMPEG, "-v", "error", "-y", "-ss", "%.3f" % (s0 - pre),
+             "-t", "%.3f" % (s1 - s0 + pre), "-i", src, "-vn", "-ac", "1",
+             "-ar", "16000", "-c:a", "pcm_s16le", wav], timeout=HEAD_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        res.fail("head",
+                 "ffmpeg wedged reading %s (no output in %ds). That is the "
+                 "Opus-in-MP4 deadlock: re-mux the source with "
+                 "`-c:v copy -c:a aac -b:a 192k` (qc source add now does this "
+                 "on download)." % (os.path.basename(src), HEAD_TIMEOUT))
+        return
+    if p.returncode != 0 or not os.path.exists(wav):
+        return
+    try:
+        times, db = E.envelope(wav)
+        speech = E.speech_level(db)
+        at = E.attacks(times, db, speech, lo=pre - 0.6, hi=pre + HEAD_LOOK)
+        if at and abs(at[0] - (pre + float(t0))) > HEAD_TOL:
+            res.fail("head",
+                     "the first word of this clip attacks %.2fs after "
+                     "segment.start, but P1 is captioned from %.2fs. The head "
+                     "is %.2fs of something else -- the previous ayah's last "
+                     "word or its reverb tail. Move segment.start to %s (the "
+                     "attack, less the %.2fs hook)."
+                     % (at[0] - pre, float(t0), at[0] - pre - float(t0),
+                        _hms_str(s0 + at[0] - pre - 0.12), 0.12))
+    finally:
+        if os.path.exists(wav):
+            os.remove(wav)
+
+
+def _hms_str(t):
+    return "%02d:%02d:%06.3f" % (int(t // 3600), int((t % 3600) // 60),
+                                 t - 3600 * int(t // 3600) - 60 * int((t % 3600) // 60))
+
+
+# ---------------------------------------------------------------------------
 # 9. fx names
 # ---------------------------------------------------------------------------
 def check_fx(res, clip, style_name, style):
@@ -665,6 +779,7 @@ def check_clip(clip_dir):
     check_cuts(res, clip, dur)
     check_english(res, clip, style_name)
     check_fx(res, clip, style_name, style)
+    check_head(res, clip)
 
     texts = phrase_texts(clip)
     ens = [(ph.get("en") or "") if isinstance(ph, dict) else ""

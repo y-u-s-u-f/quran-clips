@@ -186,9 +186,6 @@ def plan(src, surah, a, b, start, end, workdir, pad=A.PAD,
     times, db, speech = al["times"], al["db"], al["speech"]
     floor = E.floor_level(db)
 
-    wd = word_dips(ev, al["dips"])
-    bounds, reason = split_cards(ev, wd)
-
     # --- head: pull segment.start back to just before the first attack.
     # MEASURED from the envelope, not taken from the ASR -- see the note above
     # E.onset. Whisper called the previous ayah's reverb tail the first word on
@@ -208,6 +205,20 @@ def plan(src, surah, a, b, start, end, workdir, pad=A.PAD,
     if clamped:
         on = head_floor
     seg_start = on - head_target
+
+    # The measured onset OVERRULES the ASR's first-word span, and then the
+    # silence in front of the clip is thrown away. Both are the same lesson as
+    # above: on al-qamar-7-9 Whisper gave خُشَّعًا a span of [0.00, 2.24] that
+    # begins two seconds before the word does, so the "gap" between it and the
+    # next word swallowed the pre-clip silence -- and the 0.44 s trough sitting
+    # in that silence was scored as a true waqf and cut the opening word onto a
+    # card of its own. (The owner merged that one-word card back by hand,
+    # noting that it "reads as a stutter".) A dip earlier than the onset is not
+    # a caption boundary; it is the pause the clip starts out of.
+    if ev[0]["t0"] < on:
+        ev[0] = dict(ev[0], t0=on, t1=max(ev[0]["t1"], on + 0.05))
+    wd = word_dips(ev, [d for d in al["dips"] if d["t"] >= on])
+    bounds, reason = split_cards(ev, wd)
 
     # --- boundaries between cards
     edges = []
@@ -260,6 +271,42 @@ def plan(src, surah, a, b, start, end, workdir, pad=A.PAD,
 # ---------------------------------------------------------------------------
 # yaml
 # ---------------------------------------------------------------------------
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def center_y_frac(p, cx_frac, style="default"):
+    """Solve `text.center_y_frac` so the caption block is CENTRED vertically.
+
+    The renderer's fallback is 0.34, which is not a centred block and never
+    was: `center_y_frac` anchors the ARABIC line, and the English sits below
+    it, so the block's centre lands 0.02-0.03 H under the anchor by an amount
+    that depends on the point size after shrink-to-fit and on how many lines
+    the English wraps to. On al-qamar-7-9 the fallback put the block at 0.364
+    H and the owner corrected it by hand.
+
+    So it is measured, not guessed: `render_text.solve_center_y` lays the
+    block out exactly as the renderer will and reads the alpha bbox back. The
+    English is still a TODO at this point, so it is measured against a
+    one-line placeholder -- which is what the default style's cards nearly
+    always are; a card whose fragment wraps to two lines will sit ~0.02 H
+    lower, and the returned per-card centres say so.
+
+    -> (cy_frac, [per-card block centres, ascending]).
+    """
+    import sys
+    if os.path.join(ROOT, "scripts") not in sys.path:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import render_text as R
+    clip = {
+        "style": style, "surah": p["surah"],
+        "ayah_range": list(p["ayah_range"]),
+        "text": {"center_x_frac": cx_frac},
+        "phrases": [{"ar": Q.nfc(" ".join(c["words"])), "en": "",
+                     "ayah": c["ayah"]} for c in p["cards"]],
+    }
+    return R.solve_center_y(clip)
+
 
 def _wrap(text, width=74, prefix="# "):
     out, line = [], []
@@ -319,9 +366,28 @@ def clip_yaml(p, meta=None, style="bars"):
                 L.append("    %s: %s" % (k, bg["crop"][k]))
     else:
         L.append("# TODO video_bg: crop not solved by this stage")
-    if meta.get("text"):
+    txt = dict(meta.get("text") or {})
+    if style != "bars" and "center_y_frac" not in txt:
+        # The bars style anchors its captions from templates/bars.yaml and has
+        # no per-clip vertical anchor; only the default style needs this.
+        cy, got = center_y_frac(p, txt.get("center_x_frac", 0.30), style=style)
+        txt["center_y_frac"] = cy
+    else:
+        cy, got = None, []
+    if txt:
         L.append("text:")
-        for k, v in meta["text"].items():
+        for k, v in txt.items():
+            if k == "center_y_frac" and got:
+                L += ["  " + x for x in _wrap(
+                    "caption block CENTRED vertically (style.yaml "
+                    "text_block.block_center_y). This anchors the ARABIC line, "
+                    "not the block: the English hangs below it, so the block "
+                    "centre sits %.3f H under the anchor. Measured off the "
+                    "rendered overlay with one English line per card -- the "
+                    "cards then centre at %s; a fragment that wraps to two "
+                    "lines pulls its card ~0.02 H lower."
+                    % (got[len(got) // 2] - cy,
+                       ", ".join("%.3f" % g for g in got)))]
             L.append("  %s: %s" % (k, v))
 
     L.append("segment:")
