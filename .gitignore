@@ -26,9 +26,15 @@ clips/*/work/
 clips/*/output/
 
 # --- Throwaway A/B test harnesses ------------------------------------------
-clips/_abtmp/
-clips/_mA/
-clips/_mB/
+# Any clip folder whose name starts with _ is scratch and never ships.
+clips/_*/
+
+# --- Finder aliases dropped in clip folders by export_reel ------------------
+# Named after the reel (RECITER-SURAH-a-b, no extension), so an uppercase entry
+# directly inside a clip folder is always one; a clip's own files are lowercase.
+# These are macOS alias blobs holding an absolute local path — they are outputs,
+# they are binary, and they resolve to nothing on any other machine.
+clips/*/[A-Z]*
 
 # --- Media, anywhere --------------------------------------------------------
 *.mp4
