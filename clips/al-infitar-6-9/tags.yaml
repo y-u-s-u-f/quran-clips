@@ -1,5 +1,5 @@
 # Per-clip tags + post status. Edit `posted:` by hand (false/true) OR use
-#   /opt/homebrew/bin/python3 scripts/status.py post|unpost al-infitar-6-9
+#   tools/render-venv/bin/python scripts/status.py post|unpost al-infitar-6-9
 surah: al-infitar
 surah_number: 82
 ayah_range: [6, 9]

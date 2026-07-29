@@ -515,7 +515,10 @@ def tags_yaml(p, meta=None):
     rec = (meta.get("reciter") or {}).get("name_en", "")
     slug = rec.lower().replace(" ", "-") if rec else ""
     L = ["# Per-clip tags + post status. Edit `posted:` by hand (false/true) OR use",
-         "#   /opt/homebrew/bin/python3 scripts/status.py post|unpost %s"
+         # NOT the system python: an install into /opt/homebrew/bin/python3
+         # once destroyed the RAQM Pillow this pipeline shapes Arabic with.
+         # Every emitted tags.yaml carried that path as an instruction.
+         "#   tools/render-venv/bin/python scripts/status.py post|unpost %s"
          % meta.get("folder", "<clip>"),
          "# The same script mirrors `tags` + a green Posted / red \"Not Posted\" marker onto",
          "# the folder's macOS Finder tags (visible/filterable in Finder).",

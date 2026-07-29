@@ -1,5 +1,5 @@
 # Per-clip tags + post status. Edit `posted:` by hand (false/true) OR use
-#   /opt/homebrew/bin/python3 scripts/status.py post|unpost al-ahzab-70-71
+#   tools/render-venv/bin/python scripts/status.py post|unpost al-ahzab-70-71
 # The same script mirrors `tags` + a green Posted / red "Not Posted" marker onto
 # the folder's macOS Finder tags (visible/filterable in Finder).
 surah: al-ahzab
