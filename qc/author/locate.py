@@ -22,7 +22,9 @@ Method, in order:
      continues the ayah we were just in, or starts the next one, is favoured.
      Recitation is sequential, and that prior is what disambiguates the short
      formulaic ayat that match a dozen places in the mushaf.
-  4. Vote per word, take the argmax ayah per word, group into runs.
+  4. Vote per word POSITIONALLY -- each candidate votes only on the window
+     tokens it actually accounts for -- then take the argmax ayah per word and
+     group into runs.
   5. Snap each run's edges onto the words that match the ayah's own first and
      last tokens -- the window vote is only accurate to +/- half a window, and
      verse-end rhyme words are the strongest anchors in the whole problem
@@ -46,6 +48,19 @@ STEP = 3             # window hop
 MIN_RUN = 3          # words; shorter runs are noise, not an ayah
 CONTINUITY = 1.30    # boost for staying in / advancing to the next ayah
 TITLE_BOOST = 1.12   # deliberately small -- a hint, not a verdict
+
+# The window winner's BLANKET vote: the weight it puts on every token in its
+# window, including the ones it cannot account for. It used to be 1.0, i.e. the
+# winner took the whole window, which is exactly how short ayat died (see
+# match()). It is kept well below 1.0 so that a token positionally claimed by a
+# rival outvotes the blanket, but well above 0 so that caption noise -- words
+# the mushaf has no match for at all -- still lands on the dominant ayah
+# instead of falling out of the timeline.
+SMOOTH = 0.50
+MIN_PHRASE = 2       # positional votes need >=2 ADJACENT matched query tokens
+REL = 0.6            # a candidate must score >= REL x the winner to vote at all
+LOCAL = 1.30         # positional vote boost for an ayah beside the window winner
+LOCAL_SPAN = 4       # ...within this many ayat, either side
 
 
 # --- VTT -------------------------------------------------------------------
@@ -142,30 +157,90 @@ def _windows(toks):
         i += STEP
 
 
+def _phrases(qis, minlen=MIN_PHRASE):
+    """Query indices an ayah matched -> the ones inside a run of >= minlen.
+
+    An ayah that shares one scattered word with the window (الله, من, الذين)
+    has told us nothing. Two or more ADJACENT query tokens is a phrase, and a
+    phrase is evidence about those particular tokens.
+    """
+    if minlen <= 1:
+        return set(qis)
+    out = set()
+    for q in sorted(qis):
+        if q - 1 in qis:
+            continue
+        run = [q]
+        while run[-1] + 1 in qis:
+            run.append(run[-1] + 1)
+        if len(run) >= minlen:
+            out.update(run)
+    return out
+
+
 def match(toks, title_boost=None):
-    """Vote an ayah onto every token. -> list parallel to toks of (flat_idx, score)."""
+    """Vote an ayah onto every token. -> list parallel to toks of (flat_idx, score).
+
+    Each window elects a winner, as before, and the winner still smooths itself
+    across the whole window -- but only at SMOOTH weight. On top of that, EVERY
+    plausible candidate in the window votes at full weight on precisely the
+    tokens it can account for.
+
+    That second half is the whole point. Under pure winner-take-all a window is
+    a single label, so an ayah shorter than the window can only be found when
+    it happens to dominate one; ٱقْتَرَبَتِ ٱلسَّاعَةُ وَٱنشَقَّ ٱلْقَمَرُ (54:1, four
+    words) sat in window 0 alongside eight words of 54:2, scored 0.42 against
+    0.64, and vanished -- taking the whole 54:1-4 clip with it. Positionally it
+    was never in doubt: it owned tokens 0-3 outright and 54:2 owned 4-11.
+    """
     n = len(toks)
     votes = [dict() for _ in range(n)]
     prev = None
     for i, j, win in _windows(toks):
-        cands = Q.search(win, top=6, boost=title_boost)
+        cands = Q.search(win, top=6, boost=title_boost, detail=True)
         if not cands:
             prev = None
             continue
         scored = []
-        for s, a, sc, hits in cands:
+        for s, a, sc, hits, qis in cands:
             idx = Q.flat_index(s, a)
             if prev is not None and prev <= idx <= prev + 2:
                 sc *= CONTINUITY
-            scored.append((idx, sc, hits))
+            scored.append((idx, sc, hits, qis))
         scored.sort(key=lambda r: -r[1])
-        best_idx, best_sc, best_hits = scored[0]
+        best_idx, best_sc, best_hits, _ = scored[0]
         # A window that matched almost nothing should not vote at all.
         if best_hits < 3 or best_sc < 0.25:
             continue
         prev = best_idx
         for k in range(i, j):
-            votes[k][best_idx] = votes[k].get(best_idx, 0.0) + best_sc
+            votes[k][best_idx] = votes[k].get(best_idx, 0.0) + best_sc * SMOOTH
+        # Nearest-first, so that a dead heat between two ayat carrying the SAME
+        # formula (ٱلْحَمْدُ لِلَّهِ رَبِّ ٱلْعَٰلَمِينَ is 1:2 and 39:75 and 40:65 and
+        # 6:45 ...) is inserted -- and so broken by the argmax below -- in
+        # favour of the one nearest what is actually being recited.
+        rest = sorted(scored[1:], key=lambda r: abs(r[0] - best_idx))
+        own = set(scored[0][3])
+        for idx, sc, hits, qis in [scored[0]] + rest:
+            if sc < max(0.20, REL * best_sc):
+                continue
+            # The winner explains what it can; a rival is only heard about the
+            # tokens the winner CANNOT explain. That is the whole gap we are
+            # closing -- 54:1 owns four words 54:2 has no account of -- and it
+            # keeps the rest of the window quiet: 11:88 and 12:67 also contain
+            # عَلَيْهِ تَوَكَّلْتُ, but 9:129 has already accounted for those two
+            # words, so they are not evidence against it.
+            near = _phrases(qis) if idx == best_idx else _phrases(qis) - own
+            # Same contiguity prior as CONTINUITY, applied INSIDE the window:
+            # the neighbour of the ayah that won this window is a far likelier
+            # explanation of its leftover tokens than an identical formula from
+            # a different juz'. ٱلْحَمْدُ لِلَّهِ رَبِّ ٱلْعَٰلَمِينَ is 1:2 when 1:5
+            # won the window; it is 39:75 or 40:65 nowhere near as often.
+            w = sc * (LOCAL if abs(idx - best_idx) <= LOCAL_SPAN else 1.0)
+            for q in near:
+                k = i + q
+                if i <= k < j:
+                    votes[k][idx] = votes[k].get(idx, 0.0) + w
     out = []
     for v in votes:
         if not v:

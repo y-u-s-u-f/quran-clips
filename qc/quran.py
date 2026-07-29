@@ -316,7 +316,7 @@ def _idf(postings, n_docs=N_AYAT):
     return math.log(1.0 + n_docs / float(df))
 
 
-def search(toks, top=8, boost=None, span=None):
+def search(toks, top=8, boost=None, span=None, detail=False):
     """Locate a sequence of normalised Arabic word tokens in the mushaf.
 
     `toks`   list of tokens (already normalize()d, or raw Arabic -- raw text is
@@ -329,6 +329,13 @@ def search(toks, top=8, boost=None, span=None):
     `score` is roughly the fraction of the query's information content found
     in that ayah (0..~1.3 -- contiguity can push it over 1) and `hits` is how
     many query tokens matched.
+
+    `detail` appends a fifth element: the frozenset of QUERY token indices that
+    matched that ayah. A caller sliding a window over a transcript needs this
+    to know WHICH of its tokens an ayah accounts for -- a 4-word ayah sharing a
+    12-word window with its 8-word neighbour loses on score every time, and
+    without the positions there is no way to see that it still owns the first
+    four words (see qc.author.locate.match).
 
     Scoring: IDF-weighted token overlap, plus a bonus whenever query token i
     and i+1 land on consecutive positions of the same ayah. Word ORDER is what
@@ -378,13 +385,14 @@ def search(toks, top=8, boost=None, span=None):
         if boost:
             s, _ = from_flat(idx)
             score *= boost.get(s, 1.0)
-        out.append((idx, score, len({qi for qi, _ in pr})))
+        qis = frozenset(qi for qi, _ in pr)
+        out.append((idx, score, len(qis), qis))
 
     out.sort(key=lambda r: -r[1])
     res = []
-    for idx, score, hits in out[:top]:
+    for idx, score, hits, qis in out[:top]:
         s, a = from_flat(idx)
-        res.append((s, a, score, hits))
+        res.append((s, a, score, hits, qis) if detail else (s, a, score, hits))
     return res
 
 
