@@ -28,7 +28,14 @@ the look. `qc export` refuses a preview.
     -n N          how many candidates to print (default: 5)
     --range MM:SS-MM:SS   skip proposal, score this window instead
     --verses S:A[-B]      skip proposal, score these ayat instead
+    --no-judge    skip the semantic-coherence pass (structural ranking only)
     --json        machine-readable only, to stdout
+
+`propose` asks a model, in English and on ayah NUMBERS only, whether each of the
+top candidates stands alone or opens on a referent from a preceding ayah; it
+down-ranks the ones that do not and offers the corrected range where one is
+proposable. It falls back to the structural ranking in silence, and the report's
+`meaning:` line says which path was taken.
 
 `crop` options (needs tools/author-venv -- see requirements/author.txt):
     --style S     bars | default   (default: bars)
@@ -249,7 +256,8 @@ def _propose(argv):
         print("unknown style %r" % style, file=sys.stderr)
         return 2
     propose.run(fetch.video_id(rest[0]), style=style, n=n,
-                rng=rng, verses=verses, as_json=as_json)
+                rng=rng, verses=verses, as_json=as_json,
+                judge="--no-judge" not in argv)
     return 0
 
 

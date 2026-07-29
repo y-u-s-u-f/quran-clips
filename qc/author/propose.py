@@ -25,6 +25,14 @@ Three ideas do the work:
     ayah is only half covered starts mid-sentence, and no amount of confidence
     redeems it.
 
+    STRUCTURE IS NOT MEANING. All of the above judges the container. A window
+    can be whole ayat with clean edges and still open on a dangling referent --
+    Al-Qamar 54:2, "And if they SEE A SIGN, they turn away", where the sign is
+    the splitting of the moon in 54:1 that the window excludes. `coherence` asks
+    a model that question in English, on numbers only, and either down-ranks the
+    window or swaps in the extension that fixes it. It is advisory: if the judge
+    is unavailable the ranking below is exactly what it always was.
+
     STYLE CHANGES THE ANSWER. For the bars style the passage must break into
     SHORT BALANCED lines -- never more than ~4 short words per line
     (SKILL.md:199-205) -- and one over-long line shrinks the type for the whole
@@ -41,6 +49,7 @@ import json
 import os
 
 from .. import quran as Q
+from . import coherence as CO
 from . import emit as EM
 from . import fetch
 from . import linebreak as LB
@@ -68,6 +77,16 @@ WEIGHTS = {
     "fit": 0.20,
 }
 BARS_WEIGHT = 0.55      # blended in as (1-w)*base + w*bars, for --style bars
+
+JUDGE_N = 8             # how many candidates get the semantic-coherence call.
+                        # One subprocess each, so this is the whole cost knob.
+                        # 8 rather than 5 because a candidate that is judged
+                        # incoherent and cannot be fixed drops out of the top 5,
+                        # and something has to be ready to take its place --
+                        # judging only the printed five would leave the list
+                        # shorter than asked for. Below 8 that happened on
+                        # vqxYwdR4RvQ; above 8 the extra calls never changed a
+                        # printed row on either test video.
 
 
 # ---------------------------------------------------------------------------
@@ -499,14 +518,48 @@ def _why(c):
         bits.append("ayah is recited more than once; this is the stronger pass")
     if c.get("bars_note"):
         bits.append("bars: %s" % c["bars_note"])
+    co = c.get("coherence")
+    if co:
+        if co["verdict"] == "standalone":
+            bits.append("meaning: stands alone -- %s" % co["reason"])
+        elif co["verdict"] == "adjusted":
+            bits.append("meaning: ADJUSTED from %s -- %s"
+                        % (co["adjusted_from"], co["reason"]))
+        else:
+            bits.append("meaning: DOES NOT STAND ALONE (%s) -- %s%s"
+                        % (co["verdict"], co["reason"],
+                           "" if co.get("fix_available") else
+                           "; %s is not a proposable window here" % co["wanted"]))
     return bits
 
 
-def report(vid, cands, phantoms, style, meta, n):
+def demoted(pool, shown):
+    """Judged-incoherent candidates that the judgement pushed off the list.
+
+    Without this they vanish silently, which is the one thing the judge must not
+    do: on vqxYwdR4RvQ the structural #1 (Al-Qamar 54:2-4) is exactly such a
+    case, and "your best-looking window opens on a referent it cuts" is the most
+    useful line in the whole report.
+    """
+    keys = {(c["surah"], c["ayah_from"], c["ayah_to"], c["start"]) for c in shown}
+    out = []
+    for c in pool:
+        co = c.get("coherence")
+        if not co or co["verdict"] in ("standalone", "adjusted"):
+            continue
+        if (c["surah"], c["ayah_from"], c["ayah_to"], c["start"]) in keys:
+            continue
+        out.append(c)
+    return out
+
+
+def report(vid, cands, phantoms, style, meta, n, coh=None, dropped=()):
     print("video : %s" % vid)
     if meta.get("title"):
         print("title : %s" % meta["title"])
     print("style : %s" % style)
+    if coh:
+        print("meaning: %s" % coh)
     if phantoms:
         print("dropped %d phantom segment(s) (isolated cross-surah blip inside "
               "a run): %s" % (len(phantoms), ", ".join(
@@ -532,18 +585,47 @@ def report(vid, cands, phantoms, style, meta, n):
             print("   - %s" % b)
         print("   %s" % (c["author_cmd"] % (vid, style)))
         print()
+    if dropped:
+        print("down-ranked on meaning (structurally strong, but the passage "
+              "does not stand alone):")
+        for c in dropped:
+            co = c["coherence"]
+            print("   %s - %s   %s %d:%d%s   structural %.3f -> %.3f"
+                  % (L.hhmmss(c["start"]), L.hhmmss(c["end"]), c["surah_name"],
+                     c["surah"], c["ayah_from"],
+                     "" if c["ayah_to"] == c["ayah_from"]
+                     else "-%d" % c["ayah_to"],
+                     c["score"] / CO.PENALTY, c["score"]))
+            print("      %s" % co["reason"])
+            print("      would need %s -- %s" % (
+                co["wanted"], "offered above" if co.get("fix_available")
+                else "not a proposable window in this video"))
+        print()
 
 
-def run(vid, style="bars", n=5, rng=None, verses=None, as_json=False):
+def run(vid, style="bars", n=5, rng=None, verses=None, as_json=False,
+        judge=True):
     tl, meta = located(vid)
+    coh, pool = None, []
     if rng:
         cands, phantoms = from_range(tl, rng, style), []
+        cands, coh = CO.apply(cands, cands, use_llm=judge)
+        pool = cands
     elif verses:
         cands, phantoms = from_verses(tl, verses, style), []
+        cands, coh = CO.apply(cands, cands, use_llm=judge)
+        pool = cands
     else:
         cands, phantoms = candidates(tl, style)
-        cands = dedupe(cands, n)
-    payload = {"video_id": vid, "style": style,
+        # Judge a slightly deeper pool than we print, then re-rank and re-dedupe:
+        # a down-ranked window has to be able to fall out of the top n, and a
+        # swapped-in extension can now overlap something below it.
+        pool = dedupe(cands, max(n, JUDGE_N))
+        pool, coh = CO.apply(pool, cands, use_llm=judge)
+        cands = dedupe(pool, n)
+    drop = demoted(pool, cands[:n])
+    payload = {"video_id": vid, "style": style, "coherence": coh,
+               "down_ranked": drop,
                "title": meta.get("title"), "duration": meta.get("duration"),
                "phantoms": [{"surah": r["surah"], "ayah": r["ayah"],
                              "start": round(r["start"], 2),
@@ -552,7 +634,7 @@ def run(vid, style="bars", n=5, rng=None, verses=None, as_json=False):
     if as_json:
         print(json.dumps(payload, ensure_ascii=False, indent=1))
     else:
-        report(vid, cands, phantoms, style, meta, n)
+        report(vid, cands, phantoms, style, meta, n, coh, drop)
         os.makedirs(OUT_DIR, exist_ok=True)
         path = os.path.join(OUT_DIR, "%s.%s.json" % (vid, style))
         with open(path, "w", encoding="utf-8") as f:
