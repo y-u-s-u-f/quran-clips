@@ -70,8 +70,27 @@ R_OFF = "structural only (judge disabled)"
 # cache -- keyed by (surah, first, last); re-running a proposal is free
 # ---------------------------------------------------------------------------
 
+_VER = None
+
+
+def _ver():
+    """Short digest of the prompt + model + effort.
+
+    Part of every cache key, because the verdicts are a function of the question
+    as much as of the passage: editing PROMPT below changed 54:7-9 from
+    standalone to needs_start_earlier, and a cache keyed on the ayat alone would
+    have gone on serving the old answer forever.
+    """
+    global _VER
+    if _VER is None:
+        import hashlib
+        h = hashlib.sha1(("%s|%s|%s" % (PROMPT, MODEL, EFFORT)).encode("utf-8"))
+        _VER = h.hexdigest()[:8]
+    return _VER
+
+
 def _key(s, a, b):
-    return "%d:%d-%d" % (s, a, b)
+    return "%s %d:%d-%d" % (_ver(), s, a, b)
 
 
 def _cache_read():
@@ -122,6 +141,11 @@ Judge two things.
    stand alone. Grammar alone does not settle it: a noun that reads as
    indefinite in English can still be pointing at whatever the previous ayah
    just described. Ask what the passage is ABOUT, not how it is worded.
+
+   One rule is absolute and the guard rails below do NOT override it: if the
+   clip's opening sentence contains a bare pronoun -- "it", "he", "they",
+   "them", "this" -- naming something that is introduced only before the clip,
+   the clip does not stand alone.
 
 2. CLOSING. Does the clip end mid-thought -- cutting off the apodosis of a
    conditional ("if X..." with the "then Y" in the next ayah), a list, an answer
@@ -348,7 +372,10 @@ def apply(pool, all_cands, use_llm=True):
                 "verdict": v["verdict"],
                 "reason": v["reason"],
                 "wanted": "%d:%d-%d" % (c["surah"], v["first"], v["last"]),
-                "fix_available": alt is not None,
+                "fix_note": ("not a proposable window in this video"
+                             if alt is None else
+                             "that window exists, but the judge would not call "
+                             "it standalone either"),
             }
             c["score"] = round(c["score"] * PENALTY, 4)
             out.append(c)

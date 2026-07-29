@@ -526,10 +526,9 @@ def _why(c):
             bits.append("meaning: ADJUSTED from %s -- %s"
                         % (co["adjusted_from"], co["reason"]))
         else:
-            bits.append("meaning: DOES NOT STAND ALONE (%s) -- %s%s"
-                        % (co["verdict"], co["reason"],
-                           "" if co.get("fix_available") else
-                           "; %s is not a proposable window here" % co["wanted"]))
+            bits.append("meaning: DOES NOT STAND ALONE (%s) -- %s [wants %s: %s]"
+                        % (co["verdict"], co["reason"], co["wanted"],
+                           co["fix_note"]))
     return bits
 
 
@@ -597,9 +596,7 @@ def report(vid, cands, phantoms, style, meta, n, coh=None, dropped=()):
                      else "-%d" % c["ayah_to"],
                      c["score"] / CO.PENALTY, c["score"]))
             print("      %s" % co["reason"])
-            print("      would need %s -- %s" % (
-                co["wanted"], "offered above" if co.get("fix_available")
-                else "not a proposable window in this video"))
+            print("      would need %s -- %s" % (co["wanted"], co["fix_note"]))
         print()
 
 
