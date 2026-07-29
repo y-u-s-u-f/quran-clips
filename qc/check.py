@@ -469,6 +469,77 @@ def check_verse(res, clip, phrase_texts):
                     _cp(ref[at + best:at + best + 5]), surah, a))
 
 
+def check_ayah_span(res, clip, phrase_texts):
+    """A card may carry PART of one ayah, or a whole ayah -- never two.
+
+    Multiple cards per ayah is normal and often necessary; one card drawn from
+    two ayat is not, because a caption is read as a single verse by anyone who
+    cannot see the numbering, and the card's own `ayah:` field can then only be
+    half true. `qc author` produced exactly that on al-qamar-1-5 -- 54:1 split
+    across two cards, its last word riding on the same card as the opening of
+    54:2 -- and it had to be regrouped by hand.
+
+    Ayah membership is not recorded anywhere but the per-phrase `ayah:` field,
+    so it is established the same way check_verse establishes wording: against
+    the mushaf. A straddle is unmistakable in that text -- the head of the card
+    is the TAIL of one ayah and the rest is the HEAD of the next -- so that is
+    what is tested for, exactly, on the same strict_ar comparison check_verse
+    uses. Anything else that fails to sit inside its declared ayah is a wording
+    problem and is check_verse's to report, not this one's.
+    """
+    res.start("ayah-span")
+    from qc import quran as Q
+    surah = clip.get("surah")
+    if not isinstance(surah, int):
+        return
+
+    def words(n):
+        try:
+            return strict_ar(Q.ayah(surah, n)["ar"]).split()
+        except KeyError:
+            return None
+
+    for i, (ph, text) in enumerate(zip(clip.get("phrases") or [],
+                                       phrase_texts), 1):
+        a = ph.get("ayah")
+        if not isinstance(a, int):
+            continue
+        got = strict_ar(text).split()
+        own = words(a)
+        if not got or own is None:
+            continue
+        if _sublist(own, got):
+            continue                    # wholly inside its declared ayah: fine
+        split = None
+        for x in (a - 1, a):
+            first, second = words(x), words(x + 1)
+            if first is None or second is None:
+                continue
+            for k in range(1, len(got)):
+                if (k <= len(first) and len(got) - k <= len(second)
+                        and got[:k] == first[len(first) - k:]
+                        and got[k:] == second[:len(got) - k]):
+                    split = (x, k)
+                    break
+            if split:
+                break
+        if split:
+            x, k = split
+            res.fail("ayah-span",
+                     "P%d spans TWO ayat: its first %d word(s) are the end of "
+                     "%d:%d and its last %d are the start of %d:%d (it "
+                     "declares `ayah: %d`). A card may show part of one ayah "
+                     "or all of it, never text from two -- split it into two "
+                     "phrases at the boundary and give each its own `ayah:`."
+                     % (i, k, surah, x, len(got) - k, surah, x + 1, a))
+
+
+def _sublist(hay, needle):
+    """Does `needle` occur as a contiguous run of whole words in `hay`?"""
+    n = len(needle)
+    return any(hay[i:i + n] == needle for i in range(len(hay) - n + 1))
+
+
 # ---------------------------------------------------------------------------
 # 6. bars geometry (pure Pillow -- no video, no ffmpeg)
 # ---------------------------------------------------------------------------
@@ -786,6 +857,7 @@ def check_clip(clip_dir):
            for ph in clip.get("phrases") or []]
     check_font(res, clip, style_name, style, list(zip(texts, ens)))
     check_verse(res, clip, texts)
+    check_ayah_span(res, clip, texts)
 
     phrases, cut_dur = remap(clip, dur)
     if all(_num(p.get("t0")) and _num(p.get("t1")) for p in phrases):

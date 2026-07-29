@@ -86,19 +86,37 @@ def word_dips(events, ds, radius=0.6):
     return out
 
 
-def split_cards(events, wd, max_words=MAX_WORDS, max_dur=MAX_DUR):
+def split_cards(events, wd, ayahs=None, max_words=MAX_WORDS, max_dur=MAX_DUR):
     """-> ([(lo, hi), ...] index pairs into `events`, {cut_index: reason}).
+
+    Pass 0 cuts at every AYAH BOUNDARY, unconditionally. A card may show part
+    of one ayah, or a whole ayah, but never words from two -- a caption that
+    straddles a boundary reads as one verse to anyone who cannot see the
+    numbering, and the `ayah:` field the card carries can then only be half
+    true. This is a hard constraint, not a preference, so it is applied before
+    the energy has any say: on al-qamar-1-5 the emitter split 54:1 across two
+    cards and put its last word on the same card as the opening of
+    54:2, because the deepest trough in that stretch sits mid-ayah rather than
+    at the boundary. The owner regrouped that clip by hand; this rule is what
+    stops it recurring.
 
     Pass 1 cuts at every TRUE waqf -- a real stop is always a caption swap.
     Pass 2 keeps subdividing any card that is still too long to set, each time
     at the deepest dip it still contains. That second pass is what puts the
     at-tawbah card-1 swap in the shallow dip before عَزِيزٌ: the card is 9
     words and 11 s, no true waqf exists inside it, so the swap goes in the
-    quietest moment available and is flagged as non-waqf.
+    quietest moment available and is flagged as non-waqf. Both passes work
+    WITHIN the cards pass 0 has already fixed, so the length/duration logic is
+    unchanged -- it simply never gets the chance to merge across a boundary.
     """
     cuts = {k for k, d in wd.items() if d["waqf"]}
     reason = {k: "true waqf, %.2fs of silence" % d["sustain"]
               for k, d in wd.items() if d["waqf"]}
+    for k in range(len(events) - 1) if ayahs else ():
+        if ayahs[k] != ayahs[k + 1]:
+            cuts.add(k)
+            reason.setdefault(k, "ayah boundary %s -> %s: a card never spans "
+                                 "two ayat" % (ayahs[k], ayahs[k + 1]))
 
     def bounds():
         out, lo = [], 0
@@ -168,6 +186,20 @@ def split_lines(words):
     return [" ".join(words[:k]), " ".join(words[k:])]
 
 
+def _gap_edge(events, k, speech):
+    """A card boundary between events k and k+1 that no envelope dip matched.
+
+    Only reachable at an ayah boundary, which split_cards cuts unconditionally.
+    The times come from the words either side; the levels are reported as
+    unmeasured (depth 0, non-waqf) rather than guessed, so the emitted comment
+    tells the truth and the boundary is flagged for a human ear.
+    """
+    t1 = events[k]["t1"]
+    t0 = max(t1, events[k + 1]["t0"])
+    return {"t": 0.5 * (t1 + t0), "db": speech, "prom": 0.0, "depth": 0.0,
+            "sustain": 0.0, "t1": t1, "t0": t0, "waqf": False}
+
+
 # ---------------------------------------------------------------------------
 # the plan
 # ---------------------------------------------------------------------------
@@ -218,12 +250,16 @@ def plan(src, surah, a, b, start, end, workdir, pad=A.PAD,
     if ev[0]["t0"] < on:
         ev[0] = dict(ev[0], t0=on, t1=max(ev[0]["t1"], on + 0.05))
     wd = word_dips(ev, [d for d in al["dips"] if d["t"] >= on])
-    bounds, reason = split_cards(ev, wd)
+    ayahs = [al["ref"][e["ref"]]["ayah"] for e in ev]
+    bounds, reason = split_cards(ev, wd, ayahs)
 
     # --- boundaries between cards
     edges = []
     for (lo1, hi1), (lo2, _) in zip(bounds, bounds[1:]):
-        bd = dict(wd[hi1])
+        # An ayah boundary is a cut whether or not the envelope agrees, so it
+        # is the one cut that can land where no dip was matched. Describe it
+        # from the inter-word gap instead of inventing a measurement.
+        bd = dict(wd[hi1]) if hi1 in wd else _gap_edge(ev, hi1, speech)
         bd["reason"] = reason.get(hi1, "")
         # The swap-in time is where the envelope comes back up -- except at a
         # non-waqf boundary, where there is no "back up" to speak of and the
