@@ -1,0 +1,1309 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "hermes-agent",
+  "elements": [
+    {
+      "type": "text",
+      "id": "title",
+      "x": 440,
+      "y": 28,
+      "width": 380,
+      "height": 36,
+      "text": "quran-clips \u2014 the pipeline",
+      "fontSize": 28,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "originalText": "quran-clips \u2014 the pipeline",
+      "autoResize": true
+    },
+    {
+      "type": "text",
+      "id": "subtitle",
+      "x": 424,
+      "y": 88,
+      "width": 380,
+      "height": 20,
+      "text": "a YouTube recitation \u2192 a verified, captioned clip",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#757575",
+      "originalText": "a YouTube recitation \u2192 a verified, captioned clip",
+      "autoResize": true
+    },
+    {
+      "type": "rectangle",
+      "id": "input",
+      "x": 490,
+      "y": 145,
+      "width": 240,
+      "height": 60,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#a5d8ff",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_input",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_input",
+      "x": 500,
+      "y": 162,
+      "width": 220,
+      "height": 25,
+      "text": "YouTube URL",
+      "fontSize": 20,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "input",
+      "originalText": "YouTube URL",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a0",
+      "x": 610,
+      "y": 205,
+      "width": 0,
+      "height": 55,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          55
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "startBinding": {
+        "elementId": "input",
+        "fixedPoint": [
+          0.5,
+          1
+        ]
+      },
+      "endBinding": {
+        "elementId": "s1",
+        "fixedPoint": [
+          0.5,
+          0
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "s1",
+      "x": 440,
+      "y": 260,
+      "width": 340,
+      "height": 78,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#a5d8ff",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_s1",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_s1",
+      "x": 450,
+      "y": 272,
+      "width": 320,
+      "height": 44,
+      "text": "qc source add\nyt-dlp \u2192 mp4 + captions + meta",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "s1",
+      "originalText": "qc source add\nyt-dlp \u2192 mp4 + captions + meta",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a1",
+      "x": 610,
+      "y": 338,
+      "width": 0,
+      "height": 50,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "startBinding": {
+        "elementId": "s1",
+        "fixedPoint": [
+          0.5,
+          1
+        ]
+      },
+      "endBinding": {
+        "elementId": "s2",
+        "fixedPoint": [
+          0.5,
+          0
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "s2",
+      "x": 440,
+      "y": 388,
+      "width": 340,
+      "height": 78,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#a5d8ff",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_s2",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_s2",
+      "x": 450,
+      "y": 400,
+      "width": 320,
+      "height": 44,
+      "text": "qc locate\nmatch captions vs mushaf \u2192 surah:ayah",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "s2",
+      "originalText": "qc locate\nmatch captions vs mushaf \u2192 surah:ayah",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a2",
+      "x": 610,
+      "y": 466,
+      "width": 0,
+      "height": 50,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "startBinding": {
+        "elementId": "s2",
+        "fixedPoint": [
+          0.5,
+          1
+        ]
+      },
+      "endBinding": {
+        "elementId": "s3",
+        "fixedPoint": [
+          0.5,
+          0
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "s3",
+      "x": 440,
+      "y": 516,
+      "width": 340,
+      "height": 78,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#a5d8ff",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_s3",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_s3",
+      "x": 450,
+      "y": 528,
+      "width": 320,
+      "height": 44,
+      "text": "qc crop --write\nsolve reciter framing once per source",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "s3",
+      "originalText": "qc crop --write\nsolve reciter framing once per source",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a3",
+      "x": 610,
+      "y": 594,
+      "width": 0,
+      "height": 50,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "startBinding": {
+        "elementId": "s3",
+        "fixedPoint": [
+          0.5,
+          1
+        ]
+      },
+      "endBinding": {
+        "elementId": "s4",
+        "fixedPoint": [
+          0.5,
+          0
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "s4",
+      "x": 440,
+      "y": 644,
+      "width": 340,
+      "height": 78,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#a5d8ff",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_s4",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_s4",
+      "x": 450,
+      "y": 656,
+      "width": 320,
+      "height": 44,
+      "text": "qc propose\nrank clip-worthy windows + judge",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "s4",
+      "originalText": "qc propose\nrank clip-worthy windows + judge",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a4",
+      "x": 610,
+      "y": 722,
+      "width": 0,
+      "height": 50,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "startBinding": {
+        "elementId": "s4",
+        "fixedPoint": [
+          0.5,
+          1
+        ]
+      },
+      "endBinding": {
+        "elementId": "s5",
+        "fixedPoint": [
+          0.5,
+          0
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "s5",
+      "x": 440,
+      "y": 772,
+      "width": 340,
+      "height": 78,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#a5d8ff",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_s5",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_s5",
+      "x": 450,
+      "y": 784,
+      "width": 320,
+      "height": 44,
+      "text": "qc author\nalign, waqf cards, line breaks \u2192 clip.yaml",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "s5",
+      "originalText": "qc author\nalign, waqf cards, line breaks \u2192 clip.yaml",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a5",
+      "x": 610,
+      "y": 850,
+      "width": 0,
+      "height": 50,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "startBinding": {
+        "elementId": "s5",
+        "fixedPoint": [
+          0.5,
+          1
+        ]
+      },
+      "endBinding": {
+        "elementId": "s6",
+        "fixedPoint": [
+          0.5,
+          0
+        ]
+      },
+      "boundElements": [
+        {
+          "id": "t_a5",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_a5",
+      "x": 630,
+      "y": 862,
+      "width": 80,
+      "height": 18,
+      "text": "clip.yaml",
+      "fontSize": 14,
+      "fontFamily": 5,
+      "strokeColor": "#757575",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "a5",
+      "originalText": "clip.yaml",
+      "autoResize": true
+    },
+    {
+      "type": "rectangle",
+      "id": "s6",
+      "x": 440,
+      "y": 900,
+      "width": 340,
+      "height": 78,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#ffc9c9",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_s6",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_s6",
+      "x": 450,
+      "y": 912,
+      "width": 320,
+      "height": 44,
+      "text": "qc check \u2014 gate\n11 assertions, <1s\nnever render over a failure",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "s6",
+      "originalText": "qc check \u2014 gate\n11 assertions, <1s\nnever render over a failure",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a6",
+      "x": 610,
+      "y": 978,
+      "width": 0,
+      "height": 50,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "startBinding": {
+        "elementId": "s6",
+        "fixedPoint": [
+          0.5,
+          1
+        ]
+      },
+      "endBinding": {
+        "elementId": "s7",
+        "fixedPoint": [
+          0.5,
+          0
+        ]
+      },
+      "boundElements": [
+        {
+          "id": "t_a6",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_a6",
+      "x": 630,
+      "y": 990,
+      "width": 44,
+      "height": 18,
+      "text": "pass",
+      "fontSize": 14,
+      "fontFamily": 5,
+      "strokeColor": "#757575",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "a6",
+      "originalText": "pass",
+      "autoResize": true
+    },
+    {
+      "type": "rectangle",
+      "id": "s7",
+      "x": 440,
+      "y": 1028,
+      "width": 340,
+      "height": 78,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#d0bfff",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_s7",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_s7",
+      "x": 450,
+      "y": 1040,
+      "width": 320,
+      "height": 44,
+      "text": "qc render\nPillow Arabic type + ffmpeg composite",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "s7",
+      "originalText": "qc render\nPillow Arabic type + ffmpeg composite",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a7",
+      "x": 610,
+      "y": 1106,
+      "width": 0,
+      "height": 50,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "startBinding": {
+        "elementId": "s7",
+        "fixedPoint": [
+          0.5,
+          1
+        ]
+      },
+      "endBinding": {
+        "elementId": "s8",
+        "fixedPoint": [
+          0.5,
+          0
+        ]
+      },
+      "boundElements": [
+        {
+          "id": "t_a7",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_a7",
+      "x": 630,
+      "y": 1118,
+      "width": 84,
+      "height": 18,
+      "text": "final.mp4",
+      "fontSize": 14,
+      "fontFamily": 5,
+      "strokeColor": "#757575",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "a7",
+      "originalText": "final.mp4",
+      "autoResize": true
+    },
+    {
+      "type": "rectangle",
+      "id": "s8",
+      "x": 440,
+      "y": 1156,
+      "width": 340,
+      "height": 78,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#ffc9c9",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_s8",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_s8",
+      "x": 450,
+      "y": 1168,
+      "width": 320,
+      "height": 44,
+      "text": "qc check --output \u2014 gate\ngeometry, letterbox purity, loudness",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "s8",
+      "originalText": "qc check --output \u2014 gate\ngeometry, letterbox purity, loudness",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "a8",
+      "x": 610,
+      "y": 1234,
+      "width": 0,
+      "height": 50,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "startBinding": {
+        "elementId": "s8",
+        "fixedPoint": [
+          0.5,
+          1
+        ]
+      },
+      "endBinding": {
+        "elementId": "s9",
+        "fixedPoint": [
+          0.5,
+          0
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "s9",
+      "x": 440,
+      "y": 1284,
+      "width": 340,
+      "height": 78,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#b2f2bb",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_s9",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_s9",
+      "x": 450,
+      "y": 1296,
+      "width": 320,
+      "height": 44,
+      "text": "qc export\nreels/RECITER-SURAH-a-b.mp4\n+ metadata",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "s9",
+      "originalText": "qc export\nreels/RECITER-SURAH-a-b.mp4\n+ metadata",
+      "autoResize": true
+    },
+    {
+      "type": "rectangle",
+      "id": "assets",
+      "x": 60,
+      "y": 600,
+      "width": 300,
+      "height": 110,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#c3fae8",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_assets",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_assets",
+      "x": 70,
+      "y": 615,
+      "width": 280,
+      "height": 66,
+      "text": "assets/quran\nUthmani mushaf, Sahih Intl,\nword-by-word glosses",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "assets",
+      "originalText": "assets/quran\nUthmani mushaf, Sahih Intl,\nword-by-word glosses",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "aa1",
+      "x": 360,
+      "y": 620,
+      "width": 80,
+      "height": -193,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          -193
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "strokeStyle": "dashed",
+      "strokeColor": "#0c8599",
+      "startBinding": {
+        "elementId": "assets",
+        "fixedPoint": [
+          1,
+          0.2
+        ]
+      },
+      "endBinding": {
+        "elementId": "s2",
+        "fixedPoint": [
+          0,
+          0.5
+        ]
+      }
+    },
+    {
+      "type": "arrow",
+      "id": "aa2",
+      "x": 360,
+      "y": 675,
+      "width": 80,
+      "height": 136,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          136
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "strokeStyle": "dashed",
+      "strokeColor": "#0c8599",
+      "startBinding": {
+        "elementId": "assets",
+        "fixedPoint": [
+          1,
+          0.68
+        ]
+      },
+      "endBinding": {
+        "elementId": "s5",
+        "fixedPoint": [
+          0,
+          0.5
+        ]
+      }
+    },
+    {
+      "type": "arrow",
+      "id": "aa3",
+      "x": 360,
+      "y": 700,
+      "width": 80,
+      "height": 239,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          239
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "strokeStyle": "dashed",
+      "strokeColor": "#0c8599",
+      "startBinding": {
+        "elementId": "assets",
+        "fixedPoint": [
+          1,
+          0.9
+        ]
+      },
+      "endBinding": {
+        "elementId": "s6",
+        "fixedPoint": [
+          0,
+          0.5
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "tmpl",
+      "x": 60,
+      "y": 1020,
+      "width": 300,
+      "height": 90,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#fff3bf",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_tmpl",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_tmpl",
+      "x": 70,
+      "y": 1035,
+      "width": 280,
+      "height": 44,
+      "text": "templates/\nbars.yaml + style.yaml\nevery tunable number",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "tmpl",
+      "originalText": "templates/\nbars.yaml + style.yaml\nevery tunable number",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "at1",
+      "x": 360,
+      "y": 1065,
+      "width": 80,
+      "height": 2,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          2
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "strokeStyle": "dashed",
+      "strokeColor": "#997a00",
+      "startBinding": {
+        "elementId": "tmpl",
+        "fixedPoint": [
+          1,
+          0.5
+        ]
+      },
+      "endBinding": {
+        "elementId": "s7",
+        "fixedPoint": [
+          0,
+          0.5
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "cv",
+      "x": 860,
+      "y": 516,
+      "width": 280,
+      "height": 70,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#ffd8a8",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_cv",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_cv",
+      "x": 870,
+      "y": 528,
+      "width": 260,
+      "height": 44,
+      "text": "OpenCV + YuNet\nface model",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "cv",
+      "originalText": "OpenCV + YuNet\nface model",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "ac1",
+      "x": 860,
+      "y": 551,
+      "width": -80,
+      "height": 4,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -80,
+          4
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "strokeStyle": "dashed",
+      "strokeColor": "#e8590c",
+      "startBinding": {
+        "elementId": "cv",
+        "fixedPoint": [
+          0,
+          0.5
+        ]
+      },
+      "endBinding": {
+        "elementId": "s3",
+        "fixedPoint": [
+          1,
+          0.5
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "claude",
+      "x": 860,
+      "y": 640,
+      "width": 300,
+      "height": 100,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#d0bfff",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_claude",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_claude",
+      "x": 870,
+      "y": 655,
+      "width": 280,
+      "height": 66,
+      "text": "claude CLI\ncoherence judge + line-breaker\n(documented fallback if absent)",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "claude",
+      "originalText": "claude CLI\ncoherence judge + line-breaker\n(documented fallback if absent)",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "acl1",
+      "x": 860,
+      "y": 668,
+      "width": -80,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -80,
+          0
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "strokeStyle": "dashed",
+      "strokeColor": "#6741d9",
+      "startBinding": {
+        "elementId": "claude",
+        "fixedPoint": [
+          0,
+          0.28
+        ]
+      },
+      "endBinding": {
+        "elementId": "s4",
+        "fixedPoint": [
+          1,
+          0.5
+        ]
+      }
+    },
+    {
+      "type": "arrow",
+      "id": "acl2",
+      "x": 860,
+      "y": 715,
+      "width": -80,
+      "height": 88,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -80,
+          88
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "strokeStyle": "dashed",
+      "strokeColor": "#6741d9",
+      "startBinding": {
+        "elementId": "claude",
+        "fixedPoint": [
+          0,
+          0.75
+        ]
+      },
+      "endBinding": {
+        "elementId": "s5",
+        "fixedPoint": [
+          1,
+          0.35
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "asr",
+      "x": 860,
+      "y": 790,
+      "width": 280,
+      "height": 70,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#ffd8a8",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_asr",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_asr",
+      "x": 870,
+      "y": 802,
+      "width": 260,
+      "height": 44,
+      "text": "mlx-whisper\nword-level ASR alignment",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "asr",
+      "originalText": "mlx-whisper\nword-level ASR alignment",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "aas1",
+      "x": 860,
+      "y": 825,
+      "width": -80,
+      "height": -3,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -80,
+          -3
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "strokeStyle": "dashed",
+      "strokeColor": "#e8590c",
+      "startBinding": {
+        "elementId": "asr",
+        "fixedPoint": [
+          0,
+          0.5
+        ]
+      },
+      "endBinding": {
+        "elementId": "s5",
+        "fixedPoint": [
+          1,
+          0.65
+        ]
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "styles",
+      "x": 860,
+      "y": 1008,
+      "width": 300,
+      "height": 100,
+      "roundness": {
+        "type": 3
+      },
+      "backgroundColor": "#fff3bf",
+      "fillStyle": "solid",
+      "boundElements": [
+        {
+          "id": "t_styles",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "t_styles",
+      "x": 870,
+      "y": 1023,
+      "width": 280,
+      "height": 66,
+      "text": "two styles\ndefault: 16:9, Arabic + English\nbars: 9:16, Thuluth on pills",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#1e1e1e",
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "containerId": "styles",
+      "originalText": "two styles\ndefault: 16:9, Arabic + English\nbars: 9:16, Thuluth on pills",
+      "autoResize": true
+    },
+    {
+      "type": "arrow",
+      "id": "ast1",
+      "x": 860,
+      "y": 1058,
+      "width": -80,
+      "height": 9,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -80,
+          9
+        ]
+      ],
+      "endArrowhead": "arrow",
+      "strokeStyle": "dashed",
+      "strokeColor": "#997a00",
+      "startBinding": {
+        "elementId": "styles",
+        "fixedPoint": [
+          0,
+          0.5
+        ]
+      },
+      "endBinding": {
+        "elementId": "s7",
+        "fixedPoint": [
+          1,
+          0.5
+        ]
+      }
+    },
+    {
+      "type": "text",
+      "id": "footnote",
+      "x": 418,
+      "y": 1420,
+      "width": 400,
+      "height": 44,
+      "text": "Everything a caption says is checked against the\nUthmani text before a frame is drawn.",
+      "fontSize": 16,
+      "fontFamily": 5,
+      "strokeColor": "#757575",
+      "originalText": "Everything a caption says is checked against the\nUthmani text before a frame is drawn.",
+      "autoResize": true
+    }
+  ],
+  "appState": {
+    "viewBackgroundColor": "#ffffff"
+  }
+}

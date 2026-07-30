@@ -48,6 +48,11 @@ reels, written up in `style/refs2/STYLE2_SPEC.md` and `style/STYLE_SPEC.md`.
 
 ## The pipeline
 
+<img src="docs/pipeline.png" width="100%" alt="Flowchart: a YouTube URL flows through qc source add, locate, crop, propose, author, a pre-render check gate, render, an output check gate, and export. The mushaf and translation assets feed locate, author, and check; OpenCV/YuNet, the claude CLI, and mlx-whisper feed crop, propose, and author; the style templates feed render.">
+
+The editable source is [`docs/pipeline.excalidraw`](docs/pipeline.excalidraw) —
+drop it onto [excalidraw.com](https://excalidraw.com).
+
 ```
 qc source add <url>      yt-dlp -> sources/<id>.mp4 + auto-captions + meta yaml
 qc locate <id>           match the captions against the mushaf -> surah + ayat
