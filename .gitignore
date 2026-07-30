@@ -1,8 +1,10 @@
 # ==========================================================================
 # quran-clips — track the CREATION PROCESS, not the output.
-# Tracked: scripts/, templates/, .claude/, assets/ (fonts + scene images),
-#          clips/*/clip.yaml + tags.yaml, style/**/*.md specs + fx code.
-# Ignored: downloaded footage, exported reels, per-clip renders, the venv.
+# Tracked: qc/, scripts/, templates/, .claude/, assets/ (fonts + scene images),
+#          style/**/*.md specs + fx code, docs/ (README demos), and the FIVE
+#          example clip.yaml recipes the golden tests and the README refer to.
+# Ignored: downloaded footage, exported reels, per-clip renders, the venv, and
+#          the working library under clips/ (that is my own output, not code).
 # ==========================================================================
 
 # --- Downloaded / exported / recreatable trees -----------------------------
@@ -21,20 +23,18 @@ reels/
 # python venv for ASR (recreate with pip install)
 tools/
 
-# --- Per-clip intermediates and renders ------------------------------------
-clips/*/work/
-clips/*/output/
-
-# --- Throwaway A/B test harnesses ------------------------------------------
-# Any clip folder whose name starts with _ is scratch and never ships.
-clips/_*/
-
-# --- Finder aliases dropped in clip folders by export_reel ------------------
-# Named after the reel (RECITER-SURAH-a-b, no extension), so an uppercase entry
-# directly inside a clip folder is always one; a clip's own files are lowercase.
-# These are macOS alias blobs holding an absolute local path — they are outputs,
-# they are binary, and they resolve to nothing on any other machine.
-clips/*/[A-Z]*
+# --- The clip library -------------------------------------------------------
+# clips/ is the working library: authoring folders, renders, Finder aliases and
+# per-clip posting state. None of it is needed to run the pipeline, so the whole
+# tree is local-only, with an explicit keep list at the bottom of this file for
+# the handful of clip.yaml recipes that ship as examples / golden-test inputs.
+# tags.yaml is posting state (posted?, keyword tags) and never ships.
+# Git will not descend into an excluded DIRECTORY, so the clip folders are
+# re-admitted (`!clips/*/`) and their CONTENTS excluded instead, which is what
+# makes the per-file keeps at the bottom reachable.
+clips/*
+!clips/*/
+clips/*/*
 
 # --- Media, anywhere --------------------------------------------------------
 *.mp4
@@ -66,7 +66,18 @@ __pycache__/
 !assets/
 !assets/fonts/*.ttf
 !assets/reciters/*.png
-!clips/*/clip.yaml
-!clips/*/tags.yaml
 !style/**/*.md
 !*.excalidraw
+
+# The example recipes, and ONLY these: al-ahzab-56-56 is the `default`-style
+# clip embedded in the README; the other four are the inputs the golden
+# fixtures under tests/golden/ were recorded against (at-tawbah-128-128 is
+# also the README's `bars` clip). Every other clip folder stays local.
+!clips/al-ahzab-56-56/clip.yaml
+!clips/al-ahzab-70-71/clip.yaml
+!clips/al-anam-102-103/clip.yaml
+!clips/al-infitar-6-9/clip.yaml
+!clips/at-tawbah-128-128/clip.yaml
+
+# README demo videos — the one place an .mp4 is tracked on purpose.
+!docs/*.mp4

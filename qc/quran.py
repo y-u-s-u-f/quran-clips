@@ -1,10 +1,10 @@
 """qc.quran -- offline mushaf: exact text lookup + fuzzy Arabic search.
 
-The two JSON files under `assets/quran/` are committed copies of
-alquran.cloud's `quran-uthmani` and `en.sahih` editions, fetched once and
-stored verbatim. They exist so that no stage of the pipeline ever has to hit
-the network to learn what an ayah says, and so that anything we put on screen
-can be checked against them character for character.
+The JSON files under `assets/quran/` are committed copies of alquran.cloud's
+`quran-uthmani` and `en.sahih` editions, plus a word-by-word English gloss
+table, fetched once and stored verbatim. They exist so that no stage of the
+pipeline ever has to hit the network to learn what an ayah says, and so that
+anything we put on screen can be checked against them character for character.
 
     TEXT INTEGRITY. The Uthmani strings are load-bearing bytes, not prose.
     They carry codepoints (superscript alif U+0670, small high rounded zero
@@ -25,6 +25,40 @@ recorded here because they are the only edits the data has ever had:
     (Surahs 95 and 97 carry it with a stray shadda on the ba -- بِّسْمِ -- which
     is an artifact of that edition, handled explicitly.)
   * A UTF-8 BOM the API emits on 1:1 only.
+
+`en.wbw.json` is the third edition and the only one that is not alquran.cloud's:
+QuranCaption's `static/translations/wbw/en.json` (the URL is in the file), one
+short English gloss for each of the mushaf's 77,429 words -- "(of) Allah",
+"the Most Gracious". It is committed so that an ayah's English translation can
+be cut at a card seam by ANCHORING on the Arabic word the seam falls after
+rather than by proportion (qc.author.translate). Two edits when it was written
+to disk, and no others:
+
+  * The source nests surah -> ayah -> a list that always holds exactly one list
+    of glosses. Flattened to a single 6236-entry `words` array in flat_index()
+    order, so `words[i]` lines up with `ayahs[i]` in the other two files and
+    nothing downstream has to know about surah numbering.
+  * 497 of the glosses carried leading or trailing whitespace; every gloss is
+    `.strip()`ed. The strings are otherwise untouched.
+
+    THE COUNT IS THE ENTIRE SAFETY PROPERTY. This table is only usable because
+    gloss k is the gloss OF DISPLAY WORD k, so a list whose length differs from
+    the ayah's display-word count is not merely incomplete -- it is silently
+    OFFSET, and every English cut taken from it lands one clause out. `words()`
+    therefore counts on every call and returns None rather than hand back a
+    table it cannot line up. Today it is None on exactly one ayah: 37:130,
+    سَلَٰمٌ عَلَىٰٓ إِلْ يَاسِينَ, where the mushaf writes the name as two display
+    words and the source glosses it as one ("Elijah") -- 3 glosses for 4 words.
+    That ayah is stored exactly as the source wrote it; padding it with an
+    invented fourth gloss to make the arithmetic come out is precisely the
+    paper-over this check exists to catch.
+
+Its licence could not be established: QuranCaption ships no attribution for
+this file, and its own LICENCE (CC BY-NC 4.0) covers its packaging, not
+third-party Quran data. The gloss style is the widely redistributed
+corpus.quran.com word-by-word English -- probable, not proven. The `source`
+URL stays in the file for that reason. Nothing in this table is ever shown as
+Arabic and nothing is ever fed back into the mushaf.
 
 The search side is deliberately blunt. Its only consumer is caption/ASR
 matching, where the input is already lossy -- YouTube's Arabic auto-captions
@@ -149,6 +183,57 @@ def ayah(surah, num):
         "ar": _load("uthmani")["ayahs"][i],
         "en": _load("en.sahih")["ayahs"][i],
     }
+
+
+def _display_words(text):
+    """The whitespace tokens of an ayah that are actually WORDS.
+
+    The mushaf writes the waqf and sajda signs (ۖ ۗ ۚ ۞ ...) as their own
+    space-delimited tokens, so `ar.split()` counts 9 for 54:8 where the caption
+    carries 8. `qc.author.align.ref_words` drops them by normalising each token
+    and keeping only what leaves a letter behind. This repeats that test --
+    which the aligner cannot be asked to do, because it imports us -- purely so
+    that `words()` can COUNT. It is a check, not a second definition of what a
+    display word is: verified to agree with ref_words on all 6236 ayat.
+    """
+    out = []
+    for w in nfc(text).split():
+        if (normalize(w).replace(" ", "")
+                or normalize(w, keep_super_alif=True).replace(" ", "")):
+            out.append(w)
+    return out
+
+
+def words(surah, num):
+    """-> the ayah's English word-by-word glosses, one per DISPLAY word, or None.
+
+    `words(2, 255)[0]` is the gloss of the first word of ayat al-kursi, and so
+    on in step with the display words of `ayah()['ar']`. Glosses are handed
+    back as stored ("(of) Allah" keeps its parentheses); the list is a copy, so
+    a caller cannot edit the cached table out from under the next one.
+
+    None means the gloss table and the mushaf DISAGREE about how many words the
+    ayah has, and every gloss after the disagreement therefore belongs to some
+    other word. There is no partially usable answer in that case -- see the
+    module docstring for 37:130, the one ayah where it happens -- so callers
+    must fall back to something that does not need per-word English rather than
+    cut on an offset table.
+
+    None ALSO means the table is simply not on disk. `en.wbw.json` is the one
+    edition a working tree can be missing -- it is an optional refinement, not
+    a load-bearing asset like `uthmani.json` -- and a caller that has already
+    been told to handle None for 37:130 handles this by the same path. Raising
+    here instead would turn `qc author` into a hard failure on any clone that
+    predates the file, which is exactly the degradation this returns None for.
+    """
+    i = flat_index(surah, num)
+    try:
+        gl = _load("en.wbw")["words"][i]
+    except FileNotFoundError:
+        return None
+    if len(gl) != len(_display_words(_load("uthmani")["ayahs"][i])):
+        return None
+    return list(gl)
 
 
 def nfc(text):

@@ -46,7 +46,7 @@ import qc.fx                                   # noqa: E402
 from qc.arabic import norm_ar, strip_tashkeel  # noqa: E402
 from qc.fonts import fit_pt, truetype  # noqa: E402
 from qc.proc import FFMPEG  # noqa: E402
-from qc.timeline import hms  # noqa: E402
+from qc.timeline import hms, source_link  # noqa: E402
 
 
 # ----------------------------------------------------------------------------
@@ -102,7 +102,7 @@ def derive_bar_color(clip_dir, clip, style):
     seg = clip["segment"]
     ss = hms(seg["start"])
     dur = round(hms(seg["end"]) - ss, 3)
-    src = os.path.join(clip_dir, "work", "source.mp4")
+    src = source_link(clip_dir, clip)
     tile_png = os.path.join(clip_dir, "work", "bar_color_sample.png")
     vf = (band_source_chain(clip, style) +
           f",fps={a['sample_fps']},scale=48:27,tile={tile}x{tile}")

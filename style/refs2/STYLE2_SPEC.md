@@ -243,6 +243,33 @@ It is closest to the **Aref Ruqaa / DecoType-Thuluth class**; Aref Ruqaa Bold is
 widely available free match, though the finals here are longer than stock Aref Ruqaa, so the
 original may be a commercial thuluth face (e.g. an "AGA"/"DecoType Thuluth" family).
 
+**Line balance within a card.** The two lines of a two-line card read as a unit, so
+their pills should come out close in width — inside ~30px of each other at the shipped
+486px cap. `qc check` does not assert this; it only enforces the cap and the pill ratio,
+and will pass a 169/411 card that looks broken on screen. Balance by choosing the card
+boundary first (search the ayah's partitions — a naturally balanced layout almost always
+exists), then the line break, and only then reach for a kashida.
+
+**Kashida as a width tool.** U+0640 tatweel may be inserted to widen a short line, which
+is what the reference faces do calligraphically anyway (§ the long flat connectors above).
+Limits, established against the owner's eye on 32:10–11:
+
+* at most ~6 per line — beyond that it stops reading as elongation and reads as an error;
+* never between `ل` and an alif form (`ا أ إ آ ٱ`): lam-alef is a required ligature and a
+  tatweel splits it into two detached glyphs. This is the most visible failure mode;
+* never after a letter that does not join leftward (`ا أ إ آ د ذ ر ز و ؤ ء ة ى ٱ`) — the
+  tatweel is left hanging as a stray dash;
+* spread runs over two joins rather than putting one long dash in a single word.
+
+It is safe with respect to the text: `qc.check.strict_ar` and `qc.quran.normalize()` both
+strip U+0640 before comparing against the mushaf, so a widened caption still validates.
+
+**Single-line cards.** Preferred where the card closes on a waqf or the end of an ayah —
+one wide pill reads as a cadence, and a long held final word is exactly that case.
+Elsewhere they are permitted for meaning but not encouraged. A line with no ascender
+cannot stand alone: the pill-ratio assertion floors at 1.8 and `تُرْجَعُونَ` on its own
+measures 1.55, so group it with a word carrying a `ك`, `ل` or `ا`.
+
 ---
 
 ## C2. COLOUR RELATIONSHIP (video → bar)

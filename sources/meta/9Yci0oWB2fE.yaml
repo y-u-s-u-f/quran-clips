@@ -1,0 +1,89 @@
+# written by `qc source add` -- do not hand-edit the fetched
+# fields; anything below is what yt-dlp reported for this video.
+id: "9Yci0oWB2fE"
+url: "https://www.youtube.com/watch?v=9Yci0oWB2fE"
+title: "المصحف المرئي من صلاتي التراويح والتهجد بالمسجد النبوي 1447هـ سورة الحجر"
+uploader: "شؤون الأئمة والمؤذنين للمسجد النبوي"
+upload_date: "20260728"
+duration: 831
+width: 1920
+height: 1080
+fps: 30
+has_ar_captions: true
+caption_langs: ["ar", "ar-orig"]
+
+# --- framing: HAND-SOLVED, not written by `qc crop`. ONE BLOCK PER STYLE.
+# `qc crop --style bars` finds NO legal window on this source, for two reasons:
+#   1. Two of its six variance-detected "burned-in" boxes are FALSE POSITIVES --
+#      x142,y400 is the gold microphone cluster and x153,y58 a pillar edge. Both
+#      are physical furniture on a locked camera, so their temporal std is codec
+#      noise, exactly like a logo. The solver refuses any window containing them,
+#      and they sit in the only clear space there is.
+#   2. Genuine overlays eat the bottom quarter (PRA lower-third y828+, socials,
+#      prh.gov.sa url, Haramain logo) and the top-right corner (سورة الحجر).
+#      With the reciter's head ~390 px wide and the usable band only y105..822,
+#      no 16:9 window can clear all four AND put his head right of 0.60 W.
+# So the numbers below are mine, chosen against the real graphics only, and
+# verified on a frame at abs 780s with the caption zone (0.05-0.55 W) drawn in:
+# the pill's right edge lands just left of his profile, his whole ghutrah is in
+# frame, and the mihrab wall + mic stand fill the caption side.
+# Camera IS locked (contact sheet, 20 frames over 800s -- he is on screen in
+# every one); the 884 px camera_spread `qc crop` reported is its face detector
+# hopping between the reciter and the four attendees behind him, not motion.
+framing:
+  bars:
+    crop: {x: 0, y: 105, w: 1074, h: 604}
+    text_center_x_frac: 0.300
+    caption_side: left
+    faces: left
+    face_px: {cx: 790, cy: 295, w: 380, h: 390}  # HAND-corrected head box; the
+    # detector's 784,352 273x465 centres on head+ghutrah and reads ~57 px low.
+    face_frac: {x: 0.736, y: 0.315}   # y rule ~0.275; 0.315 is the highest his
+    # head can sit without the crop clipping the top of the ghutrah (top y105).
+    reciter_w_frac: 0.451
+    camera_spread_px: {cx: 0, cy: 0}   # locked camera; see note above
+    solved_over_frames: 40
+    exclude_boxes:
+      - {x: 541, y: 828, w: 795, h: 135}   # PRA lower-third (reciter name/night)
+      - {x: 56, y: 895, w: 193, h: 145}    # socials + PRAGOVSA
+      - {x: 1644, y: 960, w: 216, h: 81}   # Haramain / PRA seal
+      - {x: 782, y: 991, w: 362, h: 46}    # www.prh.gov.sa
+      - {x: 1630, y: 15, w: 280, h: 100}   # سورة الحجر, top-right (by eye)
+      - {x: 142, y: 400, w: 97, h: 94}     # FALSE POSITIVE: microphone cluster
+      - {x: 153, y: 58, w: 88, h: 98}      # FALSE POSITIVE: pillar edge
+  default:
+    # HAND-SOLVED like the bars block above, and for an extra reason: on this
+    # source `qc crop --style default` does not fail, it succeeds WRONGLY. It
+    # returns crop {x:280,y:88,w:1306,h:734} with
+    #     text_center_x_frac: -0.105
+    # a NEGATIVE caption anchor, i.e. captions off the left edge of frame. The
+    # cause is `reciter_w_frac` 1.201 -- the motion silhouette spans src px
+    # 134..1702 because it is tracking the CONGREGATION swaying behind him, not
+    # him. default derives BOTH the reciter's position and the caption's from
+    # that width, so w_r > 1 sends `(A + w_r + 1)/2` past 1.0 and the mirrored
+    # anchor negative. Never cache that solve.
+    # Derived the same way as bars instead: the only caption-clean region is the
+    # mihrab wall left of his profile, src x0..600. default's caption half-width
+    # is 0.252, so with the anchor at 0.300 the block spans 0.048..0.552 W and
+    # 0.552*W must stay <= 600 -> W <= 1087. Hence 1086, the widest legal window.
+    crop: {x: 0, y: 105, w: 1086, h: 611}
+    text_center_x_frac: 0.300   # matches the shipped default clips (al-anam-*)
+    caption_side: left
+    faces: left
+    face_px: {cx: 790, cy: 295, w: 380, h: 390}   # hand-corrected; see bars note
+    face_frac: {x: 0.727, y: 0.311}   # y rule ~0.275; 0.311 is the highest his
+    # head sits without the crop clipping the top of the ghutrah (top y105).
+    reciter_w_frac: 0.447   # HIM only. The solver's 1.201 includes the crowd.
+    camera_spread_px: {cx: 0, cy: 0}   # locked camera
+    solved_over_frames: 40
+    # CAVEAT: 1086 -> 1920 is a 1.77x upscale of a 1080p source, so this style
+    # is softer on this footage than bars (which needs only 1074 -> 1080, ~1:1).
+    # Forced: any wider window puts the caption block over his face.
+    exclude_boxes:
+      - {x: 541, y: 828, w: 795, h: 135}   # PRA lower-third (reciter name/night)
+      - {x: 56, y: 895, w: 193, h: 145}    # socials + PRAGOVSA
+      - {x: 1644, y: 960, w: 216, h: 81}   # Haramain / PRA seal
+      - {x: 782, y: 991, w: 362, h: 46}    # www.prh.gov.sa
+      - {x: 1630, y: 15, w: 280, h: 100}   # سورة الحجر, top-right (by eye)
+      - {x: 142, y: 400, w: 97, h: 94}     # FALSE POSITIVE: microphone cluster
+      - {x: 153, y: 58, w: 88, h: 98}      # FALSE POSITIVE: pillar edge

@@ -78,7 +78,7 @@
 -thread_queue_size
 4096
 -i
-/Users/yusuf/quran-clips/clips/at-tawbah-128-128/work/snow_1080x608_BF8C36_0.7_1.0_7.0_1.0_8.0_7_0.1_-1.0_3.5_72.0_0.1.mp4
+/Users/yusuf/quran-clips/clips/at-tawbah-128-128/work/snow_1080x608_BF8C36_0.7_1.0_7.0_1.0_8.0_7_0.1_-1.0_3.5_72.0_1.0.mp4
 -framerate
 30
 -loop

@@ -18,6 +18,43 @@ def hms(t):
     return int(h) * 3600 + int(m) * 60 + float(s)
 
 
+def source_link(clip_dir, clip):
+    """Return the clip's `work/source.mp4`, creating it if it does not exist.
+
+    Every shipped clip carries this as a RELATIVE symlink into the shared
+    `sources/` cache -- the video is never copied into a clip folder. Nothing
+    used to create it, so `qc render` died instantly on every freshly authored
+    clip ("Error opening input .../work/source.mp4", or for bars the less
+    obvious "ffmpeg bar-colour sampling failed", since bar-colour sampling is
+    the first thing to open it). Four clips in a row hit that and hand-made the
+    link, so it is created here instead, at the one place both style drivers
+    resolve the source through.
+
+    The target is derived from clip.yaml's `source_url`, which is where the
+    video id lives; a clip whose source is not in the cache is a `qc source
+    add` away, and we say so rather than failing inside ffmpeg.
+    """
+    link = os.path.join(clip_dir, "work", "source.mp4")
+    if os.path.exists(link):
+        return link
+    url = str(clip.get("source_url") or "")
+    vid = url.rsplit("v=", 1)[-1].split("&")[0].strip() if "v=" in url else ""
+    if not vid:
+        sys.exit("no work/source.mp4 and clip.yaml has no usable source_url "
+                 "(%r) to derive it from" % url)
+    target = os.path.join("..", "..", "..", "sources", "%s.mp4" % vid)
+    cached = os.path.join(os.path.dirname(os.path.abspath(clip_dir)),
+                          "..", "sources", "%s.mp4" % vid)
+    if not os.path.exists(os.path.normpath(cached)):
+        sys.exit("source %s.mp4 is not in sources/ -- run `qc source add %s`"
+                 % (vid, url))
+    os.makedirs(os.path.join(clip_dir, "work"), exist_ok=True)
+    if os.path.islink(link):
+        os.unlink(link)                      # dangling link: repoint it
+    os.symlink(target, link)
+    return link
+
+
 # ---------------------------------------------------------------------------
 # segment.cuts
 # ---------------------------------------------------------------------------
@@ -28,7 +65,7 @@ def segment(clip_dir, clip):
     seg = clip["segment"]
     ss = hms(seg["start"])
     dur = round(hms(seg["end"]) - ss, 3)
-    src = os.path.join(clip_dir, "work", "source.mp4")
+    src = source_link(clip_dir, clip)
     return apply_cuts(clip_dir, clip, src, ss, dur)
 
 

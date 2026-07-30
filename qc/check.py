@@ -425,11 +425,16 @@ def check_font(res, clip, style_name, style, captions):
 # U+06D6..U+06DC waqf signs, U+06DD end of ayah, U+06DE rub el hizb,
 # U+06DF small high rounded zero, U+06E9 place of sajdah, U+06ED small low meem.
 WAQF = re.compile("[ۖ-۟۩ۭ]")
+# U+0640 TATWEEL is not a letter and carries no pronunciation: it only stretches
+# the join between two letters so a caption line can be widened to match its
+# neighbour's pill. It is layout, not text, so it is dropped before comparing --
+# the same thing qc.quran.normalize() already does for the alignment side.
+KASHIDA = re.compile("ـ+")
 
 
 def strict_ar(s):
     from qc import quran as Q
-    return " ".join(WAQF.sub("", Q.nfc(s or "")).split())
+    return " ".join(KASHIDA.sub("", WAQF.sub("", Q.nfc(s or ""))).split())
 
 
 def check_verse(res, clip, phrase_texts):
@@ -691,6 +696,23 @@ HEAD_PRE = 1.0       # seconds of pre-roll: the pause before the first word
 HEAD_LOOK = 3.0      # how far into the clip to look for the first attack
 HEAD_TOL = 0.35      # how far the attack may be from P1's t0
 HEAD_TIMEOUT = 90    # an Opus-in-MP4 source can wedge ffmpeg outright
+# The attack test above compares the author's answer against `E.attacks` -- the
+# SAME function the author used to pick `segment.start`. So when the author
+# latches onto a spurious rise, this check finds the identical rise in the
+# identical place and agrees with it. Both al-hijr clips that shipped broken
+# passed the attack test that way:
+#   al-hijr-96-99 started 1.67 s EARLY, mid-word in the previous ayah -- the
+#     "pause" it keyed on was a 0.21 s hamza glottal stop INSIDE ٱلْمُسْتَهْزِءِينَ,
+#     which reads as a dip (-34.6 dB) but is not a waqf.
+#   al-hijr-27-28 started 1.73 s LATE, inside the long madd of وَٱلْجَآنَّ, at
+#     -20.9 dB = full speech level. The owner heard "...aana khalaqnahu".
+# What neither had, and what a correct start always has, is SUSTAINED QUIET in
+# front of it: a real waqf. So measure that directly and independently of
+# attacks. A 0.21 s glottal stop fails it; so does starting mid-vowel.
+# It WARNS rather than fails: a reciter who runs straight from one ayah into the
+# next leaves no pause to find, and such a clip is legitimate (if abrupt).
+HEAD_QUIET_DB = 12   # "quiet" = this far below the window's speech level
+HEAD_QUIET_S = 0.30  # ...sustained for this long immediately before the start
 
 
 def _source_path(clip):
@@ -751,6 +773,33 @@ def check_head(res, clip):
     try:
         times, db = E.envelope(wav)
         speech = E.speech_level(db)
+        if pre >= HEAD_QUIET_S:
+            # Walk back from segment.start (offset `pre`) while the envelope
+            # stays quiet; how far we get is the pause the clip opens after.
+            quiet, i = 0.0, None
+            for k in range(len(times) - 1, -1, -1):
+                if times[k] <= pre:
+                    i = k
+                    break
+            lvl = db[i] if i is not None else None
+            while i is not None and i > 0 and db[i] < speech - HEAD_QUIET_DB:
+                i -= 1
+                quiet = pre - times[i]
+                if quiet >= HEAD_QUIET_S:
+                    break
+            if quiet < HEAD_QUIET_S:
+                res.warn("head",
+                         "segment.start has only %.2fs of quiet in front of it "
+                         "(want %.2fs at %d dB below the %.1f dB speech level; "
+                         "the envelope reads %.1f dB right at the start). A "
+                         "correct start sits after a real waqf. This is what a "
+                         "start buried mid-word looks like, and also what a "
+                         "glottal stop mistaken for a pause looks like -- "
+                         "measure the gap before the first word by hand before "
+                         "trusting it. Legitimate if the reciter ran straight "
+                         "into this ayah with no pause."
+                         % (quiet, HEAD_QUIET_S, HEAD_QUIET_DB, speech,
+                            lvl if lvl is not None else float("nan")))
         at = E.attacks(times, db, speech, lo=pre - 0.6, hi=pre + HEAD_LOOK)
         if at and abs(at[0] - (pre + float(t0))) > HEAD_TOL:
             res.fail("head",
@@ -890,6 +939,19 @@ def run(clip_dirs):
 LOUDNESS_TOL = 0.5          # LU
 LETTERBOX_MAX_LUMA = 2      # 8-bit; pure black after yuv420p round-tripping
 LETTERBOX_SAMPLES = 8
+# The row immediately touching the band is NOT measurable as letterbox. y=656
+# and y=1264 are 16-px macroblock boundaries, and x264's in-loop deblocking
+# filter smooths across block edges by design, so it pulls a little of the
+# band's own edge luma into the first row outside it (plus DCT ringing). It is
+# an artefact of the ENCODE, not of the filtergraph, and every bars clip has it:
+# measured on row 1264, the golden at-tawbah-128-128 and the shipped
+# al-qamar-1-5 both read exactly 2 -- i.e. flush with LETTERBOX_MAX_LUMA, no
+# headroom at all -- while al-hijr-22-23 reads 3 on 2 pixels because its band
+# bottom is slightly brighter. Row 1265 and beyond is pure 0 in every clip.
+# So skip one row on each side. This costs nothing in detection power: an FX
+# pass that is not cropped to the band hazes HUNDREDS of rows and shows up
+# far outside the guard, which is why the ceiling below stays tight at 2.
+BAND_EDGE_GUARD = 1         # rows adjacent to the band, excluded from the scan
 
 
 def _probe(path):
@@ -937,12 +999,13 @@ def _letterbox_luma(path, w, h, by, bh, n=LETTERBOX_SAMPLES):
                     "-vf", "select='%s'" % sel, "-vsync", "0",
                     os.path.join(tmp, "%02d.png")], check=True)
     top = bot = 0
+    g = BAND_EDGE_GUARD
     for f in sorted(os.listdir(tmp)):
         im = Image.open(os.path.join(tmp, f)).convert("L")
-        if by > 0:
-            top = max(top, im.crop((0, 0, w, by)).getextrema()[1])
-        if by + bh < h:
-            bot = max(bot, im.crop((0, by + bh, w, h)).getextrema()[1])
+        if by - g > 0:
+            top = max(top, im.crop((0, 0, w, by - g)).getextrema()[1])
+        if by + bh + g < h:
+            bot = max(bot, im.crop((0, by + bh + g, w, h)).getextrema()[1])
         im.close()
     for f in os.listdir(tmp):
         os.remove(os.path.join(tmp, f))
@@ -1036,11 +1099,16 @@ def check_output(clip_dir):
         if max(top, bot) > LETTERBOX_MAX_LUMA:
             res.fail("output",
                      "the letterbox is not black: max luma %d above / %d below "
-                     "the band (ceiling %d). An FX pass is spilling outside "
-                     "the %dx%d band at y=%d -- every effect must be cropped "
-                     "to it." % (top, bot, LETTERBOX_MAX_LUMA,
-                                 int(band["width"]), int(band["height"]),
-                                 int(band["y"])))
+                     "the %dx%d band at y=%d (ceiling %d, measured excluding "
+                     "the %d row(s) touching the band). Most likely an FX pass "
+                     "is not cropped to the band -- that hazes hundreds of "
+                     "rows, so dump a row histogram of the letterbox to see "
+                     "how far it reaches. If instead it is a pixel or two on "
+                     "one row only, that is x264 deblocking at a macroblock "
+                     "edge, not a filtergraph bug: widen BAND_EDGE_GUARD "
+                     "rather than raising the ceiling."
+                     % (top, bot, int(band["width"]), int(band["height"]),
+                        int(band["y"]), LETTERBOX_MAX_LUMA, BAND_EDGE_GUARD))
     if a is None:
         res.fail("output", "no audio stream")
     else:

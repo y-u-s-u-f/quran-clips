@@ -259,11 +259,16 @@ fx:
     # refs' 1.00/0.40/0.09/0.04, and it lands the apparent rise on 3.0 px/frame
     # against the refs' measured 2.9.
     texel_scale: 72.0             # texel_px = size * this * band_h/405
-    # The tutorial's author eyedroppers a cream (#CDBDA3) into Snow's Color,
-    # but BOTH reference reels measure the specks as neutral white (residual
-    # RGB 96.1/96.4/93.4 gold, 92.7/92.5/92.5 rose). 0.10 is a whisper of the
-    # bar hue; raise toward ~0.35 to reproduce the tutorial's cream.
-    tint_mix: 0.10
+    # The specks now carry the bar hue at FULL strength (owner's decision,
+    # 2026-07-30): 1.00 tints each speck all the way to the clip's own
+    # bar_color instead of leaving it white.
+    # Evidence for the previous 0.10, kept on purpose: the tutorial's author
+    # eyedroppers a cream (#CDBDA3) into Snow's Color, but BOTH reference reels
+    # measure the specks as neutral white (residual RGB 96.1/96.4/93.4 gold,
+    # 92.7/92.5/92.5 rose), so 0.10 was only a whisper of the bar hue (~0.35
+    # would have reproduced the tutorial's cream). This is a deliberate
+    # departure from the references, not a correction to them.
+    tint_mix: 1.00
     sway_texels: 3.5              # horizontal sway, one whole cycle per loop
     seed: 7
     loop_s: 8

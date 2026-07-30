@@ -65,8 +65,14 @@ def frames(clip_dir, times, out_dir=None):
     clip, src, ss, dur = _load(clip_dir)
     style = render_text.load_yaml(render_text.template_path(clip))
     fps = int(style["meta"]["fps"])
-    out_dir = out_dir or os.path.join(clip_dir, "output", "frames")
-    os.makedirs(out_dir, exist_ok=True)
+    # build_bars always writes under <clip>/output/, so the stills land in
+    # <clip>/output/frames/ whatever -o says. Make that directory unconditionally
+    # -- ffmpeg's image2 muxer does not create it and fails with a bare
+    # "No such file or directory" -- and treat -o as a copy-out destination.
+    built_dir = os.path.join(clip_dir, "output", "frames")
+    os.makedirs(built_dir, exist_ok=True)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
 
     rep = render_bars.build(clip_dir, clip=clip, style=style)
     made = []
@@ -77,6 +83,10 @@ def frames(clip_dir, times, out_dir=None):
                       reuse=rep)
         made.append(build_bars.build(clip_dir, ctx=(clip, src, ss, dur),
                                      opts=opts))
+    if out_dir and os.path.abspath(out_dir) != os.path.abspath(built_dir):
+        import shutil
+        made = [shutil.copy2(p, os.path.join(out_dir, os.path.basename(p)))
+                for p in made]
     el = time.time() - t0
     print("\nFRAMES %d still(s) in %.1fs (full fidelity):" % (len(made), el))
     for p in made:

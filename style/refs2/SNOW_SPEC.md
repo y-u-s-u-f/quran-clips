@@ -146,10 +146,18 @@ motion edges and the caption text, so it is intersected with a spatial high-pass
 
 ### What that says
 
-* **The specks are NEUTRAL WHITE.** R = G = B to within 3 % in *both* the gold
-  and the rose reel. They are **not** tinted with the bar colour. (The tutorial's
-  author does eyedropper a cream `#CDBDA3` into Color, but `#CDBDA3` is itself
-  only ~20 % off white, and the refs measure less than that.)
+* **The specks are NEUTRAL WHITE — in the two reference reels.** R = G = B to
+  within 3 % in *both* the gold and the rose reel. They are **not** tinted with
+  the bar colour there. (The tutorial's author does eyedropper a cream `#CDBDA3`
+  into Color, but `#CDBDA3` is itself only ~20 % off white, and the refs measure
+  less than that.)
+
+  **SUPERSEDED for new work, 2026-07-30.** The owner asked for the snow to carry
+  the bar colour, and `fx.snow.tint_mix` in `templates/bars.yaml` moved `0.10 →
+  1.00` account-wide. The measurement above stands as evidence of what the two
+  reference reels did; it is no longer what the account ships. Reels rendered
+  before that date still have white specks and are not retro-fitted. The
+  golden `at-tawbah-128-128` was re-blessed for the change.
 * **They are near-point sources.** Profile 1.00 / 0.40 / 0.09 falls to a tenth
   by r = 2 px. Read as 1–3 px dots with a faint bloom, never as 10-px blobs.
 * **Big ⇒ bright, not big ⇒ dim.** The +0.8 area/brightness correlation rules

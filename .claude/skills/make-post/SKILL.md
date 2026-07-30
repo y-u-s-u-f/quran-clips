@@ -58,6 +58,15 @@ What each one does:
   `--annotate P` / `--sheet P` to inspect, `--write` to cache. `qc author`
   refuses to reuse a crop solved for the OTHER style — solve it per style.
   Needs `tools/author-venv`.
+  **`! camera is NOT fixed` is not a warning to wave through.** It means the
+  source cuts between angles, and ONE cached crop cannot be right for all of
+  them: the solve lands on the dominant angle, so a clip whose window sits on a
+  minority angle silently violates the face-placement rule (face at 0.725 W /
+  0.275 H, head edge ≥ 0.60 W so the captions clear it). `crop` samples the
+  whole source and has no `--range`, so verify the framing on frames from the
+  CLIP'S OWN window and, when it differs, override `video_bg.crop` per clip in
+  clip.yaml — never re-cache the source, which is shared with every other clip
+  cut from it.
 - **`propose`** ranks clip-worthy windows and asks a model (in English, on ayah
   NUMBERS only) whether each stands alone. `-n N`, `--range MM:SS-MM:SS` or
   `--verses S:A-B` to skip proposing and score a chosen window, `--no-judge`,
@@ -66,13 +75,28 @@ What each one does:
   the head, splits the cards at real waqf gaps, breaks the lines, fills the
   default style's `en:` from the committed Sahih International edition (cut to
   match the cards by the same indices-only judge), and writes `clip.yaml` +
-  `tags.yaml`. A `PROPORTIONAL word split -- CHECK BY HAND` comment on an `en:`
-  means the judge was unavailable and that fragment needs an eye. `-o DIR`, `--like CLIP` (carry reciter/crop/url off
+  `tags.yaml`. When the judge is unavailable the `en:` carries a comment naming
+  what cut it instead: `WORD-ANCHORED word split` used the committed word-by-word
+  glosses, so the seam is aimed at the card's own last word and wants only a
+  glance; `PROPORTIONAL word split -- CHECK BY HAND` is arithmetic and needs an
+  eye.
+  `-o DIR`, `--like CLIP` (carry reciter/crop/url off
   a shipped clip), `-n` to print without writing. It prints warnings on stderr —
   `! restart detected` (ibtidāʾ) and `! Pn->Pn+1 is NOT a true waqf` — pass those
   up to the user; they are judgement calls, not bugs.
+  **Two things `author` gets wrong often enough to check every time:**
+  *Held final words.* The last card's `t1` and `segment.end` come from the ASR
+  word end, which lands where the word is *identified*, not where the reciter
+  stops. On a long melisma that cuts the clip mid-hold. Read the RMS envelope
+  past the nominal end and move `segment.end` into the real trough before the
+  next ayah. The same applies to any card boundary the reciter stretches: the
+  next caption starts crossfading `crossfade_s` BEFORE the boundary, so a `t1`
+  set at the ASR end makes the next card appear while he is still holding.
+  *Line breaks.* The breaker optimises for the width cap, not for balance
+  between the two lines of a card — see "Caption line balance" below.
 - **`check`** is the QA stage. Eleven assertions: schema (unknown key = error),
-  phrase/cut ordering, glyph coverage, Arabic == mushaf text, no card spanning
+  phrase/cut ordering, glyph coverage, Arabic == mushaf text (waqf signs and
+  U+0640 tatweel stripped first — everything else must match exactly), no card spanning
   two ayat, bars caption geometry, no hard-cut changeover, English present/absent
   per style, fx names, and that the clip opens on the first word of the ayah it
   claims. Never render over a failing check.
@@ -96,6 +120,45 @@ Fixing a clip: edit `clips/<name>/clip.yaml` (segment start/end, `segment.cuts`,
 the card split, `bar_color`), re-run `qc check`, re-render. Per-clip problems get
 per-clip fixes; only an account-wide shift touches `templates/*.yaml`, and
 `bar.auto.*` is reference-validated — never hand-tune it.
+
+## Caption line balance (bars)
+
+`qc check` only asserts the width cap and the pill ratio. It will happily pass a
+card whose lines are 169px and 411px, and that reads as broken. The owner's
+standard, in priority order:
+
+1. **The two lines of a card should be close in width.** A shipped example the
+   owner called good: `قُلْ يَتَوَفَّىٰكُم مَّلَكُ` / `ٱلْمَوْتِ ٱلَّذِى وُكِّلَ` at 370 / 380px.
+   Aim inside ~30px; over ~60px is visible.
+2. **Fix it by moving the CARD boundary first, the line break second, kashida
+   last.** Searching the whole ayah's card partitions usually finds a layout that
+   is already balanced and needs almost no stretching — much better than
+   stretching a bad split into shape.
+3. **Kashida (U+0640 `ـ`) is approved as a touch-up**, with hard limits learned
+   the painful way:
+   - **max ~6 per line.** More and it stops reading as calligraphic elongation.
+   - **never between `ل` and an alif form** (`ا أ إ آ ٱ`) — lam-alef is a required
+     ligature and a kashida splits it into two glyphs. This is the failure the
+     owner spotted first.
+   - **never after a letter that does not join leftward** (`ا أ إ آ د ذ ر ز و ؤ ء
+     ة ى ٱ`) — the tatweel is left dangling as a stray dash.
+   - `qc.check.strict_ar` and `qc.quran.normalize()` both strip U+0640 before
+     comparing, so a widened line still matches the mushaf. It is layout, not
+     text — and it is the ONLY thing a model may add to Arabic.
+4. **Single-line cards: avoid, except where the card closes on a waqf or the end
+   of the ayah** — there they are encouraged, and a long held final word is
+   exactly the case for one wide pill. Allowed elsewhere for meaning, just not
+   preferred.
+5. **Consecutive cards should read as connected meaning** — no awkward starts.
+   `بِكُمْ` opening a card is the kind of seam to avoid. Least important of the five.
+
+Measure with the same machinery `render_bars.layout()` uses — `bbox_ls(line,
+truetype(text.font, text.nominal_pt))`, cap `text.max_line_width_frac * 1080`
+= 486px — not by eye and not by counting letters.
+
+A card can only be a single line if its ink is tall enough for the pill: the
+pill-ratio assertion fails a line with no ascender (`تُرْجَعُونَ` alone measures
+1.55 against a 1.8 floor). Group it with a word carrying a `ك`/`ل`/`ا`.
 
 ## Regression harness
 `scripts/golden.py` freezes, for four golden clips (bars, default, 1-cut and
@@ -129,7 +192,11 @@ reports "golden invalid" rather than a fake regression.
   marks, superscript alif) corrupt on retyping, and so does any summarising
   fetch. Arabic comes from `qc.quran` / `qc ayah`, copied byte-for-byte. LLM
   judges return indices and numbers only — the line-breaker answers with a
-  single integer, the coherence judge with ayah numbers.
+  single integer, the coherence judge with ayah numbers. Build caption lines by
+  SLICING the word list from `qc.quran` by index, never by typing the words out.
+  The one and only character a model may insert is U+0640 tatweel, under the
+  rules in "Caption line balance" — it is stripped before every comparison, so
+  it changes layout and nothing else.
 - **A text card must never span two ayat.** `qc author` cuts at every ayah
   boundary unconditionally, before the energy envelope gets a say, and
   `qc check`'s `ayah-span` assertion fails any clip that straddles one. A card
