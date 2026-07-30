@@ -15,24 +15,25 @@ drawn. Nothing is typed by hand into a video editor.
 
 **`default`** — 1920×1080 landscape, Arabic + English
 
-<video src="https://github.com/y-u-s-u-f/quran-clips/raw/main/docs/demo-default-badr-al-turki-ahzab-56.mp4" controls muted playsinline width="100%"></video>
+[<img src="docs/preview-default.gif" width="100%" alt="Badr al-Turki reciting al-Ahzab 33:56, Arabic caption with English line beneath">](https://github.com/y-u-s-u-f/quran-clips/raw/main/docs/demo-default-badr-al-turki-ahzab-56.mp4)
 
-Badr al-Turki, al-Aḥzāb 33:56 · [download](docs/demo-default-badr-al-turki-ahzab-56.mp4) · recipe: [`clips/al-ahzab-56-56/clip.yaml`](clips/al-ahzab-56-56/clip.yaml)
+Badr al-Turki, al-Aḥzāb 33:56 · [full clip, with sound ▶](https://github.com/y-u-s-u-f/quran-clips/raw/main/docs/demo-default-badr-al-turki-ahzab-56.mp4) · recipe: [`clips/al-ahzab-56-56/clip.yaml`](clips/al-ahzab-56-56/clip.yaml)
 
 </td>
 <td width="50%" valign="top">
 
 **`bars`** — 1080×1920 vertical, Arabic-only on coloured pills
 
-<video src="https://github.com/y-u-s-u-f/quran-clips/raw/main/docs/demo-bars-badr-al-turki-tawbah-128.mp4" controls muted playsinline width="100%"></video>
+[<img src="docs/preview-bars.gif" width="56%" alt="Badr al-Turki reciting at-Tawbah 9:128, vertical letterboxed band with gold Thuluth captions">](https://github.com/y-u-s-u-f/quran-clips/raw/main/docs/demo-bars-badr-al-turki-tawbah-128.mp4)
 
-Badr al-Turki, at-Tawbah 9:128 · [download](docs/demo-bars-badr-al-turki-tawbah-128.mp4) · recipe: [`clips/at-tawbah-128-128/clip.yaml`](clips/at-tawbah-128-128/clip.yaml)
+Badr al-Turki, at-Tawbah 9:128 · [full clip, with sound ▶](https://github.com/y-u-s-u-f/quran-clips/raw/main/docs/demo-bars-badr-al-turki-tawbah-128.mp4) · recipe: [`clips/at-tawbah-128-128/clip.yaml`](clips/at-tawbah-128-128/clip.yaml)
 
 </td>
 </tr>
 </table>
 
-Both demos are re-encoded down for the browser; the pipeline's own output is
+The previews are silent GIFs — click either one for the clip with sound. Both
+demos are re-encoded down for the browser; the pipeline's own output is
 full-resolution H.264. The style is fixed per clip by the `style:` key in
 `clip.yaml`, and it keys the cached crop too — pass the same `--style` to every
 command in a run.
