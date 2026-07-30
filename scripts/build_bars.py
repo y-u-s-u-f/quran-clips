@@ -190,8 +190,21 @@ def build(clip_dir, dry_run=False, ctx=None, opts=None):
                       snow_in=snow_in, hexrgb=render_text.hexrgb)
 
     wtgt = str(tr["wipe_target"]).lower()
+    # A STILL must start its footage at PTS 0. `-ss` lands between source
+    # frames, so the first frame `fps` emits is whichever grid slot is nearest
+    # -- index 0 or index 1, on a coin flip of frac(ss * fps). Every generated
+    # plate in this graph (`color=...:d=`, perlin, the wipe mask) starts at 0,
+    # and a one-frame window makes the plates exactly one frame long: at index
+    # 1 the band has NOTHING to pair with, every `shortest=1` framesync drops
+    # the frame, and the graph yields no output at all while the unbounded
+    # sources (snow's `-stream_loop -1`, perlin) are pumped forever -- a
+    # livelock that `-frames:v 1` cannot end, because frame 1 never arrives.
+    # Moving pictures never see it: their plates are `dur` long, so index 1
+    # pairs fine. Gated on `still` so the full render's argv is untouched.
     g_.chain(vin, [render_bars.band_source_chain(clip, style), "setsar=1",
-                   f"fps={fps}", "format=gbrp"], "bnd")
+                   f"fps={fps}"]
+             + (["setpts=PTS-STARTPTS"] if opts.still else [])
+             + ["format=gbrp"], "bnd")
     if scrim_on:
         g_.chain(scrim_in, "format=gbrp", "scr")
         g_.chain(["bnd", "scr"],
