@@ -44,6 +44,7 @@ Assembles and RUNS into <clip>/output/final.mp4:
 Run with tools/render-venv/bin/python.
 """
 import os
+import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -61,6 +62,15 @@ import qc.scale             # noqa: E402
 import qc.timeline          # noqa: E402
 
 FFMPEG = build_render.FFMPEG
+
+# A still is ONE frame of work -- 1.5 s for the full graph at 1080x1920, heat
+# included. Nothing legitimate takes a minute, so the cap costs nothing and it
+# bounds the failure mode the PTS note below describes: when a framesync drops
+# the only frame, `-frames:v 1` never fires and the unbounded sources (snow's
+# `-stream_loop -1`, perlin) are pumped forever. Uncapped that is an ffmpeg at
+# 120% CPU which OUTLIVES the shell that started it -- it reparents to init and
+# has to be found with `ps` and killed by hand. Capped it is a failed render.
+STILL_TIMEOUT_S = 120
 
 
 def _alpha_at(t, t_in, d_in, t_out, d_out):
@@ -340,7 +350,20 @@ def build(clip_dir, dry_run=False, ctx=None, opts=None):
     if dry_run:
         build_render.emit_dry_run(cmd, fc)
         return out_path
-    if build_render.run(cmd).returncode != 0:
+    # the full render is minutes of honest work and is left unbounded; only the
+    # one-frame path, where a hang is unambiguous, carries the cap
+    try:
+        rc = build_render.run(
+            cmd, timeout=STILL_TIMEOUT_S if opts.still else None).returncode
+    except subprocess.TimeoutExpired:
+        # subprocess.run has already killed and reaped it, so nothing is left
+        # running -- but say which frame, because `qc frames --at` renders a
+        # list and the failure is per-frame.
+        sys.exit("ffmpeg still render exceeded %ds and was killed (%s).\n"
+                 "  The graph emitted no frame -- suspect a `shortest=1` "
+                 "framesync dropping the single frame."
+                 % (STILL_TIMEOUT_S, opts.out_name))
+    if rc != 0:
         sys.exit("ffmpeg failed")
 
     print("\nRENDER OK ->", out_path)
