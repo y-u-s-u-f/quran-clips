@@ -127,48 +127,42 @@ def model_for(name=None):
     return MODELS[name]
 
 
-def interpreter():
-    """The interpreter that runs the ASR snippet.
+MODULES = {"mlx": "mlx_whisper", "faster": "faster_whisper"}
 
-    `tools/asr-venv/bin/python` by default, overridable with `$QC_ASR_PYTHON`.
-    A single-venv install can point it at `sys.executable`.
+
+def interpreter(name=None):
+    """The interpreter that will run the ASR snippet.
+
+    `tools/asr-venv/bin/python` when it exists and can import the backend,
+    otherwise whichever available interpreter already can. An environment that is
+    ALREADY set up is never rebuilt: this is why a single-venv machine with
+    faster-whisper installed needs no venv and no configuration.
     """
-    return env.interpreter("asr")
+    return env.require_interpreter("asr", MODULES[name or backend()],
+                                   packages=_PIP[name or backend()])
 
 
 def available(name=None):
     """(ok, detail) -- can this backend actually run right now?"""
     name = name or backend()
-    py = interpreter()
-    if not os.path.exists(py):
-        return False, "no interpreter at %s" % py
-    mod = {"mlx": "mlx_whisper", "faster": "faster_whisper"}[name]
-    p = subprocess.run([py, "-c", "import %s" % mod],
-                       capture_output=True, text=True)
-    if p.returncode != 0:
-        return False, "%s cannot import %s" % (py, mod)
+    try:
+        py = interpreter(name)
+    except SystemExit:
+        return False, "no interpreter can import %s" % MODULES[name]
     return True, "%s via %s" % (name, py)
 
 
 def transcribe(wav, out, name=None, model=None):
     """Run the chosen backend over `wav`, writing the contract dict to `out`.
 
-    Raises SystemExit naming the exact install command on a missing backend --
-    the previous message hardcoded a Homebrew python path that does not exist
-    off macOS.
+    Raises SystemExit naming the exact install command only when no available
+    interpreter can import the backend.
     """
     name = name or backend()
     model = model or model_for(name)
-    py = interpreter()
-    if not os.path.exists(py):
-        raise SystemExit(
-            "no ASR interpreter at %s.\n"
-            "  Create it:  python3 -m venv tools/asr-venv\n"
-            "              tools/asr-venv/bin/pip install %s\n"
-            "  or point $QC_ASR_PYTHON at an interpreter that has %s.\n"
-            "  Never install whisper into the render interpreter: it can "
-            "replace the RAQM Pillow build the renderer needs."
-            % (py, _PIP[name], _PIP[name]))
+    # Raises with the install instructions only when nothing available can import
+    # the backend; an already-working environment is reused as-is.
+    py = interpreter(name)
     p = subprocess.run([py, "-c", _SNIPPETS[name], wav, out, model],
                        stdout=sys.stderr, stderr=sys.stderr)
     if p.returncode != 0:

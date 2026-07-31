@@ -129,24 +129,51 @@ def interpreter(name, hint_cmd=None):
     return sys.executable
 
 
-def require_interpreter(name, packages="", extra=""):
-    """Resolve a venv interpreter or exit with how to create it."""
+def require_interpreter(name, module=None, packages=""):
+    """Resolve a venv interpreter that can import `module`.
+
+    Reuses whatever already works rather than insisting on a layout: the sibling
+    venv if present, otherwise the running interpreter when it can already import
+    what is needed. Only when neither can does it explain how to build one -- so a
+    machine whose single environment already has the dependency never gets told to
+    create a venv it does not need.
+    """
     py = interpreter(name)
-    if os.path.exists(py):
+    if module and _can_import(py, module):
         return py
-    # Falling back to the current interpreter is right for a single-venv
-    # install: if the caller's own python already imports what is needed, the
-    # separate venv is ceremony. The caller checks importability itself.
+    if module and py != sys.executable and _can_import(sys.executable, module):
+        return sys.executable
+    if not module and os.path.exists(py):
+        return py
     raise SystemExit(
-        "no %s interpreter at %s.\n"
-        "  Create it:  python3 -m venv tools/%s-venv%s\n"
-        "%s"
-        "  or point $QC_%s_PYTHON at an interpreter that has %s."
-        % (name, py, name,
+        "no interpreter for the %s stage can import %s.\n"
+        "  Tried: %s%s\n"
+        "  Either install it where one of those can see it, or create the venv:\n"
+        "    python3 -m venv%s tools/%s-venv\n"
+        "    tools/%s-venv/bin/pip install %s\n"
+        "  then re-run. $QC_%s_PYTHON overrides the path."
+        % (name, module or "the dependencies", py,
+           "" if py == sys.executable else " and %s" % sys.executable,
            " --system-site-packages" if name == "render" else "",
-           ("              tools/%s-venv/bin/pip install %s\n" % (name, packages))
-           if packages else "",
-           name.upper(), packages or "the dependencies"))
+           name, name, packages or module, name.upper()))
+
+
+def _can_import(py, module):
+    """Does `py` already import `module`? Cached -- each probe is a subprocess."""
+    key = (py, module)
+    if key not in _import_cache:
+        if not os.path.exists(py):
+            _import_cache[key] = False
+        else:
+            import subprocess
+            _import_cache[key] = subprocess.run(
+                [py, "-c", "import %s" % module],
+                capture_output=True).returncode == 0
+    return _import_cache[key]
+
+
+_import_cache = {}
+
 
 
 def describe():

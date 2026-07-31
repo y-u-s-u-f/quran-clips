@@ -109,8 +109,12 @@ brew install ffmpeg yt-dlp python@3.14
 # Debian/Ubuntu
 sudo apt install ffmpeg yt-dlp python3-venv
 
-# rendering + everything under scripts/ (Pillow must have RAQM for Arabic
-# shaping — it comes from the Homebrew python via --system-site-packages)
+# The venvs below are only needed when your CURRENT interpreter cannot already
+# import what a stage wants. Run `./bin/qc doctor` first -- it reports what each
+# stage resolves to, and an environment that already works is never rebuilt.
+#
+# Pillow must have RAQM for Arabic shaping, which is why render uses
+# --system-site-packages over a python whose Pillow already has it.
 python3.14 -m venv --system-site-packages tools/render-venv
 tools/render-venv/bin/pip install -r requirements/render.txt
 
@@ -120,8 +124,8 @@ tools/author-venv/bin/pip install -r requirements/author.txt
 mkdir -p tools/models && curl -sSL -o tools/models/face_detection_yunet_2023mar.onnx \
   https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
 
-# word-level ASR, kept in its own venv so nothing resolves against the renderer.
-# mlx-whisper on Apple silicon; faster-whisper (CPU or CUDA) anywhere else.
+# word-level ASR, kept out of the render interpreter so whisper can never
+# replace its RAQM Pillow. mlx-whisper on Apple silicon; faster-whisper elsewhere.
 python3.14 -m venv tools/asr-venv
 tools/asr-venv/bin/pip install mlx-whisper        # Apple silicon
 # tools/asr-venv/bin/pip install faster-whisper   # Linux / Intel
