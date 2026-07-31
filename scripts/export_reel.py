@@ -28,7 +28,10 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import render_text  # noqa: E402
 import status  # noqa: E402  (shared SURAH/naming/xattr helpers)
 
-FFMPEG = "/opt/homebrew/bin/ffmpeg"
+sys.path.insert(0, ROOT)
+from qc import env as _env  # noqa: E402
+
+FFMPEG = _env.require("ffmpeg", "remux the exported reel")
 
 ALIAS_SCRIPT = """
 on run argv
@@ -65,7 +68,7 @@ def is_preview(path):
     someone renaming the file, which is the only way a preview can reach here
     at all."""
     p = subprocess.run(
-        ["/opt/homebrew/bin/ffprobe", "-v", "error", "-show_entries",
+        [_env.require("ffprobe"), "-v", "error", "-show_entries",
          "format_tags=comment", "-of", "default=nw=1:nk=1", path],
         capture_output=True, text=True)
     return p.stdout.strip().startswith("qc-preview")

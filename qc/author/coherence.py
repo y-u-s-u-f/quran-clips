@@ -31,6 +31,7 @@ fail because the judge was unavailable, and the report says which path was used.
 """
 import json
 import os
+from .. import env as _env
 import re
 import subprocess
 
@@ -39,7 +40,10 @@ from . import fetch
 
 ROOT = fetch.ROOT
 
-CLAUDE = os.environ.get("QC_CLAUDE_BIN", "/opt/homebrew/bin/claude")
+# `QC_CLAUDE_BIN` still wins; otherwise resolve on PATH rather than
+# assuming a Homebrew prefix. None => the judge degrades to its
+# documented fallback, which is already handled below.
+CLAUDE = os.environ.get("QC_CLAUDE_BIN") or _env.find("claude") or "claude"
 MODEL = "claude-opus-5"
 EFFORT = "low"
 TIMEOUT = 30.0
