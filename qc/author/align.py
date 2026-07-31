@@ -40,10 +40,13 @@ import sys
 
 from .. import quran as Q
 from ..proc import FFMPEG
+from . import asr as _asr
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ASR_PY = os.path.join(ROOT, "tools", "asr-venv", "bin", "python")
-ASR_MODEL = "mlx-community/whisper-large-v3-turbo"
+# Kept as names because callers and tests referenced them; both now derive from
+# the resolved backend instead of hardcoding an mlx model and a venv path.
+ASR_PY = _asr.interpreter()
+ASR_MODEL = None                 # None => qc.author.asr picks per backend
 
 PAD = 2.0            # seconds of context either side of the requested window
 
@@ -136,50 +139,30 @@ def extract_wav(src, start, end, out, pad=PAD, rate=16000):
     return out, t0
 
 
-# Run inside tools/asr-venv, which is a SEPARATE interpreter from the render
-# venv (mlx-whisper must never be installed into the render/system python --
-# see the RAQM incident in SKILL.md). So: shell out, don't import.
-_ASR_SNIPPET = r"""
-import json, sys
-import mlx_whisper
-wav, out, model = sys.argv[1], sys.argv[2], sys.argv[3]
-r = mlx_whisper.transcribe(
-    wav, path_or_hf_repo=model, language="ar", word_timestamps=True,
-    condition_on_previous_text=False, temperature=0.0, verbose=None)
-words = []
-for seg in r.get("segments", []):
-    for w in seg.get("words", []):
-        words.append({"w": w["word"].strip(),
-                      "t0": float(w["start"]), "t1": float(w["end"]),
-                      "p": float(w.get("probability", 0.0))})
-json.dump({"words": words,
-           "segments": [{"t0": s["start"], "t1": s["end"], "text": s["text"]}
-                        for s in r.get("segments", [])]},
-          open(out, "w"), ensure_ascii=False, indent=1)
-"""
-
-
-def asr(wav, cache=None, model=ASR_MODEL):
-    """mlx-whisper with word timestamps over the window WAV. -> [word dicts].
+def asr(wav, cache=None, model=None):
+    """Word timestamps over the window WAV. -> the `qc.author.asr` contract.
 
     Cached to `cache` (json), because the DP and the energy pass get re-run
     far more often than the audio changes.
+
+    The engine is chosen by `qc.author.asr` (mlx-whisper on Apple silicon,
+    faster-whisper elsewhere) rather than hardcoded here, so the authoring half
+    of the pipeline runs off macOS. A cache written by a different backend is
+    still honoured -- re-transcribing would be worse -- but it is reported,
+    because the two runtimes do not emit identical word boundaries and a silent
+    swap would move cut points under a clip that was already reviewed.
     """
     if cache and os.path.exists(cache):
-        return json.load(open(cache, encoding="utf-8"))
-    if not os.path.exists(ASR_PY):
-        raise SystemExit(
-            "%s missing. Recreate it:\n"
-            "  /opt/homebrew/bin/python3 -m venv tools/asr-venv && "
-            "tools/asr-venv/bin/pip install mlx-whisper\n"
-            "NEVER pip-install whisper into /opt/homebrew/bin/python3."
-            % os.path.relpath(ASR_PY, ROOT))
+        d = json.load(open(cache, encoding="utf-8"))
+        was = d.get("backend")
+        if was and was != _asr.backend():
+            print("  note: %s was transcribed by the %r backend, now running "
+                  "%r -- reusing the cache (delete it to re-transcribe)"
+                  % (os.path.relpath(cache), was, _asr.backend()),
+                  file=sys.stderr)
+        return d
     out = cache or (os.path.splitext(wav)[0] + ".asr.json")
-    p = subprocess.run([ASR_PY, "-c", _ASR_SNIPPET, wav, out, model],
-                       stdout=sys.stderr, stderr=sys.stderr)
-    if p.returncode != 0:
-        raise SystemExit("mlx-whisper failed on %s" % wav)
-    return json.load(open(out, encoding="utf-8"))
+    return _asr.transcribe(wav, out, model=model)
 
 
 def asr_chunked(wav, points, workdir, model=ASR_MODEL):
