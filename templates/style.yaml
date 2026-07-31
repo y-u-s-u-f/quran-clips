@@ -14,9 +14,13 @@ meta:
   word_level_karaoke: false               # per-phrase swap is sufficient
   timing_granularity: per_phrase          # phrase = one meaningful segment
 
+# The `default` style renders NATIVE LANDSCAPE. This block used to say
+# 1080x1920 while scripts/render_text.py hardcoded the transpose, so the
+# template and the renderer disagreed and qc/check.py trusted the template.
+# Both now read this, so it is the single source of truth for the frame.
 canvas:
-  width: 1080
-  height: 1920
+  width: 1920
+  height: 1080
 
 # ---- Vertical reframing (only needed for a 1080x1920 reel) ----
 reframe:

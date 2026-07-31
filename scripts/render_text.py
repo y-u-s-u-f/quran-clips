@@ -21,7 +21,7 @@ fractions_of_frame.  Requires Pillow with RAQM (HarfBuzz+FriBiDi).
 Run with tools/render-venv/bin/python (a --system-site-packages venv over
 /opt/homebrew/bin/python3, so its Pillow still has RAQM, plus PyYAML).
 """
-import os, sys, math, re, itertools
+import copy, os, sys, math, re, itertools
 
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -61,9 +61,35 @@ from qc.fonts import RAQM, fit_pt, truetype  # noqa: E402,F401
 # value (segment.start / segment.end) must stay quoted.
 def load_yaml(path):
     """Parse a YAML file into plain Python data. Returns None for an empty
-    file, matching the previous parser."""
+    file, matching the previous parser.
+
+    Cached on (path, mtime, size). YAML parsing dominated `qc check`: profiling
+    three runs over one clip showed 0.125s of 0.252s inside yaml.safe_load,
+    because the STYLE TEMPLATE is re-parsed for every clip and again for every
+    validator that needs it, while `qc check all` re-reads the same two templates
+    once per clip.
+
+    Keying on mtime+size rather than path alone keeps an edit-then-recheck loop
+    correct: touching a template invalidates the entry. A deep copy is returned so
+    a caller that mutates its result cannot corrupt the cache, which is the one
+    way a cache like this turns into an action-at-a-distance bug.
+    """
+    try:
+        st = os.stat(path)
+        key = (os.path.abspath(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is not None and key in _YAML_CACHE:
+        return copy.deepcopy(_YAML_CACHE[key])
     with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+    if key is not None:
+        _YAML_CACHE[key] = data
+        return copy.deepcopy(data)
+    return data
+
+
+_YAML_CACHE = {}
 
 
 # ----------------------------------------------------------------------------
@@ -88,12 +114,58 @@ def template_path(clip):
 
 
 # ----------------------------------------------------------------------------
-# geometry / style params (1920x1080 native landscape; frame fractions)
+# geometry / style params (frame fractions)
+#
+# The canvas comes from the template rather than being fixed here. The `default`
+# style is native landscape 1920x1080, but templates/style.yaml declared
+# 1080x1920 in its `canvas:` block while this module hardcoded the transpose --
+# two sources of truth for one number, and qc/check.py trusted the template.
+# Reading it makes the template authoritative for both, so a style can declare
+# either orientation and the renderer and the checker agree.
 # ----------------------------------------------------------------------------
-W, H = 1920, 1080
+DEFAULT_CANVAS = (1920, 1080)          # the shipped `default` style
 
-AR_FONT_PATH = os.path.join(ROOT, "assets/fonts/uthmanic_hafs_v22.ttf")
-EN_FONT_PATH = os.path.join(ROOT, "assets/fonts/Albertus MT Lt Regular.ttf")
+
+def canvas_of(style, fallback=DEFAULT_CANVAS):
+    """(width, height) for a loaded style template."""
+    c = (style or {}).get("canvas") or {}
+    try:
+        w, h = int(c["width"]), int(c["height"])
+    except (KeyError, TypeError, ValueError):
+        return fallback
+    return (w, h) if w > 0 and h > 0 else fallback
+
+
+W, H = DEFAULT_CANVAS
+
+AR_FONT_DEFAULT = os.path.join(ROOT, "assets/fonts/uthmanic_hafs_v22.ttf")
+EN_FONT_DEFAULT = os.path.join(ROOT, "assets/fonts/Albertus MT Lt Regular.ttf")
+AR_FONT_PATH = AR_FONT_DEFAULT
+EN_FONT_PATH = EN_FONT_DEFAULT
+
+
+def font_paths(style=None):
+    """(arabic, english) font paths, from the template when it names them.
+
+    `templates/style.yaml` already declares `arabic.font` and `english.font`, but
+    the paths were hardcoded here, so editing the template silently changed
+    nothing. A family NAME (not a path) keeps the built-in default, since these
+    are loaded by path for shaping.
+    """
+    ar, en = AR_FONT_DEFAULT, EN_FONT_DEFAULT
+    for key, cur in (("arabic", "ar"), ("english", "en")):
+        named = ((style or {}).get(key) or {}).get("font")
+        if not named or not str(named).lower().endswith((".ttf", ".otf")):
+            continue
+        cand = named if os.path.isabs(named) else os.path.join(ROOT, named)
+        if os.path.exists(cand):
+            if cur == "ar":
+                ar = cand
+            else:
+                en = cand
+    return ar, en
+
+
 
 def hexrgb(s, default=(247, 245, 239)):
     if not s or not str(s).startswith("#"):

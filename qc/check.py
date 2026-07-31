@@ -1081,14 +1081,16 @@ def check_output(clip_dir):
     clip = render_text.load_yaml(os.path.join(clip_dir, "clip.yaml"))
     style = render_text.load_yaml(render_text.template_path(clip))
     bars = render_text.style_of(clip) == "bars"
+    # Canvas comes from the template for BOTH styles. It used to be read from the
+    # template for bars and hardcoded 1920x1080 for default, so the two disagreed
+    # with the renderer whenever a template was edited.
+    W, H = render_text.canvas_of(style)
     if bars:
-        W = int(style["canvas"]["width"])
-        H = int(style["canvas"]["height"])
         fps = int(style["meta"]["fps"])
         lufs = float(style["audio"]["lufs"])
     else:
         from qc.audio import LUFS
-        W, H, fps, lufs = 1920, 1080, 30, LUFS
+        fps, lufs = int((style.get("meta") or {}).get("fps") or 30), LUFS
 
     seg = clip["segment"]
     dur = round(_hms(seg["end"]) - _hms(seg["start"]), 3)
