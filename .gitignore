@@ -50,6 +50,14 @@ style/**/*.png
 # --- Generated reports ------------------------------------------------------
 pipeline-review.html
 
+# --- Machine-level config: paths, models, PROXY CREDENTIALS ----------------
+# .env carries proxy passwords, so it must never be committed; .env.example and
+# qc.toml.example document every key and DO ship.
+.env
+qc.toml
+!.env.example
+!qc.toml.example
+
 # --- Python / OS cruft ------------------------------------------------------
 __pycache__/
 *.pyc
