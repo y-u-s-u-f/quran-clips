@@ -134,11 +134,20 @@ class _Relay(threading.Thread):
                         pass
 
     def shutdown(self):
+        """Close the listener and wait for the accept loop to notice.
+
+        Joining matters: without it a caller can return while the thread is still
+        inside `accept()`, so the socket's closure is not yet observable and any
+        assertion (or a subsequent bind) races the thread. The loop wakes as soon
+        as `close()` makes `accept()` raise.
+        """
         self._stop = True
         try:
             self.sock.close()
         except OSError:
             pass
+        if self.is_alive():
+            self.join(timeout=5)
 
 
 @contextlib.contextmanager

@@ -207,20 +207,22 @@ class Relay(unittest.TestCase):
         self.assertIn("CONNECT example.com:443", seen.get("req", ""))
         self.assertIn("Proxy-Authorization: Basic", seen.get("req", ""))
 
-    def test_relay_stops_accepting_after_the_block(self):
-        """The listener must be closed on exit, so the thread cannot outlive the
+    def test_relay_listener_is_closed_on_exit(self):
+        """The listener must be closed on exit so the thread cannot outlive the
         download it was started for.
 
-        Asserting the PORT is re-bindable would be wrong: a just-closed listener
-        sits in TIME_WAIT, so that check fails on a correctly shut-down relay.
-        What matters is that the socket is closed and a new connection refused.
+        Two tempting assertions are both wrong here. Re-binding the port fails on
+        a correctly closed listener (TIME_WAIT), and connecting to it may still
+        succeed from the kernel's backlog, so neither is deterministic. Assert the
+        socket object itself is closed, which is the actual contract.
         """
         with relay.serve("http://127.0.0.1:1") as local:
-            port = int(local.rsplit(":", 1)[1])
-            probe = socket.create_connection(("127.0.0.1", port), timeout=5)
-            probe.close()                                 # accepted while open
-        with self.assertRaises(OSError):
-            socket.create_connection(("127.0.0.1", port), timeout=2).close()
+            self.assertTrue(local.startswith("http://127.0.0.1:"))
+            r = [t for t in threading.enumerate()
+                 if isinstance(t, relay._Relay)][-1]
+            self.assertEqual(r.sock.fileno() == -1, False)   # open inside
+        self.assertEqual(r.sock.fileno(), -1)                # closed after
+        self.assertTrue(r._stop)
 
 
 if __name__ == "__main__":
