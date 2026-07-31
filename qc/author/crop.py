@@ -28,18 +28,21 @@ Three measurements, all taken over ~40 frames sampled across the whole video:
             that touches one -- the automated version of the manual "view
             keyframes, find an overlay-free window" loop.
 
-The composition rules are the owner's, not invented here:
+The composition rules are the owner's, not invented here. ONE rule serves both
+styles -- see `targets()` for why the two old per-style rules were already the
+same rule written twice:
 
-  horizontal  (SKILL.md:168-176) equal outer margins: with the reciter's output
-              width `w_r`, `A = (0.49 - w_r)/3` and
-              `caption_center = (A + w_r + 1)/2`. Caption goes on the side the
-              reciter FACES (SKILL.md:156-157), which we read off YuNet's nose
-              vs eye-centre landmarks. For `--style bars` the caption anchor is
-              instead FIXED at 0.30 W and the only constraint is that the
-              reciter stays clear of 0.60 W (SKILL.md:194-198).
-  vertical    owner's rule: "the middle of the face should be in half between
-              centered and the top" -> face centre at ~0.275 of output height.
-              Explicitly rough, so it is a soft cost with a 0.22-0.33 warning
+  horizontal  equal gaps. The frame holds two blocks, the reciter and the
+              caption column; every gap between them and the frame edges is the
+              same width. Three gaps when he fits with air on his outer side,
+              two when a wide shot makes him bleed off it. The caption then
+              lands centred in the gap on its own side, which is what BOTH old
+              formulas computed. Caption goes on the side the reciter FACES,
+              which we read off YuNet's nose vs eye-centre landmarks.
+  vertical    face centre at 0.50 of output height -- CENTRED. (It used to be
+              0.275, "half between centered and the top"; the owner replaced
+              that with plain centring on 2026-07-30 and asked for no more
+              three-quarter placements.) Soft cost with a 0.44-0.56 warning
               band, never a hard failure.
 
 Requires opencv (tools/author-venv) -- see requirements/author.txt. If the
@@ -56,13 +59,13 @@ META = os.path.join(SOURCES, "meta")
 YUNET = os.path.join(ROOT, "tools", "models", "face_detection_yunet_2023mar.onnx")
 
 # --- the owner's numbers ---------------------------------------------------
-FACE_Y_FRAC = 0.275          # "half between centered and the top"
-FACE_Y_WARN = (0.22, 0.33)   # outside this we warn, we do not fail
-CAPTION_HALF_W = 0.252       # widest caption half-width, default style
-BARS_CENTER_X = 0.30         # bars caption anchor is fixed
-BARS_CLEAR_X = 0.60          # ...so the reciter must stay clear of 0.60 W
+FACE_Y_FRAC = 0.50           # face centre sits on the vertical centreline
+FACE_Y_WARN = (0.44, 0.56)   # outside this we warn, we do not fail
+CAPTION_W = {"bars": 0.45,   # = templates/bars.yaml text.max_line_width_frac
+             "default": 0.504}   # = 2 x the old CAPTION_HALF_W 0.252
+MIN_GAP = 0.02               # a gap thinner than this is not a gap
 BODY_FROM_FACE = 2.6         # fallback seated-shoulder width / face width
-HEAD_FROM_FACE = 2.0         # head incl. keffiyeh / face width (bars clearance)
+HEAD_FROM_FACE = 2.0         # head incl. keffiyeh / face width
 
 # --- overlay detection tuning ----------------------------------------------
 # STATIC_STD is deliberately TIGHT. A burned-in graphic is the same pixels every
@@ -322,20 +325,44 @@ def targets(style, side, w_r, head_hw):
     """Where the face centre must land horizontally, and where the caption goes.
 
     Both are fractions of the OUTPUT frame. `side` is the caption side.
+
+    ONE rule for both styles, because the two rules this replaces were already
+    the same rule with different arithmetic:
+
+      default was `A = (0.49 - w_r)/3`, `caption = (A + w_r + 1)/2`. The 0.49 is
+        `1 - 0.504` with 0.504 the caption column's width, so A is "split what
+        the reciter and the caption leave over into three equal gaps", and the
+        caption centre is the midpoint of the gap on its own side.
+      bars was "anchor 0.30 W, reciter clears 0.60 W". Those are not free
+        numbers either: the bars caption column is 0.45 W, and
+        `(0.60 - 0.45)/2 + 0.45/2 = 0.30` exactly -- equal 0.075 gaps either
+        side of the caption, with the reciter running off his own outer edge as
+        a wide shot always makes him.
+
+    So: same equal-gap rule, three gaps when he fits with air on his outer side,
+    two when he bleeds off it. Written once, it stops the two from drifting and
+    it takes each style's real caption width instead of a hard-coded anchor.
+
+    `w_r` is his measured silhouette; `head_hw` half his head width. The BLOCK
+    that has to clear the caption is whichever is wider -- the bars rule used
+    the head because a keffiyeh out-spans the shoulders of a seated reciter,
+    the default rule used the body. Taking the max keeps both safe.
     """
-    if style == "bars":
-        # Caption anchor is fixed; the only rule is clearance. Put the
-        # reciter's head edge exactly on the clearance line, which is also what
-        # maximises the space left on his own side.
-        if side == "left":
-            return BARS_CLEAR_X + head_hw, BARS_CENTER_X
-        return (1 - BARS_CLEAR_X) - head_hw, 1 - BARS_CENTER_X
-    A = (0.49 - w_r) / 3.0
-    if A <= 0.01:
-        A = 0.01
-    if side == "right":                       # reciter LEFT
-        return A + w_r / 2.0, (A + w_r + 1) / 2.0
-    return 1.0 - (A + w_r / 2.0), 1.0 - (A + w_r + 1) / 2.0
+    cap_w = CAPTION_W.get(style, CAPTION_W["default"])
+    block = max(w_r, 2.0 * head_hw)
+    gaps = (1.0 - block - cap_w)
+    outer = gaps / 3.0
+    if outer < MIN_GAP:
+        # No room for air on his outer side: let him run off that edge and
+        # split what is left into the two gaps that bracket the caption.
+        outer, inner = 0.0, max(gaps / 2.0, MIN_GAP)
+    else:
+        inner = outer
+    fx = outer + block / 2.0                  # face centre = block centre
+    cap = outer + block + inner + cap_w / 2.0
+    if side == "left":                        # caption LEFT -> reciter RIGHT
+        return 1.0 - fx, 1.0 - cap
+    return fx, cap
 
 
 def solve(W, H, face, sil, boxes, style="bars", side="left",
@@ -403,7 +430,7 @@ def annotate(frame, sol, face, sil, boxes, out_path, style="bars"):
     if sol:
         x, y, w, h = sol["x"], sol["y"], sol["w"], sol["h"]
         cv2.rectangle(im, (x, y), (x + w, y + h), (0, 255, 0), 3)   # green: crop
-        hw = 0.25 if style == "bars" else CAPTION_HALF_W            # blue: caption
+        hw = CAPTION_W.get(style, CAPTION_W["default"]) / 2.0       # blue: caption
         cx = sol["caption_cx"]
         cv2.rectangle(im, (int(x + (cx - hw) * w), int(y + 0.30 * h)),
                       (int(x + (cx + hw) * w), int(y + 0.70 * h)), (255, 128, 0), 2)
@@ -703,11 +730,18 @@ def run(vid, style="bars", frames=40, side=None, face_xy=None, extra_boxes=None,
               % (sol["fy"], FACE_Y_WARN[0], FACE_Y_WARN[1]), file=sys.stderr)
     print("reciter : w_r %.3f of output; head spans %.3f..%.3f W"
           % (sol["w_r"], sol["head_left"], sol["head_right"]))
-    print("text    : center_x_frac %.3f  (%s style)" % (sol["caption_cx"], style))
-    if style == "bars":
-        clear = sol["head_left"] if side == "left" else 1 - sol["head_right"]
-        print("          bars clearance: head edge at %.3f W vs required %.2f"
-              % (clear if side == "left" else 1 - clear, BARS_CLEAR_X))
+    print("text    : center_x_frac %.3f  (%s style, caption column %.3f W)"
+          % (sol["caption_cx"], style, CAPTION_W.get(style, CAPTION_W["default"])))
+    cap_w = CAPTION_W.get(style, CAPTION_W["default"])
+    edge = sol["head_left"] if side == "left" else sol["head_right"]
+    gap = edge if side == "left" else 1.0 - edge
+    print("          clearance: caption column needs %.3f W, the gap on that side "
+          "is %.3f W" % (cap_w, gap))
+    if gap < cap_w + 2 * MIN_GAP:
+        print("! the caption column does not fit beside him with a %.2f margin "
+              "(gap %.3f W vs %.3f W needed) -- the pills will crowd his head; "
+              "re-run with a smaller window or the other --side."
+              % (MIN_GAP, gap, cap_w + 2 * MIN_GAP), file=sys.stderr)
 
     if annotate_path:
         mid = fr[len(fr) // 2]

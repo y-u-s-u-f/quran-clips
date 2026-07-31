@@ -58,11 +58,23 @@ What each one does:
   `--annotate P` / `--sheet P` to inspect, `--write` to cache. `qc author`
   refuses to reuse a crop solved for the OTHER style — solve it per style.
   Needs `tools/author-venv`.
+  **Placement is ONE rule for both styles** (`qc.author.crop.targets`, rewritten
+  2026-07-30 — the two old per-style rules were the same rule twice):
+  - *Vertical:* **the face centre sits on the vertical centreline, 0.50 H.**
+    Not 0.275, not any three-quarter placement — the owner asked for plain
+    centring and for it to stay that way. Soft cost, 0.44–0.56 warning band.
+  - *Horizontal:* **equal gaps.** The frame holds two blocks, the reciter and
+    the caption column; every gap between them and the frame edges is the same
+    width — three gaps when he fits with air on his outer side, two when a wide
+    shot makes him bleed off it. The caption lands centred in the gap on its own
+    side. The caption column's width is the style's own: 0.45 W for bars
+    (`text.max_line_width_frac`), 0.504 W for default. Caption goes on the side
+    he FACES. `bars`'s old fixed "anchor 0.30 / clear 0.60" is this rule's
+    answer for one particular reciter width — it now adapts instead.
   **`! camera is NOT fixed` is not a warning to wave through.** It means the
   source cuts between angles, and ONE cached crop cannot be right for all of
   them: the solve lands on the dominant angle, so a clip whose window sits on a
-  minority angle silently violates the face-placement rule (face at 0.725 W /
-  0.275 H, head edge ≥ 0.60 W so the captions clear it). `crop` samples the
+  minority angle silently violates the placement rule above. `crop` samples the
   whole source and has no `--range`, so verify the framing on frames from the
   CLIP'S OWN window and, when it differs, override `video_bg.crop` per clip in
   clip.yaml — never re-cache the source, which is shared with every other clip
