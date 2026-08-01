@@ -1,0 +1,73 @@
+# al-Hadid 57:16 -- Abdullah al-Qarafi, tahajjud of laylat 27 Ramadan 1446,
+# al-Masjid al-Haram. "Has the time not come..."; abs ~13:35-14:05 of a
+# 33-minute source that runs surahs 56, 57, 58 and 59:1-10 end to end.
+style: bars
+signature: null                 # no watermark
+
+surah: 57
+ayah_start: 16
+ayah_end: 16
+
+# Hand-set off the envelope -- see waqiah-83-87-bars for why align.py cannot
+# derive a trim on a 33-minute continuous source. Onset: a 0.75s waqf at
+# 815.50-816.25 (floor -33dB) separates "al-masir" (end of 57:15) from
+# "a-lam" at 816.33. The cut sits 0.13s before it, still inside the waqf: a
+# reel opens ON the recitation, and dead air at the head is where people
+# scroll. Whisper puts the onset at 815.34, a full second early and inside
+# the previous word -- trusting it would have opened the reel on "al-masir".
+# Tail: "fasiqun" decays into a 0.45s dip at 843.50-843.95 before 57:17, so
+# the cut sits in it.
+trim: [816.20, 843.75]
+
+# HAND-SET -- the shot is locked off and identical to waqiah-83-87-bars', so
+# the same window applies; see that config for why crop.py cannot solve this
+# source (no face in frame, so it boxes his shoulder and crops his crown off).
+# The 9 measured frames behind it include this reel's window: crown 55-59px
+# across 816-841s.
+crop: {x: 0, y: 0, w: 1328, h: 747}
+x_offset: -226
+
+# One long ayah, cut at its clause joints. TWO LINES IS THE DEFAULT for a
+# card here; a single-line card is only kept where it closes on a waqf or on
+# the ayah, and cards 1/3/6 needed `line_split` because they fit under the
+# 486px cap and would otherwise have rendered as one wide pill mid-clause
+# (483, 410 and 458px respectively). `line_split` can only ever ADD a break --
+# a line that rasters past the cap is silently re-wrapped -- so it is the
+# right lever in that direction and no boundary had to move for it.
+#
+# The two single-line cards that remain are both earned. Card 7 (fa-qasat
+# qulubuhum, 370px) closes on the ayah's interior waqf, the U+06D6 sala mark
+# the mushaf carries after qulubuhum. Card 8 (wa-kathirun minhum fasiqun,
+# 478px) closes the ayah on a held final word, which is exactly the case for
+# one wide pill. Both DO split cleanly if ever wanted (211/203 and 285/237) --
+# they are single by choice, not for want of a break.
+#
+# IBTIDA' RESTART at "wa-la yakunu": he says the phrase, breaks off in a 0.5s
+# waqf (827.50-828.00 abs) and says it again before completing it. The
+# restarted phrase gets its OWN card rather than being folded into a card
+# that also carries the completion -- one caption should not sit across a
+# break the reciter himself made. This needs no schema escape: the phrase's
+# words are simply their own group, so `groups` still partitions the span
+# exactly once, and that card holds through both utterances because both are
+# saying the same words.
+#
+# Cutting it out also lets the completion read whole: "ka-lladhina utu
+# l-kitaba min qablu" is one clause and now sits on one card, where the
+# earlier 5/5 cut had split "min qablu" off from it.
+groups:
+  - n_words: 4        # a-lam ya'ni li-lladhina amanu
+    line_split: 2     # 212/315; 3/1 is 354/173, and the boundary cannot move
+                      # -- card 2 would then open on "takhsha'a" with "an"
+                      # left dangling at the end of card 1.
+  - n_words: 5        # an takhsha'a qulubuhum li-dhikri llah   273/399 auto
+  - n_words: 4        # wa-ma nazala mina l-haqq
+    line_split: 2     # 225/232; 3/1 is 312/165
+  - n_words: 2        # wa-la yakunu               <- said twice; its own card
+  - n_words: 5        # ka-lladhina utu l-kitaba min qablu      325/452 auto
+  - n_words: 3        # fa-tala 'alayhimu l-amad
+    line_split: 1     # 186/316; 2/1 is 328/174, i.e. worse both ways round.
+                      # No three-word card of these words balances -- taking
+                      # a word off card 5 would break "min qablu" out of its
+                      # clause again, which is the cut the restart card fixed.
+  - n_words: 2        # fa-qasat qulubuhum         <- single line: waqf (U+06D6)
+  - n_words: 3        # wa-kathirun minhum fasiqun <- single line: ayah end

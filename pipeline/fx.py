@@ -190,6 +190,25 @@ class Effect(object):
         return band
 
 
+# A gaussian is a low-pass: everything a wide blur keeps survives a halving
+# of the sampling grid, so blurring at half linear size and scaling back costs
+# a quarter of the pixels for a difference below the 8-bit quantiser. The same
+# trade is already made in render_hz, whose two grade gradients are built at
+# 48x27 and bilinearly upscaled -- "that low resolution IS the softness of the
+# look". Only applied from HALF_RES_SIGMA up: at small sigma the blur's own
+# radius approaches the sampling grid and the halving starts to show.
+HALF_RES_SIGMA = 20.0
+
+
+def blur(sigma, steps=3):
+    """gblur at `sigma`, evaluated at half linear size when that is safe."""
+    if sigma < HALF_RES_SIGMA:
+        return [f"gblur=sigma={sigma}:steps={steps}"]
+    return [f"scale=iw/2:ih/2:flags=bilinear",
+            f"gblur=sigma={round(sigma / 2.0, 2)}:steps={steps}",
+            f"scale=iw*2:ih*2:flags=bilinear"]
+
+
 class Glow(Effect):
     """The WIDE scene bloom, keyed off the composited band."""
     name = "glow"
@@ -204,8 +223,8 @@ class Glow(Effect):
                 f"g='clip((val-{lo})*{knee},0,255)':"
                 f"b='clip((val-{lo})*{knee},0,255)'")
         g1 = g.tap(ctx.band_src, "g1")
-        g.chain(g1, [LUMA, KNEE, f"gblur=sigma={sig}:steps=3",
-                     f"colorchannelmixer=rr={gr}:gg={gg}:bb={gb}"], "glow")
+        g.chain(g1, [LUMA, KNEE] + blur(sig) +
+                [f"colorchannelmixer=rr={gr}:gg={gg}:bb={gb}"], "glow")
         return g.chain([band, "glow"], "blend=all_mode=screen:shortest=1", "s1")
 
 
@@ -243,16 +262,27 @@ class BarGlow(Effect):
                for v in ctx.tint]
         bgf = [round(v * float(c["gain"]) * float(c["weight_far"]), 4)
                for v in ctx.tint]
-        g.chain(f"bq{ctx.nphrases}", ["format=gbrp", "split=2"],
+        # Blur a BAND-SIZED slice, not the whole 1920-tall canvas whose bottom
+        # 656 rows are then thrown away by the crop. The plate is black
+        # everywhere the pills are not, and the pills live inside the band, so
+        # a slice carrying 3 sigma of the FAR gaussian either side already
+        # holds every pixel that can reach the band: beyond that the source is
+        # black, and gblur's edge replication of black is what more black
+        # would have contributed anyway.
+        mrg = 2 * int(math.ceil(1.5 * bgsf))          # ~3 sigma, kept even
+        y0 = max(0, ctx.BY - mrg)
+        hh = min(ctx.H - y0, ctx.BH + 2 * mrg)
+        g.chain(f"bq{ctx.nphrases}",
+                ["format=gbrp", f"crop={ctx.W}:{hh}:0:{y0}", "split=2"],
                 ["bqn", "bqf"])
-        g.chain("bqn", [f"gblur=sigma={bgsn}:steps=3",
-                        f"colorchannelmixer=rr={bgn[0]}:gg={bgn[1]}:bb={bgn[2]}"],
+        g.chain("bqn", blur(bgsn) +
+                [f"colorchannelmixer=rr={bgn[0]}:gg={bgn[1]}:bb={bgn[2]}"],
                 "bgn")
-        g.chain("bqf", [f"gblur=sigma={bgsf}:steps=3",
-                        f"colorchannelmixer=rr={bgf[0]}:gg={bgf[1]}:bb={bgf[2]}"],
+        g.chain("bqf", blur(bgsf) +
+                [f"colorchannelmixer=rr={bgf[0]}:gg={bgf[1]}:bb={bgf[2]}"],
                 "bgf")
         g.chain(["bgn", "bgf"], ["blend=all_mode=addition:shortest=1",
-                                 f"crop={ctx.BW}:{ctx.BH}:0:{ctx.BY}"],
+                                 f"crop={ctx.BW}:{ctx.BH}:0:{ctx.BY - y0}"],
                 "barglow")
         return g.chain([band, "barglow"],
                        "blend=all_mode=screen:shortest=1", "s1a")
@@ -325,13 +355,32 @@ class Snow(Effect):
                        "blend=all_mode=screen:shortest=1", "bandfx0")
 
 
+def heat_perlin_src(cfg, bw, bh, fps, seed):
+    """The bare `perlin` source for one displacement map.
+
+    Shared by the graph and by the pre-bake in render_bars.heat_layers, so a
+    baked map cannot drift from what a live one would have produced: change a
+    parameter here and the cache tag changes with it."""
+    return (f"perlin=size={bw}x{bh}:rate={fps}"
+            f":octaves={int(cfg.get('octaves', 6))}"
+            f":persistence={cfg.get('persistence', 0.6)}"
+            f":xscale={cfg['xscale']}:yscale={cfg['xscale']}"
+            f":tscale={cfg['tscale']}:random_mode=seed:seed={int(seed)}")
+
+
 class Heat(Effect):
     """HEAT WAVE -- runs LAST, over the composited band, so footage, pills
     and glyphs are displaced by one shared perlin field. Measured in both
-    refs at 0.96 px RMS @720 against a 0.10 px noise floor. The most
-    expensive stage in the graph (~49% of render time: two supersampled
-    perlin maps plus a 3x up/down scale around integer-pixel `displace`);
-    `fx: {heat: false}` for a fast preview."""
+    refs at 0.96 px RMS @720 against a 0.10 px noise floor.
+
+    The two perlin fields are the x- and y-displacement maps `displace`
+    takes. They are PRE-BAKED (render_bars.heat_layers) and arrive here as
+    inputs: `perlin` is single-threaded and cost 66s per map per reel
+    (real 66.2s vs user 65.2s -- one core of eight), 132s of a 372s render,
+    while depending on nothing but its own constants. Baked once per machine
+    it is reused by every reel forever. What stays live is scroll/scale/lut,
+    which is where the remaining cost of this stage is: the 3x supersample
+    around integer-pixel `displace`. `fx: {heat: false}` for a fast preview."""
     name = "heat"
 
     def apply(self, g, band, ctx):
@@ -342,17 +391,12 @@ class Heat(Effect):
         sdp = float(ht.get("perlin_sd", 18.4))
         k = round(rms * S / sdp, 5)                 # px -> 8-bit map slope
         SW, SH = ctx.BW * S, ctx.BH * S
-        psrc = (f"perlin=size={ctx.BW}x{ctx.BH}:rate={ctx.fps}"
-                f":octaves={int(ht.get('octaves', 6))}"
-                f":persistence={ht.get('persistence', 0.6)}"
-                f":xscale={ht['xscale']}:yscale={ht['xscale']}"
-                f":tscale={ht['tscale']}:random_mode=seed")
         pmap = (f"scroll=vertical={ht['scroll_v']},"
                 f"scale={SW}:{SH}:flags=bicubic,format=gbrp,"
                 f"lutrgb=r='128+(val-{ctr})*{k}':g='128+(val-{ctr})*{k}':"
                 f"b='128+(val-{ctr})*{k}'")
-        g.chain(None, [f"{psrc}:seed={int(ht.get('seed_x', 11))}", pmap], "xm")
-        g.chain(None, [f"{psrc}:seed={int(ht.get('seed_y', 77))}", pmap], "ym")
+        g.chain(ctx.heat_x_in, pmap, "xm")
+        g.chain(ctx.heat_y_in, pmap, "ym")
         # neighbour up / area down: the upscale must not soften, the
         # downscale must average -- what turns integer `displace` into 1/S px.
         g.chain(band, f"scale={SW}:{SH}:flags=neighbor", "bigb")

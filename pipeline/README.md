@@ -1,7 +1,7 @@
 # pipeline/ — Qur'an reel pipeline
 
-Turn a recitation video (YouTube or local) into a subtitled reel. Five
-workflow scripts plus two style renderers; each step reads and writes plain
+Turn a recitation video (YouTube or local) into a subtitled reel. Six
+workflow scripts plus three style renderers; each step reads and writes plain
 files in the repo tree, so every stage can be run, inspected and re-run on
 its own.
 
@@ -25,13 +25,31 @@ Identify verses + timestamps
 
 Write the reel config YAML (by hand / by the agent)
     ├── verse groups       n_words splits + English per card
-    ├── trim window        or omit it and let align.py derive it
+    ├── trim window        or omit it -- but only when the source is
+    │                      roughly the reel; see `trim:` below
     └── config             style, signature, offsets, fonts, ...
 
 align.py (CTC forced alignment of the KNOWN mushaf text)
     ├── <reel>.align.json  per-word timings
     ├── writes `trim:` back into the config when it was omitted
-    └── corrects ibtida' restarts off whisper.json, when it exists
+    └── corrects ibtida' restarts off whisper.json, when it exists --
+        only when Whisper split the two utterances into separate
+        segments; a restart collapsed into one long word is missed
+
+crop.py (bars + hz only -- `default` frames itself at render time)
+    ├── samples frames, asks a vision model for the reciter's head box,
+    │   silhouette, posture and any burned-in graphics
+    ├── computes the 16:9 window: three EQUAL gaps across the frame --
+    │   edge | caption column | his head | edge
+    └── writes `crop:` and `x_offset:` back into the config, so the render
+        stays offline and reproducible. Refuses rather than guesses when the
+        face falls outside 0.24-0.34 of the window (a bowed reciter is a
+        hand solve). `--annotate` draws the solve over a frame to check it,
+        and is NOT optional: the guards only check the model's numbers
+        against each other, so a shot with no visible face (draped, hooded,
+        turned away) returns a confident self-consistent solve boxed on
+        something that is not his head. Covered and turned-away reciters
+        are hand solves too.
 
 generate.py
     ├── validates the config (unknown key = error; groups must cover the
@@ -41,7 +59,9 @@ generate.py
     ├── builds/corrects captions (silences, suppress, nudge, verse numbers)
     └── dispatches on style:
         ├── render_default.py   landscape/vertical, Arabic + English
-        └── render_bars.py      1080x1920 letterbox band, Arabic-only pills
+        ├── render_bars.py      1080x1920 letterbox band, Arabic-only pills
+        └── render_hz.py        1920x1080 native landscape, Arabic + English
+                                in an off-centre column over graded footage
 ```
 
 ## Directory layout
@@ -62,8 +82,8 @@ sources/<id>/                one folder per source video
 reels/<reel-name>.mp4        generated output only, flat, no subfolders
 
 pipeline/                    this package
-    fetch.py  transcribe.py  quran.py  generate.py
-    render_default.py  render_bars.py
+    fetch.py  transcribe.py  quran.py  crop.py  generate.py
+    render_default.py  render_bars.py  render_hz.py
 
 assets/                      fonts + the committed mushaf/translation editions
 legacy/                      the first- and second-generation implementations,
@@ -106,8 +126,9 @@ text directly.
 authoritative schema (generated from the code, cannot drift). The shape:
 
 ```yaml
-style: bars                       # bars | default
-signature: "TilawatQuraniyyah"    # REQUIRED on every reel; null = burn nothing
+style: bars                       # bars | default | hz
+signature: null                   # REQUIRED on every reel; null = burn
+                                  # nothing, and null is the default
 
 surah: 78                         # omit all three to auto-detect from the
 ayah_start: 31                    # transcript (reliable for short spans only)
@@ -115,7 +136,13 @@ ayah_end: 40
 
 trim: [15.0, 55.0]                # seconds of the source this reel covers.
                                   # Omit it and align.py measures it off the
-                                  # recitation and writes it back here.
+                                  # recitation and writes it back here -- but
+                                  # only sound when the source is roughly the
+                                  # reel; it aligns the WHOLE file, so on a
+                                  # multi-surah recording set it by hand.
+                                  # Head: cut 0.10-0.15s before the first
+                                  # word. align.py's PAD is 0.30, which reads
+                                  # as a wait; tighten it and re-run --force.
 
 groups:                           # caption cards, in Arabic word order
   - n_words: 4                    # must sum EXACTLY to the span's word count
@@ -133,14 +160,15 @@ signature_offset: 0               # px, vertical only (+ lower / - higher);
 # corrections, all optional:
 suppress: [[33, 58]]              # leave these second-windows uncaptioned
 nudge: [{group: 3, start: -1.8}]  # shift one card's start/end, applied last
-verse_numbers: true               # ayah ornament (default: on for `default`,
-                                  # off for bars)
+verse_numbers: true               # ayah ornament (default: on for `default`
+                                  # and `hz`, off for bars)
 
 # default style: orientation, detect_subject, background_image + frame_size,
 #   arabic_font (uthmanic_hafs|thuluth), english_font, arabic_scale,
 #   english_scale, line_gap, dim, text_width, english_max_chars
 # bars style:    bar_color ("#RRGGBB", omit for auto-derivation from the
-#   graded footage), crop {x,y,w,h}
+#   graded footage)
+# bars + hz:     crop {x,y,w,h}, the reframing window in SOURCE pixels
 # plumbing:      input / whisper / output, only to override the defaults
 #   (source.* and whisper.json beside the config; reels/<config-name>.mp4)
 ```
@@ -155,7 +183,7 @@ English contradicts them is wrong.
 Output resolution: the `default` style's canvas is clamped so its short
 side sits in [720, 1080] — a low-quality source upscales to 720p minimum
 (captions draw at delivery resolution), a high-quality source caps at
-1080p. `bars` is always 1080x1920.
+1080p. `bars` is always 1080x1920, `hz` always 1920x1080.
 
 Rules the pipeline enforces rather than trusts:
 
@@ -216,6 +244,17 @@ transcript; whisper.json records which backend wrote it.
   over. Per-reel switches via `fx:` (e.g. `fx: {heat: false}` — heat is
   ~half the render time and the one to drop for a timing preview; never
   judge the LOOK without the full stack).
+* **`hz`** — native landscape 1920x1080, the account's original look
+  (legacy `scripts/render_text.py` + `build_render.py`): the footage
+  reframed by `crop` and pushed down under one black plate (flat dim + soft
+  vignette + a backing gradient under the type), warm-white Uthmanic Hafs
+  on a single line with the ayah medallion inline, tracked ALL-CAPS
+  Albertus balanced onto 1–2 lines beneath it, one shared soft drop shadow,
+  0.45s dissolves. The type sits in a COLUMN opposite the reciter — set it
+  with `x_offset`; the block is vertically auto-centred and `y_offset` is
+  the per-clip nudge. No face detection: the crop is authored, so a render
+  is reproducible. Verified against `reels/BADR-AL-TURKI-AHZAB-56-56.mp4`
+  (its config is `sources/YkXjYyKwHJ4/ahzab-56-56.yaml`).
 
-Subtitles are **centered by default** in both styles; `x_offset` /
+Subtitles are **centered by default** in every style; `x_offset` /
 `y_offset` (px) are the only placement knobs.

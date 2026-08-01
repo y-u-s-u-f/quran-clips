@@ -1,0 +1,71 @@
+# al-Waqi'ah 56:83-87 -- Abdullah al-Qarafi, tahajjud of laylat 27 Ramadan
+# 1446, al-Masjid al-Haram. The soul-at-the-throat passage; abs ~7:09-7:33 of
+# a 33-minute source that runs surahs 56, 57, 58 and 59:1-10 end to end.
+style: bars
+signature: null                 # no watermark
+
+surah: 56
+ayah_start: 83
+ayah_end: 87
+
+# Hand-set: align.py cannot derive the trim here. The source is 33 minutes of
+# continuous recitation, and forcing 23 words onto 1961s of audio has nothing
+# to anchor it -- widening a first-pass window from [416,456] to [416,472]
+# moved "sadiqin" from 452.8 to 470.7 and its score from -0.14 to -0.53, the
+# aligner having found a better match for the same syllables downstream.
+#
+# So the window is measured off the envelope instead. Onset: a 0.9s waqf at
+# 427.00-427.85 (floor -34dB against a -25dB masjid ambience) ends where
+# "fa-lawla" begins, which is the onset the bounded align also returns
+# (427.84). The cut sits 0.10s before it: a reel must open ON the recitation,
+# because dead air at the head is where people scroll. 0.10s is lead for the
+# /f/ attack, not air -- it is inside the waqf, so it opens on reverb tail
+# rather than a click. Tail: "sadiqin" decays into a 0.4s dip at
+# 453.90-454.30 before 56:88 starts, so the cut sits in the middle of it.
+# There is no true silence anywhere here -- the hall reverb never drops below
+# about -35dB -- so these are relative minima, not gaps.
+trim: [427.73, 454.15]
+
+# HAND-SET, and crop.py must not be re-run over it. His head is fully draped
+# and turned away -- there is no face anywhere in the shot -- so the vision
+# model had nothing to lock onto and boxed the gold-trimmed shoulder instead
+# (head cy 0.350, crown 0.225 H). Those numbers are self-consistent, so no
+# guard fired and it happily wrote {x:62, y:188, w:1228, h:690}: a window
+# whose top edge sits 130px BELOW his actual crown. --annotate showed it.
+#
+# Measured off the pixels instead, over 9 frames spanning both reels' windows:
+# crown 55-67px (never higher than 55), his body 774..~1370, the congregation
+# starting ~1450 and the Haramain logo ~1610. This window takes the full head
+# of frame and stops at 1328, which drops the congregation and the logo
+# together. It lands his head centre (~1016) at 0.765 of the window -- within
+# 6px of the 0.771 the equal-gap rule asks for -- and leaves 55px of crown
+# headroom (0.074 of window height).
+crop: {x: 0, y: 0, w: 1328, h: 747}
+
+# He faces LEFT, so the captions take the left column: the mic stand and the
+# marble pier. His robe's left edge is 774 = 0.583 of the window, so the free
+# column is 0..0.583 and its centre is 0.291 -> (0.291-0.5)*1080 = -226. The
+# usual "match his outer margin" rule cannot be used here: his body runs off
+# the right edge of the window, so that margin is zero.
+x_offset: -226
+
+# One card per ayah: the span is five short ayat and a card may never straddle
+# an ayah boundary.
+groups:
+  # Left on the auto break (3/1) after trying the alternatives: "idha" is
+  # short and "al-hulqum" long, so 3/1 gives 370 vs 215 and 2/2 gives 215 vs
+  # 392 -- 3/1 is the closer of the two and neither reaches the ~30px ideal.
+  # The card is a whole ayah with a whole ayah either side, so no boundary can
+  # be re-cut, and the one wide pill that an ayah-closing card would normally
+  # get is not reachable: 4 words on one line raster at ~575px against the
+  # 486px cap, so line_split: 4 is re-wrapped straight back to 3/1.
+  - n_words: 4        # 83  fa-lawla idha balaghati l-hulqum
+  - n_words: 3        # 84  wa-antum hina'idhin tanzurun
+  # 4/3 leaves ~100px between the lines, but it is the clause joint and the
+  # alternatives are worse: splitting the ayah into two cards would open one
+  # on "wa-lakin", and any other line break separates "minkum" from
+  # "aqrabu ilayhi".
+  - n_words: 7        # 85  wa-nahnu aqrabu ilayhi minkum wa-lakin la tubsirun
+    line_split: 4
+  - n_words: 5        # 86  fa-lawla in kuntum ghayra madinin
+  - n_words: 4        # 87  tarji'unaha in kuntum sadiqin

@@ -3,13 +3,14 @@
     tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml
     tools/render-venv/bin/python pipeline/generate.py --print-schema
 
-This file owns everything the two styles share: config validation, verse
+This file owns everything the styles share: config validation, verse
 resolution, aligning the Whisper word timings against the known-correct
 mushaf text, caption grouping, silence handling, suppress/nudge corrections
 and verse-number ornaments. Rendering and compositing are the style files'
-job -- render_default.py (landscape/vertical, Arabic + English) and
-render_bars.py (vertical letterbox band, Arabic-only pills), dispatched on
-the config's `style:` key.
+job -- render_default.py (landscape/vertical, Arabic + English),
+render_bars.py (vertical letterbox band, Arabic-only pills) and
+render_hz.py (native 1920x1080, Arabic + English over graded footage),
+dispatched on the config's `style:` key.
 
     TEXT INTEGRITY. Caption Arabic is built by slicing the word list of
     `quran.ayah()` -- the committed Uthmani text -- never from the Whisper
@@ -56,7 +57,7 @@ FFPROBE = os.environ.get("QC_FFPROBE") or "ffprobe"
 MAX_HOLD = 3.0
 
 DEFAULTS = {
-    "style": "default",          # default | bars
+    "style": "default",          # default | bars | hz
     "input": None,               # media path; default: source.* beside config
     "whisper": None,             # word timings; default: whisper.json beside it
     "output": None,              # default: reels/<config-name>.mp4
@@ -74,7 +75,7 @@ DEFAULTS = {
     "suppress": [],              # [[a, b]] windows left uncaptioned
     "nudge": [],                 # [{"group": i, "start": dt, "end": dt}]
     "verse_numbers": None,       # ayah ornament; default: true for `default`
-                                 # style, false for bars
+                                 # and `hz`, false for bars
 
     "x_offset": 0,               # px from dead center; +right / +down.
     "y_offset": 0,               # 0/0 = subtitles centered (the default)
@@ -96,9 +97,12 @@ DEFAULTS = {
     "text_width": 0.88,          # frac of frame width captions may occupy
     "english_max_chars": 60,     # English wrap cap
 
+    # bars + hz -----------------------------------------------------------
+    "crop": None,                # {x,y,w,h} source-px window -> the 16:9 band
+                                 # (bars) / the 1920x1080 frame (hz)
+
     # bars style only ----------------------------------------------------
     "bar_color": None,           # "#RRGGBB"; default: derived from the footage
-    "crop": None,                # {x,y,w,h} source-px window -> the 16:9 band
     "fx": None,                  # per-stage switches, e.g. {heat: false};
                                  # stages: grade scrim glow barglow textglow
                                  # scan snow heat (all on by default)
@@ -112,7 +116,7 @@ def config_schema():
 `signature` is the only required key; with the standard layout everything
 else has a working default.
 
-    style: bars                     # bars | default
+    style: bars                     # bars | default | hz
     signature: "TilawatQuraniyyah"  # REQUIRED. Burned bottom-center; null = none
 
     surah: 33                       # verse span. Omit all three to auto-detect
@@ -127,7 +131,7 @@ else has a working default.
       - n_words: 6                  # n_words must sum EXACTLY over the verse
         english: "Indeed, Allah..." # range's word count -- a mis-split fails
       - n_words: 5                  # loudly instead of shifting every caption.
-        english: "..."              # english is used by `default` style only.
+        english: "..."              # english: `default` and `hz` styles only.
         line_split: 3               # bars: words on line 1 (omit = auto)
                                     # Omit groups for draft auto-grouping.
 
@@ -136,8 +140,8 @@ else has a working default.
     signature_offset: 0             # px: + lower / - higher. The signature is
                                     # ALWAYS horizontally centered.
 
-    verse_numbers: true             # ayah ornament (default: on for `default`,
-                                    # off for bars)
+    verse_numbers: true             # ayah ornament (default: on for `default`
+                                    # and `hz`, off for bars)
     suppress: [[33, 58]]            # leave these second-windows uncaptioned
     nudge:                          # per-caption timing fix, applied LAST
       - {group: 3, start: -1.8}
@@ -145,9 +149,10 @@ else has a working default.
     # default style: orientation (auto|vertical|horizontal), detect_subject,
     # background_image + frame_size, arabic_font, english_font, arabic_scale,
     # english_scale, line_gap, dim, text_width, english_max_chars
-    # bars style: bar_color ("#RRGGBB" | omit for auto), crop {x,y,w,h},
+    # bars style: bar_color ("#RRGGBB" | omit for auto),
     #   fx: {heat: false, ...} to switch stages off (grade scrim glow
     #   barglow textglow scan snow heat; heat is ~half the render time)
+    # bars + hz: crop {x,y,w,h}, the source-pixel reframing window
 
     input / whisper / output        # only to override the standard layout
 
@@ -160,7 +165,7 @@ whose English contradicts them is mis-split.
 Output resolution (`default` style): the caption canvas is never smaller
 than 720 on its short side -- a low-quality source is upscaled to 720p
 minimum -- and never larger than 1080 (a high-quality source caps at
-1080p). `bars` output is always 1080x1920.
+1080p). `bars` output is always 1080x1920, `hz` always 1920x1080.
 """
 
 
@@ -709,11 +714,11 @@ def load_config(path):
                          "would be silently ignored otherwise"
                          % (path, ", ".join(unknown)))
     cfg = {**DEFAULTS, **raw}
-    if cfg["style"] not in ("default", "bars"):
-        raise SystemExit("style must be `default` or `bars`, not %r"
+    if cfg["style"] not in ("default", "bars", "hz"):
+        raise SystemExit("style must be `default`, `bars` or `hz`, not %r"
                          % cfg["style"])
     if cfg["verse_numbers"] is None:
-        cfg["verse_numbers"] = cfg["style"] == "default"
+        cfg["verse_numbers"] = cfg["style"] in ("default", "hz")
     return cfg
 
 
@@ -860,6 +865,9 @@ def run_config(config_path, output_override=None):
     if cfg["style"] == "bars":
         import render_bars
         render_bars.render(plan)
+    elif cfg["style"] == "hz":
+        import render_hz
+        render_hz.render(plan)
     else:
         import render_default
         render_default.render(plan)

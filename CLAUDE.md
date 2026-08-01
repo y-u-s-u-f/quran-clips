@@ -5,7 +5,7 @@ To *produce a reel* rather than change code, invoke the `make-post` skill
 
 ## Codebase map
 
-Qur'an recitation video -> subtitled reel. Seven standalone scripts under
+Qur'an recitation video -> subtitled reel. Nine standalone scripts under
 `pipeline/`; each is runnable on its own, reads and writes plain files, and
 owns one stage. There is deliberately NO shared util module — `fetch.py`
 and `transcribe.py` each carry their own ~15-line `.env` reader so every
@@ -44,6 +44,39 @@ script stays independently runnable; do not "deduplicate" that.
   `apply_repeats` recover the first from whisper.json's consecutive
   identical segments, the one thing the transcript knows that the mushaf
   cannot. The scores do NOT reveal a restart; a held madd scores as low.
+  `find_repeats` needs Whisper to have SPLIT the two utterances into
+  separate segments, and it does not always: it can emit one segment and
+  one abnormally long word (3.1s against 0.7-1.2s neighbours in 57:16),
+  and then the restart passes unreported. Anomalous word DURATION is the
+  remaining tell. Alignment may still place it correctly on its own — the
+  phrase's first word lands on the first utterance and the second word
+  spans the gap — so check before nudging.
+  Auto-trim (no `trim:` in the config) aligns the WHOLE source, so it is
+  only sound when the source is roughly the reel. On a multi-surah tahajjud
+  recording the reference text cannot anchor itself and the failure is
+  quiet: the word count and the JSON stay valid while a trailing word is
+  captured by a similar-sounding passage downstream, visible only as a
+  collapsed score.
+- **`pipeline/crop.py`** — reel config -> `crop:` + `x_offset:` written back
+  into it, for the `bars` and `hz` styles (`default` keeps its own
+  render-time YuNet path). Samples frames, asks a vision model
+  (`qwen/qwen3-vl-32b-instruct` over OpenRouter, `OPENROUTER_API_KEY`) for
+  the reciter's head box, silhouette, posture and any burned-in graphics,
+  then computes the 16:9 window with `targets()` — the equal-gap rule
+  ported from `legacy/qc/author/crop.py:352`. AUTHORING only: the model is
+  never consulted at render time, its answer becomes a reviewed number in a
+  tracked config, and a reel re-renders identically on a machine with no
+  key (invariant 4). The model measures; the arithmetic decides; three
+  guards refuse rather than guess — a face outside 0.24-0.34 of the window
+  (the bowed reciter) is handed back for a hand solve, the silhouette is
+  clamped to 2.6 face widths so a congregation cannot inflate it, and the
+  window must contain him. `PASSES` pools independent queries because the
+  model is not repeatable at temperature 0. All three guards check the
+  model's numbers against EACH OTHER, so none of them catches a shot with
+  no face in it at all: on a draped, hooded or turned-away reciter the
+  model boxes a shoulder and the solve returns confident, zero-spread and
+  self-consistent while cropping his crown off. `--annotate` is the only
+  check that catches it — the arithmetic cannot.
 - **`pipeline/generate.py`** — per-reel YAML -> render. Owns everything
   style-independent: `load_config` (DEFAULTS is the schema; unknown key =
   error; `signature` required), `resolve_paths` (input/whisper/output
@@ -68,6 +101,15 @@ script stays independently runnable; do not "deduplicate" that.
   Every constant at the top of the file is a measured value from reference
   reels; the provenance notes live in `legacy/templates/bars.yaml` and
   `legacy/style/refs2/`.
+- **`pipeline/render_hz.py`** — native landscape 1920x1080, ported from
+  `legacy/scripts/render_text.py` + `build_render.py`. Same split as bars
+  (`layout()` / `draw_layers()` / `schedule()` / `build_graph()`). Its
+  reframe is the config's `crop` and nothing else — no detection at render
+  time, so a render is reproducible. `layout()` SOLVES the Arabic anchor so
+  the median phrase's block centres on the frame (block height varies with
+  the English line count, so no fixed anchor can centre them all). The two
+  grade gradients are built at 48x27 and bilinearly upscaled: that low
+  resolution IS the softness of the look, not an optimisation.
 - **`pipeline/fx.py`** — the bars effects: `Graph` (declaration-order
   filtergraph builder with deferred `tap()` splits), the six `Effect`
   classes with their three hooks (plate / per_phrase / apply), and the
@@ -91,7 +133,18 @@ script stays independently runnable; do not "deduplicate" that.
    counts, not text. In .py files, write Arabic as `\uXXXX` escapes or
    verify retyped literals codepoint-by-codepoint against the legacy file
    (this was done for every regex/table in `quran.py`, `render_bars.py`).
-2. **`render_bars.py` + `fx.py` are under a byte-identity contract** with
+2. **SUSPENDED 2026-08-01 — see `render_bars.py`'s docstring before relying
+   on this.** The speed work (pre-baked heat maps, half-res wide gaussians,
+   band-sliced bar glow, supersample 3->2) deliberately changed the graph,
+   so the diff below no longer passes and there is no re-blessed fixture yet
+   (the golden lives under read-only `legacy/`). Until one exists, the rule
+   it enforced still stands but is checked differently: **after any edit to
+   `render_bars.py` or `fx.py`, re-render a known reel and PSNR it against
+   the previous render** — anything below ~45dB is a look change and needs a
+   decision, not a shrug. Restoring a real fixture outside `legacy/` is open
+   work.
+   The original contract, for reference:
+   **`render_bars.py` + `fx.py` are under a byte-identity contract** with
    `legacy/tests/golden/at-tawbah-128-128/filtergraph.txt`. After ANY edit
    to either, rebuild the graph for that clip (phrases from its clip.yaml
    with ar1/ar2 -> text+line_split and t0/t1 -> start/end;

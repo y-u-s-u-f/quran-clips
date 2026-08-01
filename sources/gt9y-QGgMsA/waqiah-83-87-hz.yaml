@@ -1,0 +1,49 @@
+# al-Waqi'ah 56:83-87 -- Abdullah al-Qarafi, tahajjud of laylat 27 Ramadan
+# 1446, al-Masjid al-Haram. The `hz` cut of the same span as
+# waqiah-83-87-bars.yaml; the timing and the framing solve are shared with it,
+# only the style and the English differ.
+style: hz
+signature: null                 # no watermark
+
+surah: 56
+ayah_start: 83
+ayah_end: 87
+
+# Identical to the bars cut -- measured off the envelope, not derived, because
+# align.py cannot bound itself on a 33-minute continuous source. Onset: a 0.9s
+# waqf at 427.00-427.85 (floor -34dB) ends where "fa-lawla" begins at 427.83;
+# the cut sits 0.10s before it, inside the waqf. A reel opens ON the
+# recitation -- dead air at the head is where people scroll. Tail: "sadiqin"
+# decays into a 0.4s dip at 453.90-454.30 before 56:88, so the cut sits in it.
+trim: [427.73, 454.15]
+
+# HAND-SET, shared with waqiah-83-87-bars.yaml -- crop.py cannot solve this
+# source. His head is fully draped and turned away, so with no face to lock
+# onto the vision model boxed his gold-trimmed shoulder, and the window it
+# wrote had its top edge 130px BELOW his actual crown. Measured off the pixels
+# over 9 frames instead: crown 55-67px, body from 774, congregation from
+# ~1450, Haramain logo from ~1610. Stopping at 1328 drops the congregation and
+# the logo together and puts his head centre (~1016) at 0.765 of the window.
+crop: {x: 0, y: 0, w: 1328, h: 747}
+
+# He faces LEFT, so the type column is the left one: the mic stand and the
+# marble pier. His robe's left edge is 774 = 0.583 of the window, so the free
+# column is 0..0.583 and its centre is 0.291 -> (0.291-0.5)*1920 = -401. The
+# reference reel's "match his outer margin" rule does not apply here: his body
+# runs off the right edge of the window, so that margin is zero.
+x_offset: -401
+
+# One card per ayah -- five short ayat, and a card may never straddle an ayah
+# boundary. English is Saheeh International cut at the same joints; each card
+# is one whole ayah, so no clause is split.
+groups:
+  - n_words: 4        # 83
+    english: "Then why, when the soul at death reaches the throat"
+  - n_words: 3        # 84
+    english: "And you are at that time looking on"
+  - n_words: 7        # 85
+    english: "And Our angels are nearer to him than you, but you do not see"
+  - n_words: 5        # 86
+    english: "Then why do you not, if you are not to be recompensed,"
+  - n_words: 4        # 87
+    english: "Bring it back, if you should be truthful?"

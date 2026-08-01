@@ -10,18 +10,32 @@ spill into the letterbox instantly reads as wrong).
 Ported from legacy/scripts/render_bars.py + legacy/scripts/build_bars.py +
 legacy/qc/timeline.py, with the style numbers from legacy/templates/bars.yaml
 (pixel forensics of the account's two reference reels). The effects
-themselves live in pipeline/fx.py. The emitted filtergraph is byte-identical
-to the legacy build for the same inputs (verified against the frozen golden
-fixture), so every measured behaviour carries over.
+themselves live in pipeline/fx.py.
+
+THE GOLDEN BYTE-IDENTITY CONTRACT IS SUSPENDED as of the 2026-08-01 speed
+work: the emitted filtergraph is deliberately no longer byte-identical to
+legacy/tests/golden/at-tawbah-128-128/filtergraph.txt. Three changes did it,
+all owner-approved, none of them a look decision:
+  * heat's two perlin maps are pre-baked and fed in as inputs (heat_layers);
+  * wide gaussians run at half linear size (fx.blur) and bar glow blurs a
+    band-sized slice instead of the full 1920-tall canvas;
+  * heat's supersample went 3 -> 2.
+Measured against the pre-change render of sources/gt9y-QGgMsA/waqiah-83-87:
+PSNR 47.1dB for the bake, 53.1dB for the blur work, 48.8dB for the
+supersample, i.e. below the 8-bit quantiser in each case; wall time 372s ->
+150s on a 4P+4E machine. Until a replacement fixture exists, the guarantee
+that a look change is never a refactor side-effect rests on re-measuring
+PSNR against the previous render, NOT on diffing the graph text.
 
 Per-reel switches, via the config's `fx:` map (e.g. `fx: {heat: false}` --
-heat is ~49% of render time and is the one to drop for a fast preview):
-grade, scrim, glow, barglow, textglow, scan, snow, heat.
+heat is ~35% of the remaining render time and is the one to drop for a fast
+preview): grade, scrim, glow, barglow, textglow, scan, snow, heat.
 
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
 import colorsys
 import json
+import math
 import os
 import subprocess
 import sys
@@ -121,7 +135,7 @@ FX_CFG = {
              "tint_mix": 1.00, "sway_texels": 3.5, "seed": 7, "loop_s": 8},
     "heat": {"rms_frac_w": 0.00133, "xscale": 2.0, "tscale": 0.5,
              "scroll_v": -0.004, "octaves": 6, "persistence": 0.6,
-             "supersample": 3, "perlin_centre": 130.26, "perlin_sd": 18.4,
+             "supersample": 2, "perlin_centre": 130.26, "perlin_sd": 18.4,
              "seed_x": 11, "seed_y": 77},
 }
 SWITCHES = ("grade", "scrim") + FX.BAND_ORDER
@@ -437,6 +451,67 @@ def scrim_plate(tmp):
     return path
 
 
+def heat_layers(tmp, dur):
+    """The two perlin displacement maps heat needs, baked to mp4 and cached.
+
+    Cached OUTSIDE the reel's tmp, one level up, because unlike snow these
+    depend on nothing about the reel: snow is tinted by the clip's own bar
+    colour, while these are pure geometry from FX_CFG constants. Baked once
+    on a machine, every later reel reuses them. That matters because the bake
+    is the expensive part -- `perlin` is single-threaded and runs at ~0.4x
+    realtime, 66s per map for a 26s reel.
+
+    Cached in 30s buckets: a bake is reusable by any reel no longer than it,
+    so most reels hit the same 30s pair and a long one bakes its own. crf 8
+    on flat low-frequency noise, matching the snow loop's setting -- the maps
+    are read back through a 3x bicubic upscale, which is far softer than the
+    quantiser.
+    """
+    c = FX_CFG["heat"]
+    span = int(math.ceil(max(dur, 1.0) / 30.0) * 30)
+    cache = os.path.dirname(os.path.normpath(tmp)) or tmp
+    os.makedirs(cache, exist_ok=True)
+    # Keyed on exactly what determines the baked BYTES -- the perlin source's
+    # own arguments plus geometry and length. Not on supersample, scroll_v,
+    # rms_frac_w or the perlin_centre/sd pair: those live in the graph's
+    # scroll/scale/lut, downstream of the file, and folding them in here would
+    # throw away a valid 164s bake every time one of them is tuned.
+    tag = "%dx%d_%d_%ds_o%s_p%s_x%s_t%s" % (
+        BAND_W, BAND_H, FPS, span, c.get("octaves", 6),
+        c.get("persistence", 0.6), c["xscale"], c["tscale"])
+    out = []
+    for axis, seed in (("x", int(c.get("seed_x", 11))),
+                       ("y", int(c.get("seed_y", 77)))):
+        path = os.path.join(cache, "heat%s_%s_s%d.mp4" % (axis, tag, seed))
+        if not os.path.exists(path):
+            print("      heat map %s: baking %ds of perlin (once per machine, "
+                  "reused by every reel)" % (axis, span))
+            src = FX.heat_perlin_src(c, BAND_W, BAND_H, FPS, seed)
+            # Bake to a pid-tagged temp and rename only on success: the cache
+            # is keyed by name alone, so a file that exists must be complete.
+            # Deleting on a bad returncode is not enough -- a bake killed from
+            # outside (^C, a timeout, the OOM killer) never reaches that line,
+            # and the truncated map it leaves behind then loads as a valid
+            # short input and fails the render on every later run.
+            # The pid goes BEFORE the extension: ffmpeg picks its muxer off
+            # the suffix, and a file ending .part has no format to infer.
+            _b, _e = os.path.splitext(path)
+            part = "%s.%d.part%s" % (_b, os.getpid(), _e)
+            try:
+                r = subprocess.run(
+                    [FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", src,
+                     "-t", str(span), "-an", "-c:v", "libx264", "-crf", "8",
+                     "-preset", "medium", "-pix_fmt", "yuv420p", part])
+                if r.returncode:
+                    sys.exit("ffmpeg heat-map bake failed")
+                os.replace(part, path)
+            finally:
+                if os.path.exists(part):
+                    os.remove(part)
+        out.append(path)
+    return out
+
+
 def snow_layer(tmp, tint_rgb):
     """The seamlessly-looping snow mp4, cached in tmp by parameter tag.
     Expensive to evaluate (one shader pass per frame), so it is only built
@@ -557,10 +632,12 @@ def loudnorm_filter(st):
 # ---------------------------------------------------------------------------
 
 def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
-                ln, afade, sig_path=None):
+                ln, afade, sig_path=None, heat_paths=None):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1..2n]=bar,text
     per phrase, then snow, then scrim (last of the legacy set, so dropping it
-    cannot shift any other index), then the signature."""
+    cannot shift any other index), then the signature, then the two heat
+    maps. The heat pair goes LAST for the same reason scrim went last: every
+    index before it keeps the number it had before the maps were pre-baked."""
     W, H = CANVAS_W, CANVAS_H
     tr = TRANSITIONS
     nphrases = len(rep)
@@ -577,10 +654,15 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     scrim_in = (g_.input(scrim_path, framerate=FPS, loop=1)
                 if on["scrim"] else None)
     sig_in = (g_.input(sig_path, framerate=FPS, loop=1) if sig_path else None)
+    # stream_loop so a reel longer than its cached bucket still runs out to
+    # the end; the bucket is sized so this normally never wraps.
+    heat_in = [g_.input(p, stream_loop=-1) for p in (heat_paths or [])]
 
     ctx = FX.Ctx(W=W, H=H, BW=BAND_W, BH=BAND_H, BY=BAND_Y, fps=FPS, dur=dur,
                  tint=tint, nphrases=nphrases, band_src="band",
-                 snow_in=snow_in, hexrgb=hexrgb)
+                 snow_in=snow_in, hexrgb=hexrgb,
+                 heat_x_in=heat_in[0] if heat_in else None,
+                 heat_y_in=heat_in[1] if heat_in else None)
 
     wtgt = str(tr["wipe_target"]).lower()
     g_.chain(vin, [band_source_chain(crop, on["grade"]), "setsar=1",
@@ -721,6 +803,7 @@ def render(plan):
                  r["x1"] - r["x0"]))
 
     snow_path = snow_layer(tmp, target_rgb) if on["snow"] else None
+    heat_paths = heat_layers(tmp, dur) if on["heat"] else None
     scrim = scrim_plate(tmp) if on["scrim"] else None
     sig_path = (signature_card(cfg["signature"], tmp, cfg["signature_offset"])
                 if cfg["signature"] else None)
@@ -737,7 +820,8 @@ def render(plan):
                 AUDIO["fade_out_s"]))
 
     fc, in_argv = build_graph(src, dur, crop, rep, sched, tint, on,
-                              snow_path, scrim, ln, afade, sig_path)
+                              snow_path, scrim, ln, afade, sig_path,
+                              heat_paths)
 
     out = plan["out"]
     cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv

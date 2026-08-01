@@ -1,0 +1,52 @@
+# Surah al-Ahzab 56 -- Badr al-Turki, al-Masjid al-Haram, rak'ah 3 of the
+# Thursday taraweeh (abs ~15:27-15:57 of the source). Ported from
+# legacy/clips/al-ahzab-56-56/clip.yaml, which produced the `hz` style's
+# reference render, reels/BADR-AL-TURKI-AHZAB-56-56.mp4.
+style: hz
+signature: null                 # the reference reel carries no handle or mark
+
+surah: 33
+ayah_start: 56
+ayah_end: 56
+
+# Onset (envelope) at abs 927.45; starting 0.13s earlier gives the hook a
+# frame of air. The end sits 0.5s after "tasliman" decays, inside the deep
+# true-silence gap 956.8-958.4, so no next-verse speech leaks into the tail.
+trim: [927.32, 957.30]
+
+# The shot is a fixed single camera: reciter centred (head ~x1000), a burned-in
+# top-right logo (x>=1620), a full-width bottom banner (y>=800) and a police
+# attendee down the right edge (~x1560+). This 1280x720 window (a 1.5x zoom)
+# moves him RIGHT and drops every one of them: right edge 1358 < 1560, bottom
+# 750 < 800.
+crop: {x: 78, y: 30, w: 1280, h: 720}
+
+# Text LEFT, opposite the reciter. His outer robe edge lands at ~0.95 W, so a
+# block centred on 0.31 W leaves equal outer margins: 0.31 * 1920 = 595 px,
+# i.e. 595 - 960 = -365 from centre. y_offset drops the auto-centred block
+# into the clear upper-left wall (style.yaml's per-clip vertical nudge).
+x_offset: -365
+y_offset: -16
+
+# IBTIDA' RESTART: after "...aamanu sallu 'alayhi" the reciter pauses (waqf
+# 945.4-946.1) and starts the whole phrase AGAIN before completing it. Those
+# words exist once in the mushaf and `groups` must partition every word exactly
+# once, so the restart cannot have a card of its own -- card 2 carries the
+# phrase and its completion and simply stays up across both utterances, which
+# is what its own text says either way. (The legacy clip put the first pass on
+# a separate card in between; that card's words are a subset of this one's.)
+#
+# Whisper puts the onset of that first "ya ayyuha" ~1s early, which swaps the
+# card while "an-nabiyy" is still being held. The envelope measurement on the
+# legacy clip has "an-nabiyy" ending at 10.82 and the phrase resuming at 11.43
+# after a 0.61s waqf; these two nudges restore that (the first also drags card
+# 2's start with it, hence the second is only the waqf itself).
+nudge:
+  - {group: 0, end: 0.36}
+  - {group: 1, start: 0.61}
+
+groups:
+  - n_words: 6
+    english: "Indeed, Allah confers blessing upon the Prophet, and His angels ask Him to do so."
+  - n_words: 7
+    english: "O you who have believed, ask blessing upon him and ask Allah to grant him peace."
