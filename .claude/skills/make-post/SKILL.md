@@ -60,9 +60,19 @@ What each one does:
   Needs `tools/author-venv`.
   **Placement is ONE rule for both styles** (`qc.author.crop.targets`, rewritten
   2026-07-30 — the two old per-style rules were the same rule twice):
-  - *Vertical:* **the face centre sits on the vertical centreline, 0.50 H.**
-    Not 0.275, not any three-quarter placement — the owner asked for plain
-    centring and for it to stay that way. Soft cost, 0.44–0.56 warning band.
+  - *Vertical:* **face centre at 0.275 H.** Soft cost, 0.24–0.34 warning band.
+    Centring at 0.50 H was tried on 2026-07-30 and reverted on 2026-07-31 —
+    it broke every upright reciter in `reels/`.
+    **The face is a PROXY for headroom, and it fails on a reciter who bows.**
+    A bowed reciter's face sits low inside a tall head, so pinning the face
+    crops his crown off the top of the band. Always check the top of his head
+    is in frame; do not trust the number alone. There is no automatic fix —
+    anchoring on the crown was tried and abandoned (the motion blob's top edge
+    lands *above* the shipped window on all three cached sources, and YuNet's
+    face height varies 140–465 px across comparable shots, so no
+    `crown = face_top − k × face_h` estimate holds). **A bowed reciter is a
+    hand-solve** in that clip's own `video_bg.crop`, with the reasoning in a
+    comment — see the four Salih al-Ansari clips (`-GZR1C9Acd4`).
   - *Horizontal:* **equal gaps.** The frame holds two blocks, the reciter and
     the caption column; every gap between them and the frame edges is the same
     width — three gaps when he fits with air on his outer side, two when a wide
