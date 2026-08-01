@@ -80,10 +80,16 @@ verses is this?".
   EQUAL gaps across the frame — edge, caption column, his head, edge — then
   writes `crop:` and `x_offset:` into the config. Run it BEFORE `generate.py`;
   once written the numbers are the config's, and re-running a render never
-  calls out. It REFUSES to write when the face lands outside 0.24-0.34 of the
-  window: that is a bowed reciter, and the answer is a hand-set `crop:` with
-  the reason in a comment, not a retry. Needs `OPENROUTER_API_KEY` in `.env`;
-  ~$0.003 a source, cached, so it is paid once and never at render time.
+  calls out. This is an ESTIMATE, not an exact optimum — the reference reels
+  it was calibrated against were never consistent with each other, so "fits
+  the dimensions and looks good" is the bar. It REFUSES to write only when
+  there is no face in the shot at all, or the caption anchor falls off the
+  frame; a face landing outside the shipped reels' own 0.24-0.34 spread is
+  now just a printed note (a bowed reciter often does this, harmlessly) —
+  check `--annotate`, don't assume it needs a hand-set `crop:`. Shells out to
+  the local `claude` CLI (`claude -p`), so it rides your existing Claude Code
+  auth and needs no API key of its own; cached, so it is paid once and never
+  at render time.
   **ALWAYS check the solve with `--annotate out.png` and LOOK at it** — see
   "When crop.py cannot see a face" below for the failure its guards miss.
 - **`generate.py`** validates the config (unknown key = error), takes word

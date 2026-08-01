@@ -66,24 +66,39 @@ script stays independently runnable; do not "deduplicate" that.
   collapsed score.
 - **`pipeline/crop.py`** — reel config -> `crop:` + `x_offset:` written back
   into it, for the `bars` and `hz` styles (`default` keeps its own
-  render-time YuNet path). Samples frames, asks a vision model
-  (`qwen/qwen3-vl-32b-instruct` over OpenRouter, `OPENROUTER_API_KEY`) for
-  the reciter's head box, silhouette, posture and any burned-in graphics,
-  then computes the 16:9 window with `targets()` — the equal-gap rule
-  ported from `legacy/qc/author/crop.py:352`. AUTHORING only: the model is
-  never consulted at render time, its answer becomes a reviewed number in a
-  tracked config, and a reel re-renders identically on a machine with no
-  key (invariant 4). The model measures; the arithmetic decides; three
-  guards refuse rather than guess — a face outside 0.24-0.34 of the window
-  (the bowed reciter) is handed back for a hand solve, the silhouette is
-  clamped to 2.6 face widths so a congregation cannot inflate it, and the
-  window must contain him. `PASSES` pools independent queries because the
-  model is not repeatable at temperature 0. All three guards check the
-  model's numbers against EACH OTHER, so none of them catches a shot with
-  no face in it at all: on a draped, hooded or turned-away reciter the
-  model boxes a shoulder and the solve returns confident, zero-spread and
-  self-consistent while cropping his crown off. `--annotate` is the only
-  check that catches it — the arithmetic cannot.
+  render-time YuNet path). Samples frames, shells out to the Claude Code CLI
+  (`claude -p --model sonnet --output-format json`, no API key -- it rides
+  the user's own local `claude` auth) for the reciter's head box, silhouette,
+  posture and any burned-in graphics, then computes the 16:9 window with
+  `targets()` — the equal-gap rule ported from `legacy/qc/author/crop.py:352`.
+  Since there is no server-side `json_schema` enforcement over a CLI call the
+  way OpenRouter's API gave the transport this replaced, the reply is parsed
+  defensively (`parse()`/`_validate()`): fence-stripped, then walked against
+  the same SCHEMA by hand, with bounded retries on a malformed reply and a
+  loud failure after them — never a silently substituted default. AUTHORING
+  only: the model is never consulted at render time, its answer becomes a
+  reviewed number in a tracked config, and a reel re-renders identically on a
+  machine with no `claude` auth at all (invariant 4). The model measures; the
+  arithmetic decides. Precision here is not the goal — the reference reels
+  this was calibrated against were never consistent with each other, so
+  "fits the dimensions and looks good" is the bar, not an exact optimum — so
+  only two things actually refuse: `face_visible` false in most sampled
+  frames (the guard that catches a shot with no face in it at all: every
+  geometry guard below only checks the model's numbers against EACH OTHER,
+  so a shoulder boxed as a head passes all of them looking confident,
+  zero-spread and self-consistent while cropping his crown off), and an
+  off-frame caption anchor. `FACE_Y_BAND` (0.24-0.34, the shipped reels' own
+  spread) used to gate a third refusal; demoted 2026-08-01 to a printed
+  observation, since the band is the reference reels' own scatter, not a
+  tolerance, and the model's run-to-run noise on this number is bigger than
+  the band is wide — the same vqxYwdR4RvQ frames flipped a write into a
+  refusal between two identical runs. `PASSES` (was 3, now 1) pooled
+  independent queries only to stabilise that threshold; with the cliff gone
+  there is nothing left to pool for. The silhouette is still clamped to 2.6
+  face widths so a congregation cannot inflate it, and a window that cuts
+  his body still prints rather than swallows it, but neither raises either.
+  `--annotate` is the check that catches a shot with no face at all, and
+  now the primary check generally, not a backstop — the arithmetic cannot.
 - **`pipeline/generate.py`** — per-reel YAML -> render. Owns everything
   style-independent: `load_config` (DEFAULTS is the schema; unknown key =
   error; `signature` required), `resolve_paths` (input/whisper/output

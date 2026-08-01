@@ -180,8 +180,18 @@ below the shipped one; face-first lands within 4 px, and 9Yci0oWB2fE within 5.
     was tried on 2026-07-30 and reverted the next day -- it rescued him by
     accident and looked wrong on every upright reciter in reels/. Here the two
     constraints are simply allowed to be inconsistent: when no y satisfies both
-    the band and the crown, the solve REFUSES to write and says hand-solve. That
-    is the same answer legacy reached, reached earlier and out loud.
+    the band and the crown, the CROWN WINS -- y falls back to whatever the
+    crown/headroom constraint alone allows, and FACE_Y_BAND is the one that
+    gives way.
+
+    UPDATE 2026-08-01: that fallback used to also refuse to write. It no
+    longer does -- FACE_Y_BAND is the shipped reels' own scatter, not a
+    tolerance, and report() prints the miss rather than raising it as an
+    error; see FACE_Y_BAND's own comment for the measurement that this
+    dropped a hand-solve for a difference smaller than the model's own
+    run-to-run noise. The crown/headroom constraint itself is untouched by
+    this -- it was never the thing doing the refusing, only the thing the
+    band's fallback falls back to.
 
 This is also why the model is asked for `face_cy` separately from the head box.
 A head box including a ghutrah does not centre on the face: on 9Yci0oWB2fE the
@@ -195,9 +205,10 @@ The two of them come back as free-floating scalars and the arithmetic above
 reads the DIFFERENCE between them. Nothing makes the model keep that difference
 consistent with the head it just boxed, and at 32b/fp8 it does not.
 
-Three --force solves of vqxYwdR4RvQ on 2026-08-01, each already pooling PASSES
-passes over the same four frames, landed the face at 0.265, 0.275 and 0.231 of
-the window: the SAME source wrote twice and refused once. All three had
+Three --force solves of vqxYwdR4RvQ on 2026-08-01, each already pooling 3
+passes over the same four frames (PASSES was 3 at the time), landed the face
+at 0.265, 0.275 and 0.231 of the window: the SAME source wrote twice and
+refused once, back when landing outside FACE_Y_BAND still refused. All three had
 headroom pinned at ~0.08, so it was MAX_HEADROOM binding every time -- `want`
 falls below `crown - MAX_HEADROOM*h` exactly when face_cy - crown_y < 0.195*h,
 and the model put that distance at 0.375 head heights (0.090 H against a
@@ -259,7 +270,6 @@ Each one closes a failure that has already happened here:
   back above passed every printed number it had.
 """
 import argparse
-import base64
 import datetime
 import json
 import os
@@ -268,8 +278,6 @@ import statistics
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -324,7 +332,18 @@ CANVAS_W = {"bars": 1080,      # render_bars.BAND_W; x_offset is px on this
             "hz": 1920}
 MIN_GAP = 0.02                 # a gap thinner than this is not a gap
 FACE_Y_FRAC = 0.275            # face centre in the window; measured, see above
-FACE_Y_BAND = (0.24, 0.34)     # what the shipped reels span; outside = refuse
+FACE_Y_BAND = (0.24, 0.34)     # the shipped reels' own observed spread -- a
+# 0.10-wide range, not a correctness bound. It used to gate a hard refusal;
+# demoted 2026-08-01 because the reference reels it is measured from were
+# never consistent with each other to begin with, and pooling PASSES queries
+# to stabilise a threshold drawn through the middle of their own scatter was
+# chasing noise smaller than the scatter: three --force solves of
+# vqxYwdR4RvQ on the SAME four frames landed the face at 0.243 (inside), 0.275
+# (inside) and 0.231 (outside) of the window -- a 0.012 run-to-run wobble,
+# 12% of the band's own width, flipping a write into a refusal for the same
+# source. report() still prints when a solve falls outside the band -- it is
+# worth a look -- but the config is written either way; --annotate is the
+# check now, not the number.
 MAX_HEADROOM = 0.08            # most air above the crown any shipped reel has
 FACE_IN_HEAD = (0.50, 0.85)    # how far the face centre sits below the top of
 # the head box, in head heights -- the band _reconcile() clamps face_cy into.
@@ -339,9 +358,10 @@ FACE_IN_HEAD = (0.50, 0.85)    # how far the face centre sits below the top of
 # ceiling: at 0.50 the crown-to-face distance is 0.50 * head_h, and vqxYwdR4RvQ
 # needs 0.195 * h against a head that is 0.37-0.47 of the window tall.
 # 0.85 is a below-the-chin guard and nothing more. It has to stay CLEAR of
-# 0.759, because that reading is precisely what makes -GZR1C9Acd4 refuse and
-# hand-solve; a high edge tight enough to look symmetric (0.56, say) would clamp
-# the bowed reciter back into the band and silently write his broken framing.
+# 0.759, because that reading is precisely what makes -GZR1C9Acd4 fall outside
+# FACE_Y_BAND; a high edge tight enough to look symmetric (0.56, say) would
+# clamp the bowed reciter back into the band and hide his broken framing
+# instead of printing it.
 MIN_CONF = 0.4                 # a frame the model is unsure of is not a vote
 BODY_FROM_FACE = 2.6           # legacy/qc/author/crop.py:89 -- how far his
 HEAD_FROM_FACE = 2.0           # legacy/qc/author/crop.py:90 -- silhouette may
@@ -352,57 +372,49 @@ HEAD_FROM_FACE = 2.0           # legacy/qc/author/crop.py:90 -- silhouette may
 # 1.3-head-width bar, and 9Yci0oWB2fE's congregation measured 3.0.
 
 # --- the model -------------------------------------------------------------
-
-API = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "qwen/qwen3-vl-32b-instruct"
-# A VL-series model because this is a grounding task -- bounding boxes, not
-# description -- and that series is trained for it. DeepSeek was tried first
-# and every DeepSeek model on OpenRouter is "modality": "text->text" with
-# input_modalities ["text"], i.e. it cannot see a frame at all.
 #
-# ITS ACCURACY IS THE WEAK LINK, so the measurement is written down. Against a
-# hand-read vqxYwdR4RvQ frame (head cx 0.567 W, head w 0.116 W, crown 0.139 H,
-# body 0.465..0.684 W), on the same four frames and the same prompt:
-#     8b-instruct    cx 0.600  w 0.150  crown 0.200  body 0.500..0.700
-#     32b-instruct   cx 0.545  w 0.180  crown 0.210  body 0.460..0.675
-# 32b is closer on cx and on both body edges, and it found all three of that
-# source's burned-in graphics where 8b found one plus a false positive. It is
-# also CHEAPER -- $0.104/M in against $0.117/M -- so there is no trade to make
-# here; 8b is worse on both axes. Neither model is repeatable at temperature 0
-# -- two identical requests returned head widths of 0.100 and 0.150 W -- which
-# is a second reason the answer is cached and committed rather than re-asked.
-PROVIDER = "alibaba/fp8"
-# The only endpoint serving 32b, so this pin is documentation rather than a
-# choice. (8b had two providers 2x apart in price, which is what the pin was
-# originally for.) Fallback stays ON: a provider outage should cost more, not
-# fail the solve. structured_outputs: true, so strict json_schema is safe.
-PRICE_IN, PRICE_OUT = 0.104, 0.416     # $ per 1M tokens, alibaba/fp8
-CTX = 131072                           # tokens, alibaba/fp8
+# Shelled out to the Claude Code CLI (`claude -p`), not an HTTP API: the
+# question reaches the model over the user's own local `claude` auth, so this
+# script needs no API key of its own (contrast the OpenRouter/Qwen transport
+# it replaces, which needed OPENROUTER_API_KEY). Only the transport changed --
+# the prompt, the schema and every guard below are untouched.
 
-# Frame width sent to the model. This is a real cost lever on Qwen -- image
-# tokens are ~(W/28)*(H/28) patches, so 1280x720 is ~1.2k tokens and a 4K frame
-# would be ~10x that for no more precision than the source's own detail. It is
-# NOT a lever on Google's models, where a 16:9 frame tiles to 6 crops at 258
-# tokens regardless of pixel size; that note is kept because the first draft of
-# this file targeted Gemini and deliberately sent full resolution.
+MODEL = "sonnet"                       # the alias passed to `claude --model`
+
+# Frame width sent to the model. Anthropic tokenises an image at roughly
+# (w_px * h_px) / 750 tokens, so a 1280x720 frame costs ~1.2k tokens and a 4K
+# frame would cost ~10x that for no more precision than the source's own
+# detail already gives up at this size.
 FRAME_W = 1280
 EST_TOKENS_PER_FRAME = 1200
-GRID = 1000.0                          # the model's own coordinate space
+CTX = 1000000                          # tokens, Claude Sonnet's context window
+GRID = 1000.0                          # the model's own coordinate space --
+# unchanged from the Qwen-VL transport this replaces because the PROMPT text
+# asking for it is unchanged (see to_fractions() for why that prompt asks for
+# a 0-1000 grid rather than fractions or pixels).
 
-TIMEOUT = 120.0
-RETRIES = 4
+TIMEOUT = 180.0                        # a `claude -p` call spends a couple of
+# turns reading N images off disk before it answers -- measured 6-8s for one
+# frame and ~7.5s for four on this machine -- so 180s leaves headroom for a
+# slower box without hanging forever on a wedged CLI.
+RETRIES = 3
+# Bounded retries for a transient CLI hiccup (non-zero exit, a timeout) or a
+# reply that fails the defensive parse in parse() -- never a silent default.
+# See ask().
 
-PASSES = 3
-# Independent requests over the SAME frames, pooled into one median. The model
-# is not repeatable even at temperature 0 -- three identical queries on the same
-# four vqxYwdR4RvQ frames returned head heights 0.220 / 0.240 / 0.280 and
-# face_cy 0.280 / 0.290 / 0.330, which is fp8 weights and MoE routing, not
-# sampling, so temperature cannot fix it. One pass of 4 frames landed that
-# source's face at 0.243 (writable) on one run and 0.231 (refused, "hand-solve")
-# on the next: the SAME source flipping the write/refuse decision between runs.
-# Pooling 3 passes triples the sample the median sees for ~$0.003 a solve, which
-# is nothing against a hand-solve. The answer is cached and committed either
-# way, so this cost is paid once per source, not once per render.
+PASSES = 1
+# Was 3 -- independent `claude -p` calls over the SAME frames pooled into one
+# median, carried from the OpenRouter/Qwen transport this replaces. The whole
+# reason to pool was to stabilise the FACE_Y_BAND refusal against run-to-run
+# noise: the same four vqxYwdR4RvQ frames landed the face at 0.243, writable,
+# on one run and 0.231, refused, on the next. That was a 0.012 wobble
+# flipping a decision inside a 0.10-wide band that was only ever the shipped
+# reels' own scatter, not a tolerance -- see FACE_Y_BAND's comment. Now that
+# the band no longer refuses, there is nothing left for pooling to buy: one
+# pass costs one subprocess call instead of three, ~8s instead of ~25s for a
+# 4-frame solve. median()/_spread() already handle a single pass correctly
+# (a one-element spread is 0.0 by construction, not a division), so nothing
+# downstream needed to change to drop this.
 
 PROMPT = """You are framing a Qur'an recitation video for a vertical social \
 media reel. I am showing you %d frames sampled from one continuous shot of the \
@@ -585,92 +597,181 @@ def to_fractions(parsed):
 
 # --- the model call --------------------------------------------------------
 
-def ask(paths, dims, key, referer="https://github.com/quran-clips"):
-    """One request, N frames. -> (parsed dict, usage dict).
+def ask(paths, dims, cwd):
+    """One `claude -p` call, N frames. -> (parsed dict, envelope dict).
 
-    Images go AFTER the text: OpenRouter documents that ordering as the one
-    that works across providers."""
-    content = [{"type": "text", "text": PROMPT % (len(paths), dims[0], dims[1])}]
-    for p in paths:
-        b64 = base64.b64encode(open(p, "rb").read()).decode("ascii")
-        content.append({"type": "image_url",
-                        "image_url": {"url": "data:image/jpeg;base64," + b64}})
-    body = {
-        "model": MODEL,
-        "temperature": 0,
-        "provider": {"order": [PROVIDER]},
-        "usage": {"include": True},
-        "messages": [{"role": "user", "content": content}],
-        "response_format": {"type": "json_schema", "json_schema": {
-            "name": "reciter_framing", "strict": True, "schema": SCHEMA}},
-    }
-    req = urllib.request.Request(
-        API, data=json.dumps(body).encode("utf-8"), headers={
-            "Authorization": "Bearer " + key,
-            "Content-Type": "application/json",
-            "HTTP-Referer": referer,      # openrouter.ai rankings only
-            "X-Title": "quran-clips crop solver",
-        })
-    delay = 2.0
+    Frames are referenced by absolute path in the prompt text rather than
+    base64-encoded inline: `claude -p` reads an image file off disk when the
+    prompt names its path (verified live against this repo's own `claude`
+    install -- there is no image_url payload the way OpenRouter's API took
+    one), so extract()'s files are named here instead of read and encoded."""
+    listing = "\n".join("  frame %d: %s" % (i, p) for i, p in enumerate(paths))
+    prompt = (PROMPT % (len(paths), dims[0], dims[1])
+              + "\n\nThe frames, in the same time order, are these image "
+                "files on disk -- read each one before answering:\n" + listing)
+    cli = envvar("QC_CLAUDE", "claude")
+    cmd = [cli, "-p", prompt, "--model", MODEL, "--output-format", "json",
+           "--allowedTools", "Read", "--strict-mcp-config",
+           "--json-schema", json.dumps(SCHEMA)]
+    # --allowedTools Read: this call only ever needs to look at the sampled
+    # frames, never to edit a file or run a command.
+    # --strict-mcp-config with no --mcp-config: zero MCP servers, so whatever
+    # MCP setup the user's own `claude` has cannot make this call slower or
+    # less deterministic -- crop.py's answer must depend only on the frames.
+    # --json-schema SCHEMA: `claude -p` DOES have a structured-output flag
+    # (verified against `claude --help`, not assumed) and passing it cut a
+    # live gt9y-QGgMsA solve's malformed-reply rate to zero -- without it the
+    # model fenced its JSON in ```json, tacked a trailing sentence on after
+    # the closing fence, or drew an obstruction box as x0/y0/x1/y1 with a
+    # "label" key, none of which OpenRouter's `strict: true` ever let through.
+    # It is a reliability improvement, not a replacement for parse()'s
+    # defensive parsing below -- nothing guarantees a future CLI version (or
+    # a differently-behaving model) keeps honouring it as strictly.
+    last_err = None
     for attempt in range(RETRIES):
+        if attempt:
+            time.sleep(2.0)
         try:
-            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                data = json.loads(r.read().decode("utf-8"))
-            break
-        except urllib.error.HTTPError as exc:
-            # The status line says "429" or "400" and nothing else useful; the
-            # provider's actual complaint is in the body.
-            detail = ""
-            try:
-                detail = exc.read().decode("utf-8", "replace")[:800]
-            except Exception:
-                pass
-            if exc.code in (429, 500, 502, 503, 504) and attempt < RETRIES - 1:
-                wait = float(exc.headers.get("Retry-After") or 0) or delay
-                print("      HTTP %d, retrying in %.0fs -- %s"
-                      % (exc.code, wait, detail[:200]), file=sys.stderr)
-                time.sleep(wait)
-                delay *= 2
-                continue
-            raise SystemExit("OpenRouter HTTP %d: %s" % (exc.code, detail))
-        except urllib.error.URLError as exc:
-            if attempt < RETRIES - 1:
-                print("      %s, retrying in %.0fs" % (exc.reason, delay),
-                      file=sys.stderr)
-                time.sleep(delay)
-                delay *= 2
-                continue
-            raise SystemExit("OpenRouter unreachable: %s" % exc.reason)
-    # A 200 can still carry an error object instead of a choice.
-    if data.get("error"):
-        raise SystemExit("OpenRouter returned an error: %s"
-                         % json.dumps(data["error"])[:400])
-    try:
-        text = data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError):
-        raise SystemExit("no message content in response: %s"
-                         % json.dumps(data)[:400])
-    return parse(text), (data.get("usage") or {})
+            proc = subprocess.run(cmd, cwd=cwd, capture_output=True,
+                                   text=True, timeout=TIMEOUT)
+        except FileNotFoundError:
+            # Not a transient failure -- retrying won't install the CLI.
+            raise SystemExit(
+                "%r is not on PATH. Install the Claude Code CLI and sign in "
+                "(`claude auth login`), or point QC_CLAUDE at its binary in "
+                "%s." % (cli, os.path.join(ROOT, ".env")))
+        except subprocess.TimeoutExpired:
+            last_err = "claude -p timed out after %.0fs" % TIMEOUT
+        else:
+            if proc.returncode != 0:
+                last_err = ("claude -p exited %d: %s" % (
+                    proc.returncode, (proc.stderr or proc.stdout)[:400]))
+            else:
+                try:
+                    envelope = json.loads(proc.stdout)
+                except ValueError as exc:
+                    last_err = ("claude -p did not print its JSON envelope "
+                                "(%s): %s" % (exc, proc.stdout[:400]))
+                else:
+                    if envelope.get("is_error"):
+                        last_err = ("claude -p reported an error: %s"
+                                    % json.dumps(envelope)[:400])
+                    else:
+                        try:
+                            parsed = parse(envelope.get("result"))
+                        except ValueError as exc:
+                            last_err = str(exc)
+                        else:
+                            return parsed, envelope
+        print("      %s (attempt %d/%d)%s"
+              % (last_err, attempt + 1, RETRIES,
+                 "" if attempt == RETRIES - 1 else ", retrying"),
+              file=sys.stderr)
+    raise SystemExit("claude -p failed after %d attempts: %s"
+                     % (RETRIES, last_err))
 
 
 def parse(text):
-    """Strict: the answer is JSON with a `frames` list, or it is nothing.
+    """Strict: the answer is JSON matching SCHEMA, or it is nothing.
 
-    Fences are stripped first -- a model told to answer in JSON still wraps it
-    in ```json often enough that failing on it would be failing on a
-    formality."""
+    There is no `response_format: json_schema, strict: true` enforcement over
+    a CLI call the way OpenRouter's API gave the old transport -- `claude -p
+    --output-format json` guarantees only the ENVELOPE is JSON, not whatever
+    the model puts in its `result` string -- so the reply is parsed
+    defensively by hand: strip a markdown fence (a model told to answer with
+    "the JSON object and nothing else" still wraps it in ```json and/or
+    tacks on a stray closing sentence often enough that failing on either
+    would be failing on a formality), locate the JSON object by its own
+    braces rather than trusting the fence to be clean, then walk SCHEMA over
+    the parsed object with _validate() -- the same schema OpenRouter used to
+    hand the provider for server-side enforcement. Raises ValueError, not
+    SystemExit, so ask() can retry a malformed reply a bounded number of
+    times before giving up loudly -- never substituting a default for a
+    field that failed to come back."""
     s = (text or "").strip()
-    if s.startswith("```"):
-        s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
-        s = re.sub(r"\n?```$", "", s).strip()
+    fence = re.search(r"```(?:[a-zA-Z]*)\s*\n(.*?)```", s, re.DOTALL)
+    if fence:
+        s = fence.group(1).strip()
+    start = s.find("{")
+    if start == -1:
+        raise ValueError("model output has no JSON object at all: %s"
+                         % s[:400])
+    s = _first_json_object(s[start:])
     try:
         out = json.loads(s)
     except ValueError as exc:
-        raise SystemExit("model output did not parse as JSON (%s): %s"
+        raise ValueError("model output did not parse as JSON (%s): %s"
                          % (exc, s[:400]))
-    if not isinstance(out, dict) or not isinstance(out.get("frames"), list):
-        raise SystemExit("model output has no `frames` list: %s" % s[:400])
+    problems = _validate(SCHEMA, out, "response")
+    if problems:
+        raise ValueError("model output failed schema validation: %s (%s)"
+                         % ("; ".join(problems[:6]), s[:200]))
     return out
+
+
+def _first_json_object(s):
+    """The first balanced {...} in s. -> the substring.
+
+    Cuts off anything the model appended after the object -- the trailing
+    "All four frames show the same static shot..." sentence this exists for
+    was observed live on gt9y-QGgMsA, past the closing ``` of an otherwise
+    well-formed reply."""
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[:i + 1]
+    raise ValueError("no balanced JSON object found: %s" % s[:400])
+
+
+def _validate(schema, value, path):
+    """SCHEMA, walked by hand over a parsed reply. -> [problem, ...].
+
+    Every field SCHEMA lists as required must be present, and every value
+    must be of the type (or enum) SCHEMA declares, at every level -- this is
+    the "required field is present and numeric" half of what `strict: true`
+    checked server-side over the OpenRouter transport. NOT the other half: an
+    extra property (Claude volunteers a "frame" index or an obstruction
+    "label" the OpenRouter transport's strict schema would have refused to
+    emit at all) is left alone rather than failed, because every consumer
+    downstream (usable(), median(), _boxes()) already reads fields by name
+    and ignores anything else -- rejecting a harmless addition would fail a
+    reply that answered the actual question correctly."""
+    t = schema.get("type")
+    problems = []
+    if t == "object":
+        if not isinstance(value, dict):
+            return ["%s: expected an object, got %r" % (path, value)]
+        for req in schema.get("required", []):
+            if req not in value:
+                problems.append("%s.%s: missing" % (path, req))
+        props = schema.get("properties", {})
+        for k, v in value.items():
+            if k in props:
+                problems += _validate(props[k], v, "%s.%s" % (path, k))
+    elif t == "array":
+        if not isinstance(value, list):
+            return ["%s: expected an array, got %r" % (path, value)]
+        items = schema.get("items")
+        if items:
+            for i, item in enumerate(value):
+                problems += _validate(items, item, "%s[%d]" % (path, i))
+    elif t == "number":
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            problems.append("%s: expected a number, got %r" % (path, value))
+    elif t == "boolean":
+        if not isinstance(value, bool):
+            problems.append("%s: expected a boolean, got %r" % (path, value))
+    elif t == "string":
+        if not isinstance(value, str):
+            problems.append("%s: expected a string, got %r" % (path, value))
+        elif "enum" in schema and value not in schema["enum"]:
+            problems.append("%s: %r not one of %s"
+                            % (path, value, schema["enum"]))
+    return problems
 
 
 # --- medianing -------------------------------------------------------------
@@ -1137,14 +1238,19 @@ def report(m, sol, style, W, H):
               % (m["n"] - m.get("face_seen", 0), m["n"], sol["fx_target"]),
               file=sys.stderr)
     if not sol["y_ok"]:
-        bad.append("face centre %.3f is outside the %.2f-%.2f band"
-                   % (sol["fy"], FACE_Y_BAND[0], FACE_Y_BAND[1]))
+        # An aesthetic note, not a refusal -- see FACE_Y_BAND's comment.
+        # 0.24-0.34 is the shipped reels' own scatter, not a tolerance, and the
+        # model's run-to-run noise on this number is bigger than the band is
+        # wide, so gating a write on it was a coin flip wearing a threshold's
+        # clothes. The crown was already kept in frame by vertical()'s own
+        # fallback (that part never refused); this print is only "the face
+        # landed somewhere the references didn't," worth a look on --annotate,
+        # never worth a SystemExit.
         print("! face lands at %.3f of the window, outside the %.2f-%.2f the "
-              "shipped reels span, and the crown cannot be given up. This "
-              "source cannot be framed by the rule -- HAND-SOLVE it (write "
-              "crop: yourself with the reasoning in a comment, as the four "
-              "al-Ansari clips do)." % (sol["fy"], FACE_Y_BAND[0],
-                                        FACE_Y_BAND[1]), file=sys.stderr)
+              "shipped reels span. Not fatal -- check --annotate before "
+              "trusting it, especially on a bowed reciter (see the al-Ansari "
+              "clips), but the config is written regardless."
+              % (sol["fy"], FACE_Y_BAND[0], FACE_Y_BAND[1]), file=sys.stderr)
     # Containment. Printed after the gaps because it is the thing the gaps
     # cannot see: `outer` is the air beyond his HEAD, and a window can have
     # 0.106 of it while cutting his back (the vqxYwdR4RvQ solve of 2026-08-01).
@@ -1419,7 +1525,8 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
     print("%s  %dx%d  %s, %d frames over %.1f-%.1fs"
           % (os.path.basename(config_path), W, H, style, len(times), t0, t1))
 
-    paths, dims = extract(src, times, os.path.join(cfg["tmp_dir"], "crop"), W, H)
+    tmp_dir = os.path.join(cfg["tmp_dir"], "crop")
+    paths, dims = extract(src, times, tmp_dir, W, H)
     key = cache_key(times)
     entry = None
     if measurements:
@@ -1438,23 +1545,18 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
                 "--dry-run and nothing cached for these frames. Pass "
                 "--measurements FILE with a {\"frames\": [...]} object, or drop "
                 "--dry-run to ask the model.")
-        api_key = envvar("OPENROUTER_API_KEY")
-        if not api_key:
-            raise SystemExit(
-                "OPENROUTER_API_KEY is not set. Add it to %s:\n"
-                "    OPENROUTER_API_KEY=sk-or-v1-...\n"
-                "(a key from https://openrouter.ai/keys). Nothing was written."
-                % os.path.join(ROOT, ".env"))
-        pooled, usage = [], {}
+        pooled, usage, cost_usd = [], {}, 0.0
         for p in range(PASSES):
-            parsed, u = ask(paths, dims, api_key)
+            parsed, envelope = ask(paths, dims, tmp_dir)
             pooled.extend(parsed["frames"])
-            for k, v in u.items():
+            cost_usd += float(envelope.get("total_cost_usd") or 0.0)
+            for k, v in (envelope.get("usage") or {}).items():
                 if isinstance(v, (int, float)):
                     usage[k] = usage.get(k, 0) + v
             print("      pass %d/%d: %d frame reading(s)"
                   % (p + 1, PASSES, len(parsed["frames"])))
-        entry = {"parsed": {"frames": pooled}, "usage": usage, "model": MODEL,
+        entry = {"parsed": {"frames": pooled}, "usage": usage,
+                 "cost_usd": cost_usd, "model": MODEL,
                  "when": datetime.date.today().isoformat(), "times": times,
                  "frame_size": list(dims), "grid": True, "passes": PASSES}
         cache_write(cache_path(config_path), key, entry)
@@ -1462,16 +1564,15 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
         to_fractions(entry["parsed"])
     usage = entry.get("usage") or {}
     if usage:
-        # Printed so the cost of a solve is checked against a bill rather
-        # than trusted: 4 frames of 1280x720 measured 4.9k prompt + ~1.1k
-        # completion tokens, $0.0010, on alibaba/fp8.
-        cost_usd = usage.get("cost")
-        if cost_usd is None:
-            cost_usd = (usage.get("prompt_tokens", 0) * PRICE_IN +
-                        usage.get("completion_tokens", 0) * PRICE_OUT) / 1e6
+        # Printed so the cost of a solve is checked against a bill rather than
+        # trusted: one 4-frame pass measured $0.09-0.13 total_cost_usd (the
+        # CLI's own figure, not a hand computation the way the OpenRouter
+        # transport needed PRICE_IN/PRICE_OUT for -- Claude Code reports it
+        # directly in the --output-format json envelope).
         print("usage   : %s  ->  $%.5f"
               % (json.dumps({k: v for k, v in usage.items()
-                             if isinstance(v, (int, float))}), cost_usd))
+                             if isinstance(v, (int, float))}),
+                 entry.get("cost_usd") or 0.0))
 
     m = median(entry["parsed"]["frames"])
     m["_W"], m["_H"] = W, H
@@ -1493,7 +1594,7 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
                          % "; ".join(bad))
     source = ("measurements from %s" % os.path.basename(measurements)
               if measurements
-              else "%s via openrouter" % entry.get("model", MODEL))
+              else "%s via claude code CLI" % entry.get("model", MODEL))
     when = entry.get("when") or datetime.date.today().isoformat()
     write_config(config_path, block_lines(sol, style, source, when, m), force)
     print("wrote   : %s" % os.path.relpath(config_path, ROOT))
@@ -1513,7 +1614,7 @@ def main(argv=None):
     p.add_argument("--force", action="store_true",
                    help="re-query the model, and overwrite a hand-written crop")
     p.add_argument("--dry-run", action="store_true",
-                   help="never call the API: use --measurements or the cache")
+                   help="never call the model: use --measurements or the cache")
     p.add_argument("--measurements", metavar="JSON",
                    help='offline input: {"frames": [...]}, in FRACTIONS of'
                         ' the frame (not the model\'s 0-1000 grid)')

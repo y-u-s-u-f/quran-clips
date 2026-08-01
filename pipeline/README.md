@@ -37,19 +37,22 @@ align.py (CTC forced alignment of the KNOWN mushaf text)
         segments; a restart collapsed into one long word is missed
 
 crop.py (bars + hz only -- `default` frames itself at render time)
-    ├── samples frames, asks a vision model for the reciter's head box,
-    │   silhouette, posture and any burned-in graphics
+    ├── samples frames, asks a model (the local `claude` CLI) for the
+    │   reciter's head box, silhouette, posture and any burned-in graphics
     ├── computes the 16:9 window: three EQUAL gaps across the frame --
     │   edge | caption column | his head | edge
     └── writes `crop:` and `x_offset:` back into the config, so the render
-        stays offline and reproducible. Refuses rather than guesses when the
-        face falls outside 0.24-0.34 of the window (a bowed reciter is a
-        hand solve). `--annotate` draws the solve over a frame to check it,
-        and is NOT optional: the guards only check the model's numbers
-        against each other, so a shot with no visible face (draped, hooded,
-        turned away) returns a confident self-consistent solve boxed on
-        something that is not his head. Covered and turned-away reciters
-        are hand solves too.
+        stays offline and reproducible. Estimate, not an exact optimum: the
+        reference reels it was calibrated against were never consistent with
+        each other, so "fits the dimensions and looks good" is the bar.
+        Refuses only when there is no face at all (draped, hooded, turned
+        away -- a hand solve) or the caption anchor falls off the frame; a
+        face outside the shipped reels' own 0.24-0.34 spread is now just a
+        printed note, not a refusal. `--annotate` draws the solve over a
+        frame and is NOT optional: the guards only check the model's numbers
+        against each other, so a shot with no visible face returns a
+        confident self-consistent solve boxed on something that is not his
+        head, and only looking at the frame catches that.
 
 generate.py
     ├── validates the config (unknown key = error; groups must cover the
