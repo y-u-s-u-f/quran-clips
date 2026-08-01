@@ -69,11 +69,33 @@ What each one does:
   `--annotate P` / `--sheet P` to inspect, `--write` to cache. `qc author`
   refuses to reuse a crop solved for the OTHER style — solve it per style.
   Needs `tools/author-venv`.
+  **Placement is ONE rule for both styles** (`qc.author.crop.targets`, rewritten
+  2026-07-30 — the two old per-style rules were the same rule twice):
+  - *Vertical:* **face centre at 0.275 H.** Soft cost, 0.24–0.34 warning band.
+    Centring at 0.50 H was tried on 2026-07-30 and reverted on 2026-07-31 —
+    it broke every upright reciter in `reels/`.
+    **The face is a PROXY for headroom, and it fails on a reciter who bows.**
+    A bowed reciter's face sits low inside a tall head, so pinning the face
+    crops his crown off the top of the band. Always check the top of his head
+    is in frame; do not trust the number alone. There is no automatic fix —
+    anchoring on the crown was tried and abandoned (the motion blob's top edge
+    lands *above* the shipped window on all three cached sources, and YuNet's
+    face height varies 140–465 px across comparable shots, so no
+    `crown = face_top − k × face_h` estimate holds). **A bowed reciter is a
+    hand-solve** in that clip's own `video_bg.crop`, with the reasoning in a
+    comment — see the four Salih al-Ansari clips (`-GZR1C9Acd4`).
+  - *Horizontal:* **equal gaps.** The frame holds two blocks, the reciter and
+    the caption column; every gap between them and the frame edges is the same
+    width — three gaps when he fits with air on his outer side, two when a wide
+    shot makes him bleed off it. The caption lands centred in the gap on its own
+    side. The caption column's width is the style's own: 0.45 W for bars
+    (`text.max_line_width_frac`), 0.504 W for default. Caption goes on the side
+    he FACES. `bars`'s old fixed "anchor 0.30 / clear 0.60" is this rule's
+    answer for one particular reciter width — it now adapts instead.
   **`! camera is NOT fixed` is not a warning to wave through.** It means the
   source cuts between angles, and ONE cached crop cannot be right for all of
   them: the solve lands on the dominant angle, so a clip whose window sits on a
-  minority angle silently violates the face-placement rule (face at 0.725 W /
-  0.275 H, head edge ≥ 0.60 W so the captions clear it). `crop` samples the
+  minority angle silently violates the placement rule above. `crop` samples the
   whole source and has no `--range`, so verify the framing on frames from the
   CLIP'S OWN window and, when it differs, override `video_bg.crop` per clip in
   clip.yaml — never re-cache the source, which is shared with every other clip
@@ -96,13 +118,20 @@ What each one does:
   `! restart detected` (ibtidāʾ) and `! Pn->Pn+1 is NOT a true waqf` — pass those
   up to the user; they are judgement calls, not bugs.
   **Two things `author` gets wrong often enough to check every time:**
-  *Held final words.* The last card's `t1` and `segment.end` come from the ASR
-  word end, which lands where the word is *identified*, not where the reciter
-  stops. On a long melisma that cuts the clip mid-hold. Read the RMS envelope
-  past the nominal end and move `segment.end` into the real trough before the
-  next ayah. The same applies to any card boundary the reciter stretches: the
-  next caption starts crossfading `crossfade_s` BEFORE the boundary, so a `t1`
-  set at the ASR end makes the next card appear while he is still holding.
+  *Held words — at EVERY boundary, not just the clip's end.* An ASR word edge
+  lands where the word is *identified*, not where the reciter stops: a held
+  final madd bleeds into the NEXT word's ASR span, so the raw edge sits
+  seconds before the real seam. The tell: a short word carrying an implausibly
+  long span right after a madd-final word (on as-sajdah-10-11, قُلْ "spanned"
+  1.76s because كافرون was held 1.55s into it — the swap fired mid-hold and
+  the owner heard it instantly). At the clip's end this cuts the clip
+  mid-hold: read the envelope past the nominal end and move `segment.end`
+  into the real trough. At interior ayah boundaries the emitter now rescues
+  this itself (`emit._bleed_dip`, 2026-07-31: a deep dip inside the incoming
+  word's span beats the word edge) — but a LEGATO junction, where the reciter
+  runs one word into the next with no envelope drop at all, has no measurable
+  seam; author's number there is an estimate and the emitted comment says so.
+  Those are the boundaries to confirm by ear before export.
   *Line breaks.* The breaker optimises for the width cap, not for balance
   between the two lines of a card — see "Caption line balance" below.
 - **`check --output` now DECODES the file, not just its header.** Geometry, fps,
@@ -138,6 +167,17 @@ Fixing a clip: edit `clips/<name>/clip.yaml` (segment start/end, `segment.cuts`,
 the card split, `bar_color`), re-run `qc check`, re-render. Per-clip problems get
 per-clip fixes; only an account-wide shift touches `templates/*.yaml`, and
 `bar.auto.*` is reference-validated — never hand-tune it.
+
+**Moving a card boundary by hand: the new time must be MEASURED, never
+copied.** Raw Whisper word edges are not boundaries (held finals bleed into
+the next word's span — see above), and eyeballed times drift. The recipe:
+re-run `qc author <id> <s>:<a>-<b> <start> <end> -n` on the clip's own window
+(the ASR is cached under `sources/_align/`, so this is fast) and read the
+boundary times and per-edge comments it emits — they are envelope-snapped.
+If your grouping differs from author's, the emitted numbers still give you
+every dip; put the swap at the dip's swap-in (`t0`), which is just before the
+next word's attack. A boundary you cannot back with a dip is an ear call —
+say so in the yaml comment instead of writing a confident number.
 
 ## Caption line balance (bars)
 

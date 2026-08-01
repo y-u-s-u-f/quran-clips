@@ -558,9 +558,13 @@ def _sublist(hay, needle):
 #
 # What the check is actually for: the pill must read as a highlight struck
 # THROUGH the letters, not as a box behind them. That fails when the ratio gets
-# SMALL. Below ~1.8 the pill approaches the letter height and reads as a box;
-# an unusually large ratio is not a defect at all, just a thin strike.
-INK_BAR_FAIL_MIN = 1.8            # below this the pill reads as a box
+# SMALL. Below the floor the pill approaches the letter height and reads as a
+# box; an unusually large ratio is not a defect at all, just a thin strike.
+# Floor history: 1.8 until 2026-07-31, lowered to 1.65 by owner decision so
+# that 15:45's closing line فِى جَنَّٰتٍۢ وَعُيُونٍ (1.70 -- three words with no
+# ascender; no legal card partition of the ayah clears 1.8 without overflowing
+# the width cap) can ship in bars (al-hijr-45-47).
+INK_BAR_FAIL_MIN = 1.65           # below this the pill reads as a box
 INK_BAR_WARN_MIN, INK_BAR_WARN_MAX = 2.25, 2.95    # observed across real clips
 BAR_MAX_FRAC = 0.50
 

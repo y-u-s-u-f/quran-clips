@@ -1,11 +1,17 @@
 # quran-clips
 
-A command-line pipeline that turns a YouTube recitation into a captioned clip:
-find the ayat, cut the window at real pauses, align the words against the mushaf,
-render Arabic type with Pillow, composite in ffmpeg.
+Turning a YouTube recitation into a posted reel, driven from Claude Code:
 
-Everything a caption says is checked against the Uthmani text before a frame is
-drawn. Nothing is typed by hand into a video editor.
+> make a post from https://www.youtube.com/watch?v=…
+
+The agent downloads the source, finds the ayat, proposes windows worth clipping,
+cuts one at real pauses, aligns the words against the mushaf, renders Arabic type
+with Pillow, composites in ffmpeg, and files the result in the reel library.
+
+The commands underneath are the boring part, and deliberately so. Every step is a
+script with an assertion behind it, so there is nothing for a model to freelance
+on: everything a caption says is checked against the Uthmani text before a frame
+is drawn, and no model retypes a single Arabic word.
 
 ## Two styles
 
@@ -46,6 +52,48 @@ Sahih International text. Parameters live in `templates/bars.yaml` and
 `templates/style.yaml`; both were derived from pixel measurements of reference
 reels, written up in `style/refs2/STYLE2_SPEC.md` and `style/STYLE_SPEC.md`.
 
+## Driving it from Claude Code
+
+[`.claude/skills/make-post/SKILL.md`](.claude/skills/make-post/SKILL.md) is the
+operating manual, and it ships in the repo — clone this and the skill is there.
+The agent runs the sequence below, reads what each command prints, and stops at
+the few points where a tool hands a decision up. What makes that safe is not the
+prompt, it is where the line between script and model is drawn:
+
+**Scripted, no model.** Download, ayah location, the framing solve, mushaf
+alignment, the RMS envelope, splitting cards at waqf gaps, caption geometry, the
+render, the export. Reproducible: four golden clips freeze the exact ffmpeg argv,
+the filtergraph, and the md5 of every layer, so a render change that shifts one
+byte is caught rather than reviewed.
+
+**Model as a judge, answering in indices.** `propose` asks whether a candidate
+window stands alone or opens on a dangling referent — it answers in ayah numbers.
+The line-breaker answers with a single integer. The English cutter answers with
+indices into the committed Sahih International text. None of them return prose,
+and none of them return Arabic: caption lines are built by *slicing* the word
+list from `qc.quran` by index, because Uthmani codepoints — madda alif, small
+high marks, superscript alif — corrupt on retyping. The one character a model may
+insert anywhere in the pipeline is U+0640 tatweel, as calligraphic elongation,
+and it is stripped before every comparison, so it changes layout and nothing
+else. Each judge shells out to the `claude` CLI (`QC_CLAUDE_BIN` to point
+elsewhere, `--no-judge` to skip) and degrades to a documented fallback when it is
+absent; the report says which path it took.
+
+**Handed up to a person.** The tools raise the calls they cannot make:
+`! restart detected` (an ibtidāʾ inside the window), `! Pn->Pn+1 is NOT a true
+waqf`, `! camera is NOT fixed` (the source cuts between angles, so one cached
+crop cannot be right for all of them). Two more the skill makes the agent check
+every time: a held final word, where the ASR end lands where the word is
+*identified* and not where the reciter stops; and card lines of visibly unequal
+width, which `check` will pass because it only asserts the width cap.
+
+That last one is what the skill is really for — the standards no assertion can
+express. Two lines of a card within ~30px of each other. Fix a bad card by moving
+the card boundary first, the line break second, kashida last. Never more than
+about six kashida in a line, never inside a lam-alef ligature, never after a
+letter that does not join leftward. Never `golden.py bless` to silence a failing
+golden. Never render over a failing `check`.
+
 ## The pipeline
 
 <img src="docs/pipeline.png" width="100%" alt="Flowchart: a YouTube URL flows through qc source add, locate, crop, propose, author, a pre-render check gate, render, an output check gate, and export. The mushaf and translation assets feed locate, author, and check; OpenCV/YuNet, the claude CLI, and mlx-whisper feed crop, propose, and author; the style templates feed render.">
@@ -75,8 +123,8 @@ qc export clips/<name>   -> reels/RECITER-SURAH-a-b.mp4 with metadata
 
 ### What `check` enforces
 
-The reason this is a pipeline and not an editing session. Eleven assertions,
-under a second, no ffmpeg:
+The gate. Nothing renders over a failing `check`, which is what makes it safe to
+let an agent drive: eleven assertions, under a second, no ffmpeg.
 
 1. **Arabic == mushaf.** Waqf signs and U+0640 tatweel are stripped, then the
    caption must match the Uthmani text exactly.
@@ -93,7 +141,7 @@ survives a corrupted bitstream -- a file whose payload was interleaved by a seco
 writer still reports the right geometry and duration -- so a decode pass plus a
 decoded-frame count is the only thing that catches it.
 
-## Running it
+## Setting it up
 
 macOS or Linux. Every external tool is resolved per machine (`$QC_*`, then
 `qc.toml`, then PATH, then a platform hint), so there are no absolute paths baked
@@ -148,7 +196,7 @@ A signed googlevideo URL embeds the exit IP that resolved it, so only sticky exi
 can download and the pool is pinned per video id. Credentials are redacted in
 every log line.
 
-Then:
+Then ask Claude Code for a post, or drive it by hand:
 
 ```sh
 ./bin/qc source add "https://www.youtube.com/watch?v=..."
@@ -162,14 +210,10 @@ Then:
 A 24-second `bars` render takes about six minutes. `render --preview` writes a
 half-size, effects-free version for judging timing and layout — never the look.
 
-The `propose` coherence judge and the caption line-breaker shell out to the
-`claude` CLI (`QC_CLAUDE_BIN` to point elsewhere, `--no-judge` to skip). Both
-degrade to a documented fallback when it is absent; the report says which path
-it took.
-
 ## Layout
 
 ```
+.claude/       skills/make-post — the agent's operating manual for the above
 qc/            the package: author/ (fetch, locate, crop, propose, align,
                linebreak, emit), render.py, ffgraph.py, check.py, fx/
 scripts/       render_bars.py, render_text.py, export_reel.py, status.py,
