@@ -1,0 +1,15 @@
+# an-Naba 78:31-34, Ali Salah Al-Omar -- bars style test reel.
+style: bars
+signature: "TilawatQuraniyyah"
+
+surah: 78
+ayah_start: 31
+ayah_end: 34
+
+trim: [16.4, 48.0]
+
+groups:
+  - n_words: 3        # إن للمتقين مفازا
+  - n_words: 2        # حدائق وأعنابا
+  - n_words: 2        # وكواعب أترابا
+  - n_words: 2        # وكأسا دهاقا

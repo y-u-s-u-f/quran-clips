@@ -1,0 +1,19 @@
+# an-Naba 78:31-34, Ali Salah Al-Omar -- default style test reel.
+style: default
+signature: "TilawatQuraniyyah"
+
+surah: 78
+ayah_start: 31
+ayah_end: 34
+
+trim: [16.4, 48.0]
+
+groups:
+  - n_words: 3
+    english: "Indeed, for the righteous is attainment"
+  - n_words: 2
+    english: "Gardens and grapevines"
+  - n_words: 2
+    english: "And full-breasted [companions] of equal age"
+  - n_words: 2
+    english: "And a full cup"

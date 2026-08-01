@@ -1,0 +1,366 @@
+source_url: "https://www.youtube.com/watch?v=iBAYTGTcMt8"
+# THIS clip = Surah An-Naba ayah 31-40, at abs 00:00:16.450-00:04:42.820 in
+# the source. Timings below were produced by `qc author`: mlx-whisper
+# (large-v3-turbo) word timestamps over this window only, force-aligned onto
+# the mushaf text with a repeat-permitting DP, then every boundary snapped
+# to the deepest trough of a 10 ms RMS envelope. Speech level in this window
+# measures -11 dB, room floor -46 dB.
+style: default
+reciter:
+  name_en: "Ali Salah Al-Omar"
+  name_ar: "علي صلاح العمر"
+# Framing is a property of the SOURCE (fixed camera), not of
+# this clip: solved for the default style by `qc crop` and cached in sources/meta/iBAYTGTcMt8.yaml.
+video_bg:
+  mode: live
+  crop:
+    x: 0
+    y: 0
+    w: 568
+    h: 320
+text:
+  center_x_frac: 0.681
+  # caption block CENTRED vertically (style.yaml text_block.block_center_y).
+  # This anchors the ARABIC line, not the block: the English hangs below it,
+  # so the block centre sits 0.024 H under the anchor. Measured off the
+  # rendered overlay with each card's own Sahih fragment under it -- the cards
+  # then centre at 0.484, 0.488, 0.492, 0.492, 0.493, 0.494, 0.495, 0.495,
+  # 0.496, 0.496, 0.496, 0.499, 0.499, 0.499, 0.499, 0.499, 0.499, 0.500,
+  # 0.501, 0.501, 0.501, 0.501, 0.501, 0.502, 0.504, 0.505, 0.505, 0.508,
+  # 0.508, 0.515, 0.524, 0.530, 0.530, 0.530; a fragment that wraps to two
+  # lines pulls its card ~0.02 H lower.
+  center_y_frac: 0.476
+segment:
+  # onset abs 16.57, MEASURED off the envelope (first sustained rise to within
+  # 7 dB of speech, preceded by 150 ms at least 12 dB down) rather than taken
+  # from the ASR, which put the first word at 16.57. start 16.45 -> onset rel
+  # 0.12 (IG hook). End 282.82 sits 0.00 s after the last word, at the deepest
+  # point of the following gap (0 dB below speech) -- SHALLOW: check by ear
+  # that nothing leaks into the tail.
+  start: "00:00:16.450"   # absolute in source
+  end: "00:04:42.820"     # absolute in source; duration 266.37s
+surah: 78
+ayah_range: [31, 40]
+# RESTART detected by the alignment at rel 67.57: the reference pointer
+# jumps back from حِسَابًۭا to لَّا -- ibtida'. The repeated words are
+# captioned as recited, not as written.
+# RESTART detected by the alignment at rel 116.09: the reference pointer
+# jumps back from ٱلرَّحْمَٰنِ to رَّبِّ -- ibtida'. The repeated words are
+# captioned as recited, not as written.
+# RESTART detected by the alignment at rel 139.42: the reference pointer
+# jumps back from خِطَابًۭا to رَّبِّ -- ibtida'. The repeated words are
+# captioned as recited, not as written.
+phrases:   # times RELATIVE to clip start
+  - t0: 0.12
+    t1: 2.62
+    ayah: 31
+    ar: "إِنَّ"
+    # en: LLM (clause seam, cached)
+    en: 'Indeed, for'
+  # P1->P2: true waqf, 0.52s of silence. The 50 ms RMS envelope troughs to -32
+  # dB at rel 2.84, 21 dB below the -11 dB speech level.
+  - t0: 3.20
+    t1: 5.99
+    ayah: 31
+    ar: "لِلْمُتَّقِينَ مَفَازًا"
+    # en: LLM (clause seam, cached)
+    en: 'the righteous is attainment -'
+  # P2->P3 <-- NON-WAQF: ayah boundary 31 -> 32: a card never spans two ayat.
+  # The 50 ms RMS envelope troughs to -27 dB at rel 6.48, 16 dB below the -11
+  # dB speech level. That is continuous recitation, not a true waqf -- the
+  # swap sits in the last dip before the next word, and a human should confirm
+  # it reads cleanly.
+  - t0: 6.52
+    t1: 15.53
+    ayah: 32
+    ar: "حَدَآئِقَ وَأَعْنَٰبًۭا"
+    en: 'Gardens and grapevines'
+  # P3->P4: true waqf, 1.97s of silence. The 50 ms RMS envelope troughs to -45
+  # dB at rel 17.28, 34 dB below the -11 dB speech level.
+  - t0: 21.33
+    t1: 23.47
+    ayah: 33
+    ar: "وَكَوَاعِبَ أَتْرَابًۭا"
+    en: 'And full-breasted [companions] of equal age'
+  # P4->P5 <-- NON-WAQF: ayah boundary 33 -> 34: a card never spans two ayat.
+  # The 50 ms RMS envelope troughs to -22 dB at rel 23.57, 10 dB below the -11
+  # dB speech level. That is continuous recitation, not a true waqf -- the
+  # swap sits in the last dip before the next word, and a human should confirm
+  # it reads cleanly.
+  - t0: 23.97
+    t1: 25.87
+    ayah: 34
+    ar: "وَكَأْسًۭا"
+    # en: LLM (clause seam, cached)
+    en: 'And a'
+  # P5->P6: true waqf, 0.27s of silence. The 50 ms RMS envelope troughs to -32
+  # dB at rel 26.12, 21 dB below the -11 dB speech level.
+  - t0: 26.36
+    t1: 34.74
+    ayah: 34
+    ar: "دِهَاقًۭا"
+    # en: LLM (clause seam, cached)
+    en: 'full cup.'
+  # P6->P7: true waqf, 6.11s of silence. The 50 ms RMS envelope troughs to -55
+  # dB at rel 35.76, 43 dB below the -11 dB speech level.
+  - t0: 36.45
+    t1: 40.14
+    ayah: 35
+    ar: "لَّا يَسْمَعُونَ فِيهَا"
+    # en: LLM (clause seam, cached)
+    en: 'No ill speech will they hear therein'
+  # P7->P8 <-- NON-WAQF: no true waqf here, but the card ran to 6 words /
+  # 10.0s -- split at the deepest dip it contains. The 50 ms RMS envelope
+  # troughs to -19 dB at rel 40.18, 7 dB below the -11 dB speech level. That
+  # is continuous recitation, not a true waqf -- the swap sits in the last dip
+  # before the next word, and a human should confirm it reads cleanly.
+  - t0: 40.46
+    t1: 48.23
+    ayah: 35
+    ar: "لَغْوًۭا وَلَا كِذَّٰبًۭا"
+    # en: LLM (clause seam, cached)
+    en: 'or any falsehood -'
+  # P8->P9 <-- NON-WAQF: ayah boundary 35 -> 36: a card never spans two ayat.
+  # The 50 ms RMS envelope troughs to -25 dB at rel 48.41, 14 dB below the -11
+  # dB speech level. That is continuous recitation, not a true waqf -- the
+  # swap sits in the last dip before the next word, and a human should confirm
+  # it reads cleanly.
+  - t0: 48.50
+    t1: 54.16
+    ayah: 36
+    ar: "جَزَآءًۭ مِّن"
+    # en: LLM (clause seam, cached)
+    en: '[As] reward from your Lord,'
+  # P9->P10: true waqf, 0.57s of silence. The 50 ms RMS envelope troughs to
+  # -33 dB at rel 54.42, 21 dB below the -11 dB speech level.
+  - t0: 54.80
+    t1: 67.37
+    ayah: 36
+    ar: "رَّبِّكَ عَطَآءً حِسَابًۭا"
+    # en: LLM (clause seam, cached)
+    en: '[a generous] gift [made due by] account,'
+  # P10->P11: true waqf, 1.89s of silence. The 50 ms RMS envelope troughs to
+  # -48 dB at rel 68.73, 37 dB below the -11 dB speech level.
+  # HAND-FIX: `qc author` emitted t1 67.37 < t0 69.19 here -- an emit.py bug
+  # where the boundary right after an ibtida' restart (this card is a single
+  # repeated word) picked up an earlier edge's dip. Held to just before the
+  # next card's attack (69.40 - 0.05), per the same convention the pipeline
+  # itself uses at a non-waqf boundary.
+  - t0: 69.19
+    t1: 69.35
+    ayah: 35
+    ar: "لَّا"
+    # en: LLM (clause seam, cached)
+    en: 'No ill speech'
+  # P11->P12: true waqf, 1.89s of silence. The 50 ms RMS envelope troughs to
+  # -50 dB at rel 69.11, 38 dB below the -11 dB speech level.
+  - t0: 69.40
+    t1: 81.99
+    ayah: 35
+    ar: "يَسْمَعُونَ فِيهَا لَغْوًۭا وَلَا كِذَّٰبًۭا"
+    # en: LLM (clause seam, cached)
+    en: 'will they hear therein or any falsehood -'
+  # P12->P13 <-- NON-WAQF: ayah boundary 35 -> 36: a card never spans two
+  # ayat. The 50 ms RMS envelope troughs to -28 dB at rel 82.22, 16 dB below
+  # the -11 dB speech level. That is continuous recitation, not a true waqf --
+  # the swap sits in the last dip before the next word, and a human should
+  # confirm it reads cleanly.
+  - t0: 82.35
+    t1: 88.76
+    ayah: 36
+    ar: "جَزَآءًۭ مِّن"
+    # en: LLM (clause seam, cached)
+    en: '[As] reward from your Lord,'
+  # P13->P14: true waqf, 0.56s of silence. The 50 ms RMS envelope troughs to
+  # -34 dB at rel 89.34, 22 dB below the -11 dB speech level.
+  - t0: 89.37
+    t1: 97.82
+    ayah: 36
+    ar: "رَّبِّكَ عَطَآءً حِسَابًۭا"
+    # en: LLM (clause seam, cached)
+    en: '[a generous] gift [made due by] account,'
+  # P14->P15: true waqf, 4.67s of silence. The 50 ms RMS envelope troughs to
+  # -49 dB at rel 100.63, 38 dB below the -11 dB speech level.
+  # HAND-FIX: `qc author` emitted t1 98.04 < t0 101.97 here -- the same
+  # emit.py bug as the P10->P11 boundary above, on the next ibtida' restart.
+  # Held to just before the next card's attack (102.39 - 0.05).
+  - t0: 101.97
+    t1: 102.34
+    ayah: 37
+    ar: "رَّبِّ"
+    # en: LLM (clause seam, cached)
+    en: '[From] the Lord of the heavens and the earth and whatever is between them,'
+  # P15->P16: true waqf, 4.67s of silence. The 50 ms RMS envelope troughs to
+  # -52 dB at rel 101.84, 40 dB below the -11 dB speech level.
+  - t0: 102.39
+    t1: 114.51
+    ayah: 37
+    ar: "ٱلسَّمَٰوَٰتِ وَٱلْأَرْضِ وَمَا بَيْنَهُمَا ٱلرَّحْمَٰنِ"
+    # en: LLM (clause seam, cached)
+    en: 'the Most Merciful. They possess not'
+  # P16->P17: true waqf, 4.64s of silence. The 50 ms RMS envelope troughs to
+  # -48 dB at rel 117.85, 36 dB below the -11 dB speech level.
+  - t0: 118.59
+    t1: 118.81
+    ayah: 37
+    ar: "رَّبِّ"
+    # en: LLM (clause seam, cached)
+    en: '[From] the Lord of the heavens and the earth and whatever is between them,'
+  # P17->P18: true waqf, 0.39s of silence. The 50 ms RMS envelope troughs to
+  # -32 dB at rel 119.02, 21 dB below the -11 dB speech level.
+  - t0: 119.27
+    t1: 124.32
+    ayah: 37
+    ar: "ٱلسَّمَٰوَٰتِ وَٱلْأَرْضِ وَمَا"
+    # en: LLM (clause seam, cached)
+    en: 'the Most Merciful.'
+  # P18->P19 <-- NON-WAQF: no true waqf here, but the card ran to 9 words /
+  # 17.0s -- split at the deepest dip it contains. The 50 ms RMS envelope
+  # troughs to -22 dB at rel 124.41, 11 dB below the -11 dB speech level. That
+  # is continuous recitation, not a true waqf -- the swap sits in the last dip
+  # before the next word, and a human should confirm it reads cleanly.
+  - t0: 124.87
+    t1: 129.48
+    ayah: 37
+    ar: "بَيْنَهُمَا ٱلرَّحْمَٰنِ لَا"
+    # en: LLM (clause seam, cached)
+    en: 'They possess not from Him'
+  # P19->P20 <-- NON-WAQF: no true waqf here, but the card ran to 6 words /
+  # 11.3s -- split at the deepest dip it contains. The 50 ms RMS envelope
+  # troughs to -21 dB at rel 129.76, 10 dB below the -11 dB speech level. That
+  # is continuous recitation, not a true waqf -- the swap sits in the last dip
+  # before the next word, and a human should confirm it reads cleanly.
+  - t0: 130.17
+    t1: 137.41
+    ayah: 37
+    ar: "يَمْلِكُونَ مِنْهُ خِطَابًۭا"
+    # en: LLM (clause seam, cached)
+    en: '[authority for] speech.'
+  # P20->P21: true waqf, 7.17s of silence. The 50 ms RMS envelope troughs to
+  # -57 dB at rel 142.78, 45 dB below the -11 dB speech level.
+  - t0: 143.95
+    t1: 144.24
+    ayah: 37
+    ar: "رَّبِّ"
+    # en: LLM (clause seam, cached)
+    en: '[From] the Lord of the heavens and the earth and whatever is between them,'
+  # P21->P22: true waqf, 0.39s of silence. The 50 ms RMS envelope troughs to
+  # -36 dB at rel 144.41, 24 dB below the -11 dB speech level.
+  - t0: 144.76
+    t1: 153.71
+    ayah: 37
+    ar: "ٱلسَّمَٰوَٰتِ وَٱلْأَرْضِ وَمَا بَيْنَهُمَا ٱلرَّحْمَٰنِ"
+    # en: LLM (clause seam, cached)
+    en: 'the Most Merciful. They possess not'
+  # P22->P23 <-- NON-WAQF: no true waqf here, but the card ran to 9 words /
+  # 17.1s -- split at the deepest dip it contains. The 50 ms RMS envelope
+  # troughs to -28 dB at rel 154.31, 17 dB below the -11 dB speech level. That
+  # is continuous recitation, not a true waqf -- the swap sits in the last dip
+  # before the next word, and a human should confirm it reads cleanly.
+  - t0: 154.77
+    t1: 162.67
+    ayah: 37
+    ar: "لَا يَمْلِكُونَ مِنْهُ خِطَابًۭا"
+    # en: LLM (clause seam, cached)
+    en: 'from Him [authority for] speech.'
+  # P23->P24: true waqf, 6.35s of silence. The 50 ms RMS envelope troughs to
+  # -54 dB at rel 168.03, 42 dB below the -11 dB speech level.
+  - t0: 168.26
+    t1: 180.11
+    ayah: 38
+    ar: "يَوْمَ يَقُومُ ٱلرُّوحُ وَٱلْمَلَٰٓئِكَةُ صَفًّۭا"
+    # en: LLM (clause seam, cached)
+    en: 'The Day that the Spirit and the angels will stand in rows,'
+  # P24->P25: true waqf, 0.38s of silence. The 50 ms RMS envelope troughs to
+  # -32 dB at rel 180.34, 20 dB below the -11 dB speech level.
+  - t0: 180.70
+    t1: 187.95
+    ayah: 38
+    ar: "لَّا يَتَكَلَّمُونَ إِلَّا مَنْ أَذِنَ"
+    # en: LLM (clause seam, cached)
+    en: 'they will not speak except for one whom the Most Merciful permits,'
+  # P25->P26 <-- NON-WAQF: no true waqf here, but the card ran to 9 words /
+  # 15.8s -- split at the deepest dip it contains. The 50 ms RMS envelope
+  # troughs to -26 dB at rel 188.05, 14 dB below the -11 dB speech level. That
+  # is continuous recitation, not a true waqf -- the swap sits in the last dip
+  # before the next word, and a human should confirm it reads cleanly.
+  - t0: 188.53
+    t1: 198.75
+    ayah: 38
+    ar: "لَهُ ٱلرَّحْمَٰنُ وَقَالَ صَوَابًۭا"
+    # en: LLM (clause seam, cached)
+    en: 'and he will say what is correct.'
+  # P26->P27: true waqf, 4.97s of silence. The 50 ms RMS envelope troughs to
+  # -54 dB at rel 201.06, 43 dB below the -11 dB speech level.
+  - t0: 201.55
+    t1: 205.96
+    ayah: 39
+    ar: "ذَٰلِكَ ٱلْيَوْمُ ٱلْحَقُّ"
+    # en: LLM (clause seam, cached)
+    en: 'That is the True Day;'
+  # P27->P28: true waqf, 4.47s of silence. The 50 ms RMS envelope troughs to
+  # -45 dB at rel 209.00, 34 dB below the -11 dB speech level.
+  - t0: 210.36
+    t1: 213.95
+    ayah: 39
+    ar: "فَمَن شَآءَ"
+    # en: LLM (clause seam, cached)
+    en: 'so he who wills'
+  # P28->P29: true waqf, 0.59s of silence. The 50 ms RMS envelope troughs to
+  # -34 dB at rel 214.58, 22 dB below the -11 dB speech level.
+  - t0: 214.63
+    t1: 221.69
+    ayah: 39
+    ar: "ٱتَّخَذَ إِلَىٰ رَبِّهِۦ مَـَٔابًا"
+    # en: LLM (clause seam, cached)
+    en: 'may take to his Lord a [way of] return.'
+  # P29->P30: true waqf, 5.50s of silence. The 50 ms RMS envelope troughs to
+  # -54 dB at rel 224.83, 43 dB below the -11 dB speech level.
+  - t0: 230.86
+    t1: 241.75
+    ayah: 40
+    ar: "إِنَّآ أَنذَرْنَٰكُمْ عَذَابًۭا قَرِيبًۭا"
+    # en: WORD-ANCHORED word split -- cut at the gloss of this card's last
+    # Arabic word, or as near it as an ascending cut allows; not necessarily a
+    # clause seam (LLM output did not parse as 4 index(es))
+    en: 'Indeed, We have warned you of a near punishment on'
+  # P30->P31: true waqf, 1.18s of silence. The 50 ms RMS envelope troughs to
+  # -49 dB at rel 242.25, 38 dB below the -11 dB speech level.
+  - t0: 242.93
+    t1: 248.74
+    ayah: 40
+    ar: "يَوْمَ يَنظُرُ ٱلْمَرْءُ مَا"
+    # en: WORD-ANCHORED word split -- cut at the gloss of this card's last
+    # Arabic word, or as near it as an ascending cut allows; not necessarily a
+    # clause seam (LLM output did not parse as 4 index(es))
+    en: 'the Day when a man will observe what'
+  # P31->P32: true waqf, 0.54s of silence. The 50 ms RMS envelope troughs to
+  # -34 dB at rel 249.11, 23 dB below the -11 dB speech level.
+  - t0: 249.32
+    t1: 249.84
+    ayah: 40
+    ar: "قَدَّمَتْ"
+    # en: WORD-ANCHORED word split -- cut at the gloss of this card's last
+    # Arabic word, or as near it as an ascending cut allows; not necessarily a
+    # clause seam (LLM output did not parse as 4 index(es))
+    en: 'his'
+  # P32->P33: true waqf, 0.45s of silence. The 50 ms RMS envelope troughs to
+  # -32 dB at rel 250.21, 21 dB below the -11 dB speech level.
+  - t0: 250.44
+    t1: 263.50
+    ayah: 40
+    ar: "يَدَاهُ وَيَقُولُ ٱلْكَافِرُ يَٰلَيْتَنِى كُنتُ"
+    # en: WORD-ANCHORED word split -- cut at the gloss of this card's last
+    # Arabic word, or as near it as an ascending cut allows; not necessarily a
+    # clause seam (LLM output did not parse as 4 index(es))
+    en: 'hands have put forth and the disbeliever will say, "Oh, I wish that I were'
+  # P33->P34: true waqf, 1.12s of silence. The 50 ms RMS envelope troughs to
+  # -38 dB at rel 264.51, 27 dB below the -11 dB speech level.
+  - t0: 265.26
+    t1: 266.37
+    ayah: 40
+    ar: "تُرَٰبًۢا"
+    # en: WORD-ANCHORED word split -- cut at the gloss of this card's last
+    # Arabic word, or as near it as an ascending cut allows; not necessarily a
+    # clause seam (LLM output did not parse as 4 index(es))
+    en: 'dust!"'

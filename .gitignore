@@ -1,40 +1,27 @@
 # ==========================================================================
 # quran-clips — track the CREATION PROCESS, not the output.
-# Tracked: qc/, scripts/, templates/, .claude/, assets/ (fonts + scene images),
-#          style/**/*.md specs + fx code, docs/ (README demos), and the FIVE
-#          example clip.yaml recipes the golden tests and the README refer to.
-# Ignored: downloaded footage, exported reels, per-clip renders, the venv, and
-#          the working library under clips/ (that is my own output, not code).
+# Tracked: pipeline/, assets/ (fonts + quran editions + scene images), docs/,
+#          .claude/, the per-source reel configs and meta under sources/*/,
+#          and the archived first/second-generation code under legacy/.
+# Ignored: downloaded footage, transcripts, the rendered reels under reels/,
+#          and the venvs under tools/.
 # ==========================================================================
 
-# --- Downloaded / exported / recreatable trees -----------------------------
-# downloaded YouTube source videos + subtitles (re-downloadable).
-# EXCEPT sources/meta/: one small yaml per video (title, duration, fps,
-# dimensions, uploader) written by `qc source add`. That is derived knowledge
-# we paid a network round-trip for and that `qc locate` reads, so it must
-# survive a clean checkout even though the .mp4 next to it does not.
-# Git will not descend into an excluded DIRECTORY, so the exclusion has to be
-# `sources/*` (contents) rather than `sources/` for the negation to be
-# reachable at all.
+# --- sources/: one folder per source video ---------------------------------
+# Media, captions and Whisper output are re-derivable (fetch.py /
+# transcribe.py); the authored *.yaml reel configs and the fetched meta.yaml
+# are the creation process and DO ship. Git will not descend into an excluded
+# directory, so contents are excluded per-folder and the yamls re-admitted.
 sources/*
-!sources/meta/
-# exported final reels (regenerable from clip.yaml)
-reels/
-# python venv for ASR (recreate with pip install)
-tools/
+!sources/*/
+sources/*/*
+!sources/*/*.yaml
 
-# --- The clip library -------------------------------------------------------
-# clips/ is the working library: authoring folders, renders, Finder aliases and
-# per-clip posting state. None of it is needed to run the pipeline, so the whole
-# tree is local-only, with an explicit keep list at the bottom of this file for
-# the handful of clip.yaml recipes that ship as examples / golden-test inputs.
-# tags.yaml is posting state (posted?, keyword tags) and never ships.
-# Git will not descend into an excluded DIRECTORY, so the clip folders are
-# re-admitted (`!clips/*/`) and their CONTENTS excluded instead, which is what
-# makes the per-file keeps at the bottom reachable.
-clips/*
-!clips/*/
-clips/*/*
+# --- reels/: generated output, flat -- never tracked ------------------------
+reels/
+
+# --- venvs + downloaded models ----------------------------------------------
+tools/
 
 # --- Media, anywhere --------------------------------------------------------
 *.mp4
@@ -42,21 +29,20 @@ clips/*/*
 *.wav
 *.m4a
 
-# --- Reference frames / QA stills (extracted or rendered, regenerable) ------
-style/**/*.jpg
-style/**/*.jpeg
-style/**/*.png
-
-# --- Generated reports ------------------------------------------------------
-pipeline-review.html
+# --- legacy/: archived code is tracked; its caches and renders are not ------
+legacy/caches/
+legacy/clips/*/*
+legacy/style/**/*.jpg
+legacy/style/**/*.jpeg
+legacy/style/**/*.png
 
 # --- Machine-level config: paths, models, PROXY CREDENTIALS ----------------
-# .env carries proxy passwords, so it must never be committed; .env.example and
-# qc.toml.example document every key and DO ship.
+# .env carries proxy passwords, so it must never be committed; .env.example
+# documents every key and DOES ship.
 .env
 qc.toml
 !.env.example
-!qc.toml.example
+!legacy/qc.toml.example
 
 # --- Python / OS cruft ------------------------------------------------------
 __pycache__/
@@ -65,27 +51,16 @@ __pycache__/
 .DS_Store
 
 # ===========================================================================
-# Explicit keeps — these are INPUTS to the pipeline, never outputs.
-# (Defensive negations: nothing above should swallow them.)
+# Explicit keeps — INPUTS to the pipeline, never outputs.
 # ===========================================================================
-!scripts/
-!templates/
-!.claude/
 !assets/
 !assets/fonts/*.ttf
 !assets/reciters/*.png
-!style/**/*.md
 !*.excalidraw
 
-# The example recipes, and ONLY these: al-ahzab-56-56 is the `default`-style
-# clip embedded in the README; the other four are the inputs the golden
-# fixtures under tests/golden/ were recorded against (at-tawbah-128-128 is
-# also the README's `bars` clip). Every other clip folder stays local.
-!clips/al-ahzab-56-56/clip.yaml
-!clips/al-ahzab-70-71/clip.yaml
-!clips/al-anam-102-103/clip.yaml
-!clips/al-infitar-6-9/clip.yaml
-!clips/at-tawbah-128-128/clip.yaml
+# The archived example recipes the legacy golden fixtures were recorded
+# against (also the README demo clips).
+!legacy/clips/*/clip.yaml
 
 # README demo videos — the one place an .mp4 is tracked on purpose.
 !docs/*.mp4

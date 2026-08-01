@@ -1,256 +1,116 @@
 # quran-clips
 
-Turning a YouTube recitation into a posted reel, driven from Claude Code:
+Turn a Qur'an recitation video — a YouTube URL or a local file — into a
+subtitled reel:
 
-> make a post from https://www.youtube.com/watch?v=…
+```sh
+python3 pipeline/fetch.py "https://www.youtube.com/watch?v=..."
+python3 pipeline/transcribe.py sources/<id>
+# write sources/<id>/<reel>.yaml  (the per-reel recipe)
+tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml
+# -> reels/<reel>.mp4
+```
 
-The agent downloads the source, finds the ayat, proposes windows worth clipping,
-cuts one at real pauses, aligns the words against the mushaf, renders Arabic type
-with Pillow, composites in ffmpeg, and files the result in the reel library.
-
-The commands underneath are the boring part, and deliberately so. Every step is a
-script with an assertion behind it, so there is nothing for a model to freelance
-on: everything a caption says is checked against the Uthmani text before a frame
-is drawn, and no model retypes a single Arabic word.
+The pipeline downloads the source, transcribes it with word-level Whisper,
+aligns the known-correct mushaf text against those timings, and renders
+Pillow-drawn captions composited by ffmpeg. Every step is a script with an
+assertion behind it: caption Arabic is *sliced from the committed Uthmani
+text by word index* — no model ever retypes an Arabic word — and a config
+whose card splits don't cover the verse range exactly fails loudly before a
+frame is drawn.
 
 ## Two styles
 
-<table>
-<tr>
-<td width="50%" valign="top">
+**`default`** — Arabic + English over the dimmed footage: centred type with
+soft shadows, the ayah ornament, an English line from Saheeh International,
+0.4s fades. Handles landscape and vertical, a face-centred 9:16 re-crop of
+a horizontal source, and a still-photo background over an audio-only input.
+Output is never below 720p (a low-quality source is upscaled so captions
+are drawn at delivery resolution) and never above 1080p.
 
-**`default`** — 1920×1080 landscape, Arabic + English
-
-[<img src="docs/preview-default.gif" width="100%" alt="Badr al-Turki reciting al-Ahzab 33:56, Arabic caption with English line beneath">](https://github.com/y-u-s-u-f/quran-clips/blob/main/docs/demo-default-badr-al-turki-ahzab-56.mp4)
-
-Badr al-Turki, al-Aḥzāb 33:56 · [full clip, with sound ▶](https://github.com/y-u-s-u-f/quran-clips/blob/main/docs/demo-default-badr-al-turki-ahzab-56.mp4) · recipe: [`clips/al-ahzab-56-56/clip.yaml`](clips/al-ahzab-56-56/clip.yaml)
-
-</td>
-<td width="50%" valign="top">
-
-**`bars`** — 1080×1920 vertical, Arabic-only on coloured pills
-
-[<img src="docs/preview-bars.gif" width="56%" alt="Badr al-Turki reciting at-Tawbah 9:128, vertical letterboxed band with gold Thuluth captions">](https://github.com/y-u-s-u-f/quran-clips/blob/main/docs/demo-bars-badr-al-turki-tawbah-128.mp4)
-
-Badr al-Turki, at-Tawbah 9:128 · [full clip, with sound ▶](https://github.com/y-u-s-u-f/quran-clips/blob/main/docs/demo-bars-badr-al-turki-tawbah-128.mp4) · recipe: [`clips/at-tawbah-128-128/clip.yaml`](clips/at-tawbah-128-128/clip.yaml)
-
-</td>
-</tr>
-</table>
-
-The previews are silent GIFs — click either one to open the clip with sound in
-GitHub's player. Both
-demos are re-encoded down for the browser; the pipeline's own output is
-full-resolution H.264. The style is fixed per clip by the `style:` key in
-`clip.yaml`, and it keys the cached crop too — pass the same `--style` to every
-command in a run.
-
-`bars` letterboxes the footage into a centred 16:9 band with pure-black bars,
-grades it down to the reference's luma, and lays Thuluth captions on equal-width
-pills. `default` keeps the landscape frame and carries an English line from the
-Sahih International text. Parameters live in `templates/bars.yaml` and
-`templates/style.yaml`; both were derived from pixel measurements of reference
-reels, written up in `style/refs2/STYLE2_SPEC.md` and `style/STYLE_SPEC.md`.
-
-## Driving it from Claude Code
-
-[`.claude/skills/make-post/SKILL.md`](.claude/skills/make-post/SKILL.md) is the
-operating manual, and it ships in the repo — clone this and the skill is there.
-The agent runs the sequence below, reads what each command prints, and stops at
-the few points where a tool hands a decision up. What makes that safe is not the
-prompt, it is where the line between script and model is drawn:
-
-**Scripted, no model.** Download, ayah location, the framing solve, mushaf
-alignment, the RMS envelope, splitting cards at waqf gaps, caption geometry, the
-render, the export. Reproducible: four golden clips freeze the exact ffmpeg argv,
-the filtergraph, and the md5 of every layer, so a render change that shifts one
-byte is caught rather than reviewed.
-
-**Model as a judge, answering in indices.** `propose` asks whether a candidate
-window stands alone or opens on a dangling referent — it answers in ayah numbers.
-The line-breaker answers with a single integer. The English cutter answers with
-indices into the committed Sahih International text. None of them return prose,
-and none of them return Arabic: caption lines are built by *slicing* the word
-list from `qc.quran` by index, because Uthmani codepoints — madda alif, small
-high marks, superscript alif — corrupt on retyping. The one character a model may
-insert anywhere in the pipeline is U+0640 tatweel, as calligraphic elongation,
-and it is stripped before every comparison, so it changes layout and nothing
-else. Each judge shells out to the `claude` CLI (`QC_CLAUDE_BIN` to point
-elsewhere, `--no-judge` to skip) and degrades to a documented fallback when it is
-absent; the report says which path it took.
-
-**Handed up to a person.** The tools raise the calls they cannot make:
-`! restart detected` (an ibtidāʾ inside the window), `! Pn->Pn+1 is NOT a true
-waqf`, `! camera is NOT fixed` (the source cuts between angles, so one cached
-crop cannot be right for all of them). Two more the skill makes the agent check
-every time: a held final word, where the ASR end lands where the word is
-*identified* and not where the reciter stops; and card lines of visibly unequal
-width, which `check` will pass because it only asserts the width cap.
-
-That last one is what the skill is really for — the standards no assertion can
-express. Two lines of a card within ~30px of each other. Fix a bad card by moving
-the card boundary first, the line break second, kashida last. Never more than
-about six kashida in a line, never inside a lam-alef ligature, never after a
-letter that does not join leftward. Never `golden.py bless` to silence a failing
-golden. Never render over a failing `check`.
-
-## The pipeline
-
-<img src="docs/pipeline.png" width="100%" alt="Flowchart: a YouTube URL flows through qc source add, locate, crop, propose, author, a pre-render check gate, render, an output check gate, and export. The mushaf and translation assets feed locate, author, and check; OpenCV/YuNet, the claude CLI, and mlx-whisper feed crop, propose, and author; the style templates feed render.">
-
-The editable source is [`docs/pipeline.excalidraw`](docs/pipeline.excalidraw) —
-drop it onto [excalidraw.com](https://excalidraw.com).
-
-```
-qc source add <url>      yt-dlp -> sources/<id>.mp4 + auto-captions + meta yaml
-qc locate <id>           match the captions against the mushaf -> surah + ayat
-qc crop <id> --write     solve the reciter/caption framing once per source
-qc propose <id>          rank clip-worthy windows; a model judges whether each
-                         one stands alone or opens on a dangling referent
-qc author <id> 9:128 <start> <end> -o clips/<name>
-                         align to the mushaf, measure the RMS envelope, split
-                         the cards at real waqf gaps, break the lines,
-                         fill the English -> clip.yaml
-qc check clips/<name>    ~1s of assertions. Never render over a failure
-qc render clips/<name>   -> clips/<name>/output/final.mp4
-qc check --output ...    decodes the result: geometry, letterbox purity,
-                         loudness, and that the bitstream is not corrupt
-qc doctor                resolved tools, ASR backend, egress plan
-qc export clips/<name>   -> reels/RECITER-SURAH-a-b.mp4 with metadata
-```
-
-`./bin/qc` with no arguments prints the authoritative usage.
-
-### What `check` enforces
-
-The gate. Nothing renders over a failing `check`, which is what makes it safe to
-let an agent drive: eleven assertions, under a second, no ffmpeg.
-
-1. **Arabic == mushaf.** Waqf signs and U+0640 tatweel are stripped, then the
-   caption must match the Uthmani text exactly.
-2. **Schema.** An unknown key is an error — the renderer would silently ignore a
-   typo'd one.
-3. **Glyph coverage.** Every codepoint exists in the font that will draw it.
-4. **The clip opens on the first word of the ayah it claims**, and no card spans
-   two ayat.
-5. Phrase/cut ordering, caption geometry, no hard-cut changeover, English
-   present-or-absent per style, known fx names.
-
-`check --output` additionally DECODES the finished file. Container metadata
-survives a corrupted bitstream -- a file whose payload was interleaved by a second
-writer still reports the right geometry and duration -- so a decode pass plus a
-decoded-frame count is the only thing that catches it.
-
-## Setting it up
-
-macOS or Linux. Every external tool is resolved per machine (`$QC_*`, then
-`qc.toml`, then PATH, then a platform hint), so there are no absolute paths baked
-into the code. **Run `./bin/qc doctor` after setup**: it prints what resolved,
-which ASR backend this host selects, the egress plan, and what any missing piece
-would block.
-
-`./bin/qc` and `./bin/quran-clips` are the same CLI under two names.
-
-```sh
-# macOS
-brew install ffmpeg yt-dlp python@3.14
-# Debian/Ubuntu
-sudo apt install ffmpeg yt-dlp python3-venv
-
-# The venvs below are only needed when your CURRENT interpreter cannot already
-# import what a stage wants. Run `./bin/qc doctor` first -- it reports what each
-# stage resolves to, and an environment that already works is never rebuilt.
-#
-# Pillow must have RAQM for Arabic shaping, which is why render uses
-# --system-site-packages over a python whose Pillow already has it.
-python3.14 -m venv --system-site-packages tools/render-venv
-tools/render-venv/bin/pip install -r requirements/render.txt
-
-# authoring: the crop solver (OpenCV + the YuNet face model)
-python3.14 -m venv tools/author-venv
-tools/author-venv/bin/pip install -r requirements/author.txt
-mkdir -p tools/models && curl -sSL -o tools/models/face_detection_yunet_2023mar.onnx \
-  https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
-
-# word-level ASR, kept out of the render interpreter so whisper can never
-# replace its RAQM Pillow. mlx-whisper on Apple silicon; faster-whisper elsewhere.
-python3.14 -m venv tools/asr-venv
-tools/asr-venv/bin/pip install mlx-whisper        # Apple silicon
-# tools/asr-venv/bin/pip install faster-whisper   # Linux / Intel
-```
-
-Machine-level settings live in `.env` (gitignored; see `.env.example`): tool
-paths, the ASR backend and model, and the proxy pool. All optional -- with ffmpeg
-on PATH nothing needs configuring. Nothing in `.env` affects a rendered pixel;
-style geometry stays in the committed `templates/*.yaml`.
-
-On a cloud host YouTube bot-checks the datacentre IP, so `qc source add` can route
-through a proxy pool and escalates **static residential -> datacentre -> fail**:
-
-```sh
-QC_PROXY_STATIC=user:pass@host:port,...        # five static residential exits
-QC_PROXY_DATACENTER=user:pass@host:port,...    # fallback tier
-```
-
-A signed googlevideo URL embeds the exit IP that resolved it, so only sticky exits
-can download and the pool is pinned per video id. Credentials are redacted in
-every log line.
-
-Then ask Claude Code for a post, or drive it by hand:
-
-```sh
-./bin/qc source add "https://www.youtube.com/watch?v=..."
-./bin/qc locate <video_id>
-./bin/qc crop <video_id> --style bars --write
-./bin/qc propose <video_id> --style bars
-./bin/qc author <video_id> 9:128 15:27 15:57 --style bars -o clips/my-clip
-./bin/qc check clips/my-clip && ./bin/qc render clips/my-clip
-```
-
-A 24-second `bars` render takes about six minutes. `render --preview` writes a
-half-size, effects-free version for judging timing and layout — never the look.
+**`bars`** — vertical 1080x1920: the footage graded down and letterboxed
+into a centred 16:9 band on pure black, white Thuluth on equal-height
+colour pills (auto-derived from the clip's own graded footage), a
+right-to-left wipe on the first card, strictly sequential crossfades, and a
+band-confined FX chain — glow, bar glow, text glow, scan, procedural snow,
+heat shimmer. The geometry and effects are pixel-forensics work measured
+off reference reels; the emitted filtergraph is verified byte-identical to
+the frozen golden fixture of the previous implementation, so every measured
+behaviour carried over. Demo clips of both styles are in `docs/`.
 
 ## Layout
 
 ```
-.claude/       skills/make-post — the agent's operating manual for the above
-qc/            the package: author/ (fetch, locate, crop, propose, align,
-               linebreak, emit), render.py, ffgraph.py, check.py, fx/
-scripts/       render_bars.py, render_text.py, export_reel.py, status.py,
-               golden.py — invoked with tools/render-venv/bin/python
-templates/     bars.yaml, style.yaml — every tunable number
-assets/        fonts (Thuluth, Uthmanic Hafs), the Uthmani mushaf, Sahih
-               International, word-by-word glosses, reciter scene plates
-style/         the pixel-forensics specs the templates were derived from
-tests/         fx scalar pins + golden fixtures (argv, filtergraph, md5)
-clips/         five example clip.yaml recipes (see below)
+pipeline/       the six scripts (see pipeline/README.md):
+                fetch.py  transcribe.py  quran.py  generate.py
+                render_default.py  render_bars.py  (+ fx.py, the bars FX)
+sources/<id>/   one folder per source: source.mp4, captions.srt (if any),
+                whisper.json / whisper.srt, and the per-reel *.yaml configs
+reels/          generated reels, flat — output only
+assets/         fonts + the committed mushaf and BOTH English editions
+                (Saheeh International, Mufti Taqi Usmani) + word glosses
+legacy/         the first- and second-generation implementations, archived
+                intact with their specs, tests and golden fixtures
 ```
 
-### Tests
+## The reel config
+
+One YAML per reel, kept in the source's own folder. `signature` is the only
+required key (a string burned bottom-centre, or an explicit `null`);
+`generate.py --print-schema` prints the authoritative schema. The heart of
+it:
+
+```yaml
+style: bars                       # bars | default
+signature: "TilawatQuraniyyah"    # required; always horizontally centered
+signature_offset: 0               # px, vertical only: + lower / - higher
+surah: 78
+ayah_start: 31
+ayah_end: 34
+trim: [16.4, 48.0]                # seconds of the source
+groups:                           # caption cards, in Arabic word order
+  - n_words: 3                    # must sum exactly to the span's word count
+    english: "..."                # default style; bars is Arabic-only
+x_offset: 0                       # subtitles are centered by default;
+y_offset: 0                       # these px offsets are the only knobs
+```
+
+Generation ends with a verification block: every card's Arabic beside its
+authored English, then each verse in **both** committed editions — Saheeh
+International and Mufti Taqi Usmani. Two translations on purpose: one
+rendering can paraphrase in a way that hides a mis-split, and where the two
+agree on clause order, a card whose English contradicts them is wrong.
+Check every card against both before accepting a render.
+
+## Setting up
 
 ```sh
-tools/render-venv/bin/python -m unittest discover -s tests
-tools/render-venv/bin/python scripts/golden.py check --all      # env + argv + filtergraph
-tools/render-venv/bin/python scripts/golden.py check --full <clip>   # + render md5
+./install.sh            # everything: tools check, venvs, face model, .env
+./install.sh --check    # audit only
 ```
 
-The media md5s are valid only for the exact ffmpeg build recorded in
-`tests/golden/ENV.txt`. A different ffmpeg produces a different file from a
-byte-identical filtergraph, so on an upgrade the argv/filtergraph tiers stay
-meaningful and the media tiers must be re-blessed against a visual review.
-The golden tiers need the original source videos, which are not in the repo.
+`INSTALL.md` is the full guide. Machine config lives in `.env` (gitignored;
+created from `.env.example`): the ASR backend/model, pinned binaries, and
+the proxy pool for cloud hosts where YouTube bot-checks datacentre IPs —
+`fetch.py --proxy` escalates static residential → datacentre → fail, one
+sticky exit per fetch. Nothing in `.env` affects a rendered pixel.
+
+## Driving it from Claude Code
+
+`.claude/skills/make-post/SKILL.md` is the operating manual — ask for
+"make a post from <url>" and the agent runs the sequence, authors the reel
+config (choosing card boundaries by word count, never typing Arabic), reads
+the verification block against both translations, and decode-checks the
+output. The judgement calls the scripts can't make — where a held final
+madd really ends, whether a card split reads as connected meaning — are
+documented there for a human or agent to decide.
 
 ## What is not in the repo
 
-The clip library is my own output, not code, so it stays local: `clips/`,
-`reels/`, the downloaded footage under `sources/`, and the venvs under `tools/`.
-Five `clip.yaml` recipes ship as examples — the two above, plus the three other
-golden-fixture inputs. Everything needed to build your own is here.
-
-Two vendored text editions sit under `assets/quran/`: the Uthmani mushaf and the
-Sahih International translation, plus word-by-word glosses. The fonts are
-Thuluth and Uthmanic Hafs.
-
-Nothing here downloads or redistributes anyone's footage — the pipeline points
-`yt-dlp` at a URL you choose, and what you may do with the result is between you
-and whoever recorded it.
+Downloaded footage, transcripts and rendered reels stay local (`sources/*`
+media, `reels/`); the authored reel configs and fetched metadata
+are committed. Two vendored text editions sit under `assets/quran/` plus
+word-by-word glosses; the fonts are AM Thuluth, KFGQPC Uthmanic Hafs and
+Albertus. Nothing here downloads or redistributes anyone's footage — the
+pipeline points yt-dlp at a URL you choose, and what you may do with the
+result is between you and whoever recorded it.
