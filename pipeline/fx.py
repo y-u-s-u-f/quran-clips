@@ -244,14 +244,18 @@ class BarGlow(Effect):
                 "bq0")
 
     def per_phrase(self, g, ctx, i, lbl):
+        # The caption layer arrives cropped to its own ink, so the white
+        # silhouette is struck at that size and PLACED on the accumulator.
+        x, y, w, h = ctx.boxes[i]["bar"]
         g.chain(f"x{lbl}", "split=2", [f"x{lbl}c", f"x{lbl}g"])
         g.chain(f"x{lbl}g", "alphaextract", f"q{i + 1}")
         g.chain(None,
-                f"color=c=white:s={ctx.W}x{ctx.H}:r={ctx.fps}:d={ctx.dur:.3f}",
+                f"color=c=white:s={w}x{h}:r={ctx.fps}:d={ctx.dur:.3f}",
                 f"qw{i + 1}")
         g.chain([f"qw{i + 1}", f"q{i + 1}"], "alphamerge", f"qm{i + 1}")
         g.chain([f"bq{i}", f"qm{i + 1}"],
-                "overlay=0:0:format=auto:shortest=1", f"bq{i + 1}")
+                f"overlay={x}:{y}:format=auto:shortest=1"
+                f":enable='{ctx.gates[i]}'", f"bq{i + 1}")
         return f"{lbl}c"
 
     def apply(self, g, band, ctx):
@@ -301,9 +305,11 @@ class TextGlow(Effect):
                 "tg0")
 
     def per_phrase(self, g, ctx, i, lbl):
+        x, y, _w, _h = ctx.boxes[i]["text"]
         g.chain(f"x{lbl}", "split=2", [f"x{lbl}c", f"x{lbl}g"])
         g.chain([f"tg{i}", f"x{lbl}g"],
-                "overlay=0:0:format=auto:shortest=1", f"tg{i + 1}")
+                f"overlay={x}:{y}:format=auto:shortest=1"
+                f":enable='{ctx.gates[i]}'", f"tg{i + 1}")
         return f"{lbl}c"
 
     def apply(self, g, band, ctx):

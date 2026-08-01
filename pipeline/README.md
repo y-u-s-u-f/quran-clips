@@ -239,11 +239,13 @@ transcript; whisper.json records which backend wrote it.
   right-to-left wipe on the first card, strictly sequential crossfades
   after it, and the full band FX chain — glow, bar glow, text glow, scan,
   procedural snow, heat shimmer — confined to the band (pipeline/fx.py).
-  Geometry and the emitted filtergraph are verified byte-identical to the
-  legacy build's frozen golden fixture, so every measured behaviour carries
-  over. Per-reel switches via `fx:` (e.g. `fx: {heat: false}` — heat is
-  ~half the render time and the one to drop for a timing preview; never
-  judge the LOOK without the full stack).
+  The geometry is the legacy build's; the emitted filtergraph is NO LONGER
+  byte-identical to its frozen golden fixture (the 2026-08-01 speed work
+  changed it deliberately — see `OPTIMIZATIONS.md` and CLAUDE.md invariant
+  2), so a render is now held to PSNR against the previous render instead.
+  Per-reel switches via `fx:` (e.g. `fx: {heat: false}` — heat is ~27% of
+  the render, 118s → 87s on a 27.5s 8-card reel, and the one to drop for a
+  timing preview; never judge the LOOK without the full stack).
 * **`hz`** — native landscape 1920x1080, the account's original look
   (legacy `scripts/render_text.py` + `build_render.py`): the footage
   reframed by `crop` and pushed down under one black plate (flat dim + soft

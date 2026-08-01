@@ -120,6 +120,14 @@ script stays independently runnable; do not "deduplicate" that.
   why each was rejected. Whisper is kept for one reason only: it is
   autoregressive, so it transcribes an ibtidāʾ restart TWICE, which every
   CTC alternative structurally cannot. Read before proposing a model swap.
+- **`OPTIMIZATIONS.md`** — the render's measured cost profile: what each
+  stage costs in wall, CPU and RSS, every speed change that has been made
+  and what it cost in PSNR, and the ones checked and rejected (with why —
+  `-thread_queue_size` is not the memory hog it looks like). **Read before
+  proposing any performance change**, the same way asr-and-alignment.md is
+  read before a model swap: nearly every obvious idea here has already been
+  measured, and at least one of them was measured WRONG in a way the file
+  now records. Update it in the same change as the optimisation.
 - **`legacy/`** — the two previous implementations, archived intact with
   specs, tests and golden fixtures. Reference material only: never run it,
   never edit it, never import from it in pipeline code.

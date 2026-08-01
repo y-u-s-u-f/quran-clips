@@ -1,12 +1,13 @@
 # Deferred pipeline optimizations
 
-Three measured CPU/memory wins that were left out of the byte-identical
-optimization pass, because each one either moves a pixel or breaks a frozen
-fixture. All three are owner decisions, not refactors.
+All three items in the first edition of this file are **DONE** as of
+2026-08-01, together with three further wins that were not in it. What
+remains open is at the bottom.
 
 Numbers below are from `sources/wawassayna/ahqaf-15-bars.yaml` (23.3s reel,
 4 cards, 1080p/25fps source, 699 output frames) on a 14-core Apple silicon
-machine, with `ffmpeg` 8.1.2. Reference profile of that reel:
+machine, with `ffmpeg` 8.1.2, unless a line says otherwise. Reference profile
+of that reel as it stood before any of this:
 
 | run | wall | CPU | peak ffmpeg RSS |
 |---|---|---|---|
@@ -15,86 +16,111 @@ machine, with `ffmpeg` 8.1.2. Reference profile of that reel:
 | bars, all fx off | 24.3s | 140.0s | 2927 MB |
 | bars, all fx off, 1 card | 21.1s | 117.5s | 2090 MB |
 
-So `heat` is 55% of wall but only 22% of CPU; the other five effects are 50%
-of CPU; and ~2 GB of RSS is present before any effect runs at all.
+So `heat` was 55% of wall but only 22% of CPU; the other five effects were
+50% of CPU; and ~2 GB of RSS was present before any effect ran at all.
 
 ---
 
-## 1. Bars caption layers at full canvas (largest win)
+## Done
 
-`draw_layers` emits two 1080x1920 RGBA PNGs per phrase
-(`pipeline/render_bars.py`), fed as `-loop 1` inputs and composited over the
-whole clip with no `enable` gate, then overlaid a second and third time onto
-full-canvas black plates for barglow and textglow (`pipeline/fx.py`). The ink
-is about 680x270 px, 11x smaller than the canvas.
+### 1. Bars caption layers at full canvas — DONE, bit-identical
 
-Measured by differencing the 1-card and 4-card no-fx runs above:
-**7.7s CPU and ~280 MB RSS per caption card**, linear in card count. An
-8-card reel spends ~60s CPU and ~2.2 GB RSS compositing transparent pixels.
+`draw_layers` emitted two 1080x1920 RGBA PNGs per phrase, fed as `-loop 1`
+inputs and composited over the whole clip with no `enable` gate, then
+overlaid a second and third time onto full-canvas black plates for barglow
+and textglow. The ink is about 680x270 px, 11x smaller than the canvas.
+Measured by differencing the 1-card and 4-card no-fx runs above: **7.7s CPU
+and ~280 MB RSS per caption card**, linear in card count.
 
-**Fix.** Crop each PNG to its ink bbox and overlay at `(x, y)`; add
-`enable='between(t,...)'` to the composite overlays, as `render_default.py`
-already does. `render_default.trim_to_ink()` is the same idea and is the
-model to copy, including its outward even-coordinate snap: `overlay` blends
-in yuv420, so an odd edge lands the overlay's 2x2 chroma/alpha blocks on a
-different grid.
+Now `render_bars.trim_to_ink` crops each PNG to its ink bbox (outward
+even-coordinate snap, ported from `render_default.trim_to_ink`), every
+consumer places it at `(x, y)`, and all three overlays carry
+`enable='between(t,...)'` widened by one frame either side of the card's own
+alpha window.
 
-**Why deferred.** The output is pixel-identical, but the emitted filtergraph
-string changes, and `render_bars.py` + `fx.py` are under a byte-identity
-contract with `legacy/tests/golden/at-tawbah-128-128/filtergraph.txt`
-(CLAUDE.md invariant #2). Re-blessing that fixture is an owner decision.
+The wipe mask stays a **full-canvas** plate and is `crop`ped to the bar
+layer's box. Its sweep expression is in canvas columns and the feather blur's
+boundaries are part of the look; a crop is exact, so the mask the layer sees
+is unchanged. Only the first card wipes, so the full-canvas plates cost this
+buys back are one card's worth.
 
-**Verifying it.** Render `ahqaf-15-bars` before and after and compare md5
-(baseline `8ca19813288c46790cb0ada3a5d43f8d`); only regenerate the golden
-once the md5 matches. Note the intricate parts: the wipe mask is a
-full-canvas plate that must be cropped to match its bar layer, and the
-barglow plate's `gblur sigma=90` currently runs on the full 1920-tall plate
-before being cropped to the band, so shrinking the plate is *not* free (ffmpeg's
-gblur is an IIR approximation and its boundary behaviour would change).
+**Verified:** `sources/gt9y-QGgMsA/hadid-16-16-bars.yaml` (8 cards), with the
+pill colour pinned so #2 could not contaminate the measurement, rendered
+**PSNR y:inf u:inf v:inf** against the pre-change render. Bit-identical.
 
----
+### 2. `derive_bar_color` grades every frame to sample 25 — DONE, 1 LSB
 
-## 2. `derive_bar_color` grades every frame to sample 25 of them
+`fps=1` now runs first instead of after the lanczos scale and the grade.
+**8.57s -> 1.89s CPU (-78%)**, scaling with source resolution and length.
 
-`fps=1` sits *after* the lanczos scale and the full grade in
-`pipeline/render_bars.py`, so 24 of every 25 frames are scaled and graded and
-then discarded. Moving `fps=1` to the front of the chain:
-**8.57s -> 1.89s CPU (-78%)** on this clip. The pass scales with source
-resolution and clip length.
+As predicted, `vignette` dithers per frame, so a different frame count
+advances its PRNG differently: the auto-derived pill on hadid-16-16 moved
+`#8B6E23 -> #8B6D23`. One LSB on one channel of a colour that is a heuristic
+to begin with. Pin `bar_color:` in the config to skip the pass entirely.
 
-**Why deferred.** `vignette` dithers per frame, so feeding it 24 frames
-instead of 581 advances its PRNG differently. Measured: the auto-derived pill
-moves `#808B23` -> `#818B23`. One LSB on one channel, but it is a look
-change.
+### 3. `trim_media` encodes a throwaway intermediate at `slow`/crf 16 — DONE
 
-**Options.** Accept the 1 LSB; or add `dither=0` to the sampling chain only
-(which also differs from today, but is at least deterministic); or set
-`bar_color:` in the config, which skips the pass entirely and is free.
+Now `veryfast`/crf 10. Measured against a **lossless** cut of the same 27.5s
+1080p window, which is the comparison the first edition of this file did not
+make:
 
----
+| settings | CPU | size | PSNR vs lossless |
+|---|---|---|---|
+| `slow` / crf 16 (was) | 71.0s | 6.4 MB | 50.14 dB |
+| `veryfast` / crf 14 (proposed) | 20.5s | 7.4 MB | **49.46 dB** |
+| `veryfast` / crf 10 (now) | 25.1s | 14.8 MB | **50.39 dB** |
 
-## 3. `trim_media` encodes a throwaway intermediate at `-preset slow -crf 16`
+**The `veryfast`/crf 14 this file originally proposed is worse**, and the
+reasoning that recommended it — "produces a *larger*, i.e. higher-fidelity,
+intermediate" — is wrong: file size does not track fidelity across presets.
+crf 10 is -65% CPU and genuinely better than what it replaced, and the extra
+8 MB lives in `/tmp` for the duration of one render.
 
-`pipeline/generate.py` cuts the trim window into an intermediate that the
-renderer re-encodes at crf 18 minutes later. On a 20s 1080p cut:
+### Also done, and not in the first edition
 
-| settings | CPU | intermediate size |
-|---|---|---|
-| `slow` / crf 16 (current) | 37.1s | 12.0 MB |
-| `veryfast` / crf 14 | 11.0s | 14.8 MB |
-| `ultrafast` / crf 12 | 6.6s | 69.8 MB |
+- **`heat`'s two perlin maps are pre-baked and cached** (`heat_layers`).
+  This file said "no way to make it cheaper without changing the look",
+  reading `heat` as 55% of wall / 22% of CPU as inherent. It is not: `perlin`
+  is single-threaded and cost 66s per map per reel while depending on nothing
+  but its own constants. Baked in 30s buckets to a machine-level cache, they
+  are computed once ever. 47.1 dB.
+- **Wide gaussians at half linear size** (`fx.blur`, sigma >= 20), and the
+  bar glow blurs a band-sized slice plus a 3-sigma margin rather than the
+  full 1920-tall plate. This file warned the slice was "not free" because
+  gblur is an IIR approximation whose boundary behaviour would change; tested
+  in isolation on a synthetic plate it is **bit-identical**, because the
+  plate is black outside the band and 3 sigma of margin is past anything that
+  can reach it. 53.1 dB for the pair.
+- **`heat` supersample 3 -> 2**. 48.8 dB.
 
-That is more CPU than the entire all-fx-off render. `veryfast`/crf 14 is
-**-70% CPU** and produces a *larger*, i.e. higher-fidelity, intermediate, so
-this is arguably a quality gain rather than a loss.
+### Where that leaves it
 
-**Why deferred.** Different intermediate compression shifts the final pixels.
+Two reels, measured on a 4P+4E machine. They are DIFFERENT clips, so read
+each column down, never across:
 
-**Bigger version.** Delete the pass entirely and push `-ss`/`-t` into the
-render inputs; `Graph.input` already accepts both. That removes an encode
-*and* a decode, but it is a multi-file change (the bar-colour sample,
-loudnorm and wav extract all currently receive the pre-trimmed file) and
-needs A/V sync verified across the seek.
+`sources/gt9y-QGgMsA/waqiah-83-87-bars.yaml` — 26.4s, 5 cards:
+
+| | wall |
+|---|---|
+| before any of this | 372s |
+| + baked heat maps | 253s |
+| + half-res gaussians, band-sliced bar glow | 185s |
+| + heat supersample 3 -> 2 | 150s |
+
+`sources/gt9y-QGgMsA/hadid-16-16-bars.yaml` — 27.5s, 8 cards, picked up
+from where that left off:
+
+| | wall | CPU | peak RSS |
+|---|---|---|---|
+| after heat bake + blurs + supersample | 170.7s | 724.2s | 4685 MB |
+| after items 1-3 | **117.7s** | **525.8s** | **2517 MB** |
+| after items 1-3, `fx: {heat: false}` | 86.5s | 377.0s | 2346 MB |
+
+PSNR of the second row against the first is 52.93 dB (min 51.05), all of it
+item 3's intermediate plus item 2's one LSB — item 1 contributes nothing,
+having been measured at inf on its own. Note the third row: `heat` is now
+~27% of the render, not the ~55% of wall it was before the maps were baked,
+so the docs' old "heat halves the render time" is out of date.
 
 ---
 
@@ -107,17 +133,32 @@ needs A/V sync verified across the seek.
 - **`align_words`' Needleman-Wunsch** (`generate.py`) recomputes
   `quran.skeleton` inside the O(n*m) inner loop. Milliseconds at real reel
   sizes (~50x60 cells); worth precomputing only if reels get much longer.
-- **`heat`**: no way to make it cheaper without changing the look. It already
-  has a switch and the README already names it as the preview drop.
 
 ---
 
-## Golden parity gate
+## Still open
 
-There is no in-repo script for the check CLAUDE.md invariant #2 requires
-after any edit to `render_bars.py` or `fx.py`. One was written and used to
-verify the byte-identical pass; it rebuilds the at-tawbah-128-128 graph
-(phrases from `legacy/clips/at-tawbah-128-128/clip.yaml`, `x_offset=-216`,
+### Push `-ss`/`-t` into the render inputs and delete `trim_media`
+
+`Graph.input` already accepts both. That removes an encode *and* a decode —
+the whole of item 3 rather than 65% of it — but it is a multi-file change
+(the bar-colour sample, loudnorm and wav extract all currently receive the
+pre-trimmed file) and needs A/V sync verified across the seek.
+
+### A golden parity gate that lives in this repo
+
+CLAUDE.md invariant #2 is **suspended**: the graph is deliberately no longer
+byte-identical to `legacy/tests/golden/at-tawbah-128-128/filtergraph.txt`,
+and the golden lives under read-only `legacy/`, so there is nothing to
+re-bless. Until a fixture exists outside `legacy/`, the rule is enforced by
+re-rendering a known reel after any `render_bars.py`/`fx.py` edit and PSNR-ing
+it against the previous render (below ~45 dB is a look change and needs a
+decision).
+
+The script that verified the original byte-identical pass was written and
+used but never committed. It rebuilds the at-tawbah-128-128 graph (phrases
+from `legacy/clips/at-tawbah-128-128/clip.yaml`, `x_offset=-216`,
 `dur=23.720`, crop `48,30,1280x720`, tint `(191,140,54)` recovered from the
 golden's glow scalars via `rr/0.35*255`, all switches on, `sig_path=None`)
-and diffs it against the fixture. Worth committing before attempting #1.
+and diffs it against the fixture. Committing a version of it that records a
+*current* graph as the fixture is what restores the invariant.

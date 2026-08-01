@@ -305,8 +305,9 @@ The account's standard, in priority order:
 
 - `bars` — 1080x1920, graded letterbox band, Thuluth pills, wipe-in first
   card, sequential crossfades, and the FX chain (glow, barglow, textglow,
-  scan, snow, heat). `fx: {heat: false}` halves render time for a timing/
-  layout check — never judge the LOOK without the full stack. Bar colour is
+  scan, snow, heat). `fx: {heat: false}` cuts ~27% off the render (118s →
+  87s on a 27.5s 8-card reel) for a timing/layout check — never judge the
+  LOOK without the full stack. Bar colour is
   auto-derived from the clip's own graded footage; override with
   `bar_color: "#RRGGBB"` only per-reel.
 - `hz` — native landscape 1920x1080, the account's original look: the

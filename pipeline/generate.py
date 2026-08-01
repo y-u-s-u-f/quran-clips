@@ -193,13 +193,27 @@ def trim_media(path, out_path, start, end, has_video):
     """Cut [start, end) out of the source and re-encode. Re-encoding rather
     than stream-copying is deliberate: a copy cuts only at the nearest
     keyframe, which shifts the real start by up to a GOP and would offset
-    every aligned word against the audio the viewer hears."""
+    every aligned word against the audio the viewer hears.
+
+    `veryfast`/crf 10 rather than `slow`/crf 16: this file is a THROWAWAY the
+    renderer re-encodes at crf 18 minutes later, so nothing about it matters
+    except that it not lose what the final encode would have kept -- and a
+    faster preset buys that back with bits, which cost disk here and nothing
+    else. Measured against a LOSSLESS cut of the same 27.5s 1080p window:
+
+        slow     crf 16    71.0s CPU    6.4 MB    50.14 dB
+        veryfast crf 14    20.5s CPU    7.4 MB    49.46 dB
+        veryfast crf 10    25.1s CPU   14.8 MB    50.39 dB
+
+    so crf 10 is -65% CPU and BETTER than what it replaces. Do not read file
+    size as fidelity across presets: crf 14 is the larger file of the first
+    two and the worse picture."""
     cmd = [FFMPEG, "-y", "-v", "error", "-ss", "%.3f" % start]
     if end is not None:
         cmd += ["-to", "%.3f" % end]
     cmd += ["-i", path]
     if has_video:
-        cmd += ["-c:v", "libx264", "-preset", "slow", "-crf", "16",
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "10",
                 "-pix_fmt", "yuv420p"]
     else:
         cmd += ["-vn"]

@@ -14,12 +14,15 @@ themselves live in pipeline/fx.py.
 
 THE GOLDEN BYTE-IDENTITY CONTRACT IS SUSPENDED as of the 2026-08-01 speed
 work: the emitted filtergraph is deliberately no longer byte-identical to
-legacy/tests/golden/at-tawbah-128-128/filtergraph.txt. Three changes did it,
+legacy/tests/golden/at-tawbah-128-128/filtergraph.txt. Four changes did it,
 all owner-approved, none of them a look decision:
   * heat's two perlin maps are pre-baked and fed in as inputs (heat_layers);
   * wide gaussians run at half linear size (fx.blur) and bar glow blurs a
     band-sized slice instead of the full 1920-tall canvas;
-  * heat's supersample went 3 -> 2.
+  * heat's supersample went 3 -> 2;
+  * caption layers are cropped to their own ink and placed, instead of being
+    full-canvas plates overlaid at 0:0 three times each (trim_to_ink), and
+    every one of those overlays is gated to the card's own window.
 Measured against the pre-change render of sources/gt9y-QGgMsA/waqiah-83-87:
 PSNR 47.1dB for the bake, 53.1dB for the blur work, 48.8dB for the
 supersample, i.e. below the 8-bit quantiser in each case; wall time 372s ->
@@ -28,8 +31,9 @@ that a look change is never a refactor side-effect rests on re-measuring
 PSNR against the previous render, NOT on diffing the graph text.
 
 Per-reel switches, via the config's `fx:` map (e.g. `fx: {heat: false}` --
-heat is ~35% of the remaining render time and is the one to drop for a fast
-preview): grade, scrim, glow, barglow, textglow, scan, snow, heat.
+heat is ~27% of the remaining render time, measured 118s -> 87s on a 27.5s
+8-card reel, and is the one to drop for a fast preview): grade, scrim, glow,
+barglow, textglow, scan, snow, heat.
 
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
@@ -242,12 +246,21 @@ def derive_bar_color(src, dur, crop, tmp, grade_on=True):
         S = clamp(2.2  * S_mean, 0.22, 0.60)
     with a low-chroma fallback for S: a near-neutral scene's mean RGB has a
     meaningless saturation (colours cancel in the mean), so below the
-    threshold the mean of the per-pixel saturations is used instead."""
+    threshold the mean of the per-pixel saturations is used instead.
+
+    `fps=1` runs FIRST: it used to sit after the lanczos scale and the grade,
+    so 24 of every 25 frames were scaled and graded and then discarded
+    (8.57s -> 1.89s CPU, -78%, on a 23s 1080p clip; it scales with source
+    resolution and length). This moves the pill by up to one LSB on one
+    channel -- `vignette` dithers per frame, so feeding it 25 frames instead
+    of 700 advances its PRNG differently -- which is a look change, but a
+    sub-quantiser one on a colour that is a heuristic to begin with. Pin
+    `bar_color:` in the config to bypass the pass entirely."""
     a = BAR_AUTO
     tile = int(a["sample_tile"])
     tile_png = os.path.join(tmp, "bar_color_sample.png")
-    vf = (band_source_chain(crop, grade_on)
-          + ",fps=%s,scale=48:27,tile=%dx%d" % (a["sample_fps"], tile, tile))
+    vf = ("fps=%s," % a["sample_fps"] + band_source_chain(crop, grade_on)
+          + ",scale=48:27,tile=%dx%d" % (tile, tile))
     run([FFMPEG, "-v", "error", "-y", "-t", "%.3f" % dur, "-i", src,
          "-vf", vf, "-frames:v", "1", tile_png])
 
@@ -404,12 +417,36 @@ def with_shadow(ink, cfg, W, H):
     return Image.alpha_composite(sh, ink)
 
 
+def trim_to_ink(card):
+    """A full-canvas card cropped to its non-transparent pixels -> (img, x, y).
+
+    The same idea as render_default.trim_to_ink, and ported from it including
+    the outward even-coordinate snap: `overlay` blends in yuv420 by default,
+    so on an odd edge the overlay's 2x2 chroma/alpha blocks would straddle a
+    different grid than the full-canvas card's and the result would shift.
+
+    Worth it here because bars pays for a caption card THREE times -- the
+    composite, the barglow accumulator and the textglow accumulator -- and
+    the ink is ~680x270 against a 1080x1920 canvas, 11x smaller. Measured by
+    differencing a 1-card against a 4-card render: 7.7s CPU and ~280 MB RSS
+    per card, linear in card count, spent compositing (0,0,0,0)."""
+    box = card.getbbox()
+    if box is None:                       # an empty card composites to nothing
+        return card, 0, 0
+    x0, y0 = box[0] - box[0] % 2, box[1] - box[1] % 2
+    x1 = min(card.width, box[2] + box[2] % 2)
+    y1 = min(card.height, box[3] + box[3] % 2)
+    return card.crop((x0, y0, x1, y1)), x0, y0
+
+
 def draw_layers(lay, bar_rgb_drawn, out_dir):
-    """TWO full-canvas layers per phrase, so the compositor can animate them
+    """TWO layers per phrase, so the compositor can animate them
     independently (the pill wipes, the text always cross-fades):
         barN.png  = the hard-edged opaque pill(s) alone
         textN.png = the Thuluth glyphs + their single hard drop shadow
-    Returns [{"bar", "text", "x0", "x1", "lines"}] per phrase."""
+    Drawn at full canvas and saved cropped to their own ink; the box each one
+    came from travels with it, since every consumer now has to place it.
+    Returns [{"bar", "text", "x0", "x1", "lines", "bar_box", "text_box"}]."""
     os.makedirs(out_dir, exist_ok=True)
     report = []
     for p in lay["phrases"]:
@@ -426,10 +463,15 @@ def draw_layers(lay, bar_rgb_drawn, out_dir):
             px0, px1 = min(px0, ln["x0"]), max(px1, ln["x1"])
         bp = os.path.join(out_dir, "bar%d.png" % p["i"])
         tp = os.path.join(out_dir, "text%d.png" % p["i"])
-        bar_img.save(bp)
-        with_shadow(ink, TEXT_SHADOW, CANVAS_W, CANVAS_H).save(tp)
+        bcrop, bx, by = trim_to_ink(bar_img)
+        tcrop, tx, ty = trim_to_ink(
+            with_shadow(ink, TEXT_SHADOW, CANVAS_W, CANVAS_H))
+        bcrop.save(bp)
+        tcrop.save(tp)
         report.append({"bar": bp, "text": tp, "x0": px0, "x1": px1,
-                       "lines": len(p["lines"])})
+                       "lines": len(p["lines"]),
+                       "bar_box": (bx, by, bcrop.width, bcrop.height),
+                       "text_box": (tx, ty, tcrop.width, tcrop.height)})
     return report
 
 
@@ -658,9 +700,19 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     # the end; the bucket is sized so this normally never wraps.
     heat_in = [g_.input(p, stream_loop=-1) for p in (heat_paths or [])]
 
+    # Every caption layer is now an ink-sized tile that has to be PLACED, and
+    # every consumer of one (the composite here, both glow accumulators in
+    # fx.py) needs the same box and the same window. `gate` is the layer's
+    # own alpha window widened by a frame each side, so the enable can only
+    # ever switch on frames the layer was already fully transparent for.
+    boxes = [{"bar": r["bar_box"], "text": r["text_box"]} for r in rep]
+    gates = ["between(t,%.3f,%.3f)"
+             % (max(0.0, t_in - 1.0 / FPS), t_out + d_out + 1.0 / FPS)
+             for _k, t_in, _di, t_out, d_out in sched]
+
     ctx = FX.Ctx(W=W, H=H, BW=BAND_W, BH=BAND_H, BY=BAND_Y, fps=FPS, dur=dur,
                  tint=tint, nphrases=nphrases, band_src="band",
-                 snow_in=snow_in, hexrgb=hexrgb,
+                 snow_in=snow_in, hexrgb=hexrgb, boxes=boxes, gates=gates,
                  heat_x_in=heat_in[0] if heat_in else None,
                  heat_y_in=heat_in[1] if heat_in else None)
 
@@ -716,11 +768,17 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
         for j, name in enumerate(("bar", "text")):
             sidx = ph_base + 2 * i + j
             lbl = f"{name}{i + 1}"
+            ox, oy, ow, oh = boxes[i][name]
             if name in masks:
+                # The mask stays a full-canvas plate -- its sweep expression
+                # is in canvas columns and the feather blur's boundaries are
+                # part of the look -- and is CROPPED to the layer it gates.
+                # A crop is exact, so the mask the layer sees is unchanged.
+                g_.chain(masks[name], f"crop={ow}:{oh}:{ox}:{oy}", f"mc{lbl}")
                 g_.chain(ph_in[sidx - ph_base], ["format=rgba", "split=2"],
                          [f"p{lbl}", f"pa{lbl}"])
                 g_.chain(f"pa{lbl}", "alphaextract", f"a{lbl}")
-                g_.chain([f"a{lbl}", masks[name]],
+                g_.chain([f"a{lbl}", f"mc{lbl}"],
                          "blend=all_mode=multiply:shortest=1", f"am{lbl}")
                 g_.chain([f"p{lbl}", f"am{lbl}"], "alphamerge", f"x{lbl}")
             else:
@@ -735,8 +793,9 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
             if eff is not None:
                 lbl = eff.per_phrase(g_, ctx, i, lbl)
             nxt = f"c{i + 1}{name[0]}"
-            g_.chain([base, f"x{lbl}"], "overlay=0:0:format=auto:shortest=1",
-                     nxt)
+            g_.chain([base, f"x{lbl}"],
+                     f"overlay={ox}:{oy}:format=auto:shortest=1"
+                     f":enable='{gates[i]}'", nxt)
             base = nxt
 
     # FX: applied to the captioned flat but cropped to the band and pasted
