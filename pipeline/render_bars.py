@@ -14,21 +14,25 @@ themselves live in pipeline/fx.py.
 
 THE GOLDEN BYTE-IDENTITY CONTRACT IS SUSPENDED as of the 2026-08-01 speed
 work: the emitted filtergraph is deliberately no longer byte-identical to
-legacy/tests/golden/at-tawbah-128-128/filtergraph.txt. Four changes did it,
+legacy/tests/golden/at-tawbah-128-128/filtergraph.txt. Five changes did it,
 all owner-approved, none of them a look decision:
   * heat's two perlin maps are pre-baked and fed in as inputs (heat_layers);
-  * wide gaussians run at half linear size (fx.blur) and bar glow blurs a
-    band-sized slice instead of the full 1920-tall canvas;
+  * wide gaussians run at reduced linear size -- half from sigma 20, quarter
+    from sigma 40 (fx.blur);
   * heat's supersample went 3 -> 2;
   * caption layers are cropped to their own ink and placed, instead of being
     full-canvas plates overlaid at 0:0 three times each (trim_to_ink), and
-    every one of those overlays is gated to the card's own window.
-Measured against the pre-change render of sources/gt9y-QGgMsA/waqiah-83-87:
-PSNR 47.1dB for the bake, 53.1dB for the blur work, 48.8dB for the
-supersample, i.e. below the 8-bit quantiser in each case; wall time 372s ->
-150s on a 4P+4E machine. Until a replacement fixture exists, the guarantee
-that a look change is never a refactor side-effect rests on re-measuring
-PSNR against the previous render, NOT on diffing the graph text.
+    every one of those overlays is gated to the card's own window;
+  * the two glow accumulator plates are the size of the rows that can
+    actually reach the band, not the full 1920 (BarGlow.slice_rows, and
+    TextGlow's plate at band size).
+Measured on sources/gt9y-QGgMsA, each against the render before it: 47.1dB
+for the bake, 53.1dB for the half-res work, 48.8dB for the supersample,
+53.2dB for the quarter-res step; the caption crop and both plate shrinks
+came back bit-identical (PSNR inf). Wall 372s -> 96s on a 4P+4E machine.
+Until a replacement fixture exists, the guarantee that a look change is
+never a refactor side-effect rests on re-measuring PSNR against the
+previous render, NOT on diffing the graph text.
 
 Per-reel switches, via the config's `fx:` map (e.g. `fx: {heat: false}` --
 heat is ~27% of the remaining render time, measured 118s -> 87s on a 27.5s

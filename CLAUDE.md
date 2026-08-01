@@ -141,26 +141,20 @@ script stays independently runnable; do not "deduplicate" that.
    counts, not text. In .py files, write Arabic as `\uXXXX` escapes or
    verify retyped literals codepoint-by-codepoint against the legacy file
    (this was done for every regex/table in `quran.py`, `render_bars.py`).
-2. **SUSPENDED 2026-08-01 — see `render_bars.py`'s docstring before relying
-   on this.** The speed work (pre-baked heat maps, half-res wide gaussians,
-   band-sliced bar glow, supersample 3->2) deliberately changed the graph,
-   so the diff below no longer passes and there is no re-blessed fixture yet
-   (the golden lives under read-only `legacy/`). Until one exists, the rule
-   it enforced still stands but is checked differently: **after any edit to
-   `render_bars.py` or `fx.py`, re-render a known reel and PSNR it against
-   the previous render** — anything below ~45dB is a look change and needs a
-   decision, not a shrug. Restoring a real fixture outside `legacy/` is open
-   work.
-   The original contract, for reference:
-   **`render_bars.py` + `fx.py` are under a byte-identity contract** with
-   `legacy/tests/golden/at-tawbah-128-128/filtergraph.txt`. After ANY edit
-   to either, rebuild the graph for that clip (phrases from its clip.yaml
-   with ar1/ar2 -> text+line_split and t0/t1 -> start/end;
-   `layout(..., x_offset=-216)`; `schedule(phrases, 23.720)`; tint
-   recovered from the golden's glow scalars via rr/0.35*255; the golden's
-   own `[0:a]` chain as `ln`; crop 48,30,1280x720; all switches on;
-   sig_path None) and diff against the golden — it must match exactly.
-   A look change is an owner decision, never a refactor side-effect.
+2. **`render_bars.py` + `fx.py` are under a byte-identity contract** with
+   `tests/golden/bars-filtergraph.txt`. After ANY edit to either, run
+
+       tools/render-venv/bin/python tests/graph_parity.py
+
+   It rebuilds the at-tawbah-128-128 graph (the recipe lives in the script)
+   and diffs it filter by filter. A look change is an owner decision, never
+   a refactor side-effect — so when the diff is intended, **re-render a
+   known reel and PSNR it against the previous render first** (below ~45dB
+   is a look change and needs a decision, not a shrug), then `--bless`.
+   The fixture was re-recorded on 2026-08-01 against the current graph; the
+   legacy golden it replaced is frozen under read-only `legacy/` and no
+   longer matches, because the speed work changed the graph deliberately —
+   `render_bars.py`'s docstring lists every change and what it measured.
 3. **Interpreter split.** generate/render run ONLY under
    `tools/render-venv/bin/python` (RAQM Pillow — without RAQM Arabic
    renders unjoined, silently; the renderers hard-exit on it); whisper runs

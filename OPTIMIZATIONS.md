@@ -113,14 +113,30 @@ from where that left off:
 | | wall | CPU | peak RSS |
 |---|---|---|---|
 | after heat bake + blurs + supersample | 170.7s | 724.2s | 4685 MB |
-| after items 1-3 | **117.7s** | **525.8s** | **2517 MB** |
-| after items 1-3, `fx: {heat: false}` | 86.5s | 377.0s | 2346 MB |
+| after items 1-3 | 117.7s | 525.8s | 2517 MB |
+| + quarter-res blurs, shrunk glow plates | **95.9s** | **459.1s** | **2212 MB** |
+| (for reference: items 1-3 with `fx: {heat: false}`) | 86.5s | 377.0s | 2346 MB |
 
 PSNR of the second row against the first is 52.93 dB (min 51.05), all of it
 item 3's intermediate plus item 2's one LSB — item 1 contributes nothing,
-having been measured at inf on its own. Note the third row: `heat` is now
-~27% of the render, not the ~55% of wall it was before the maps were baked,
-so the docs' old "heat halves the render time" is out of date.
+having been measured at inf on its own. The third row is 53.23 dB against
+the second, all of it the quarter-res step; the plate shrink measured inf.
+Note the fourth row: `heat` is ~27% of the render now, not the ~55% of wall
+it was before the maps were baked, so the docs' old "heat halves the render
+time" was out of date and has been corrected.
+
+### Where the remaining 95.9s goes
+
+Measured by switching stages off, on the same reel:
+
+| | wall | share |
+|---|---|---|
+| floor — trim, audio, caption PNGs, source decode, final encode | 35.2s | 37% |
+| glow + barglow + textglow + scan + snow | ~30s | 31% |
+| heat | ~31s | 32% |
+
+Inside the floor: `trim_media` is 3.1s, the snow bake 2.8s (and cached after
+the first render of a reel). Neither is worth chasing — see below.
 
 ---
 
@@ -138,12 +154,15 @@ so the docs' old "heat halves the render time" is out of date.
 
 ## Still open
 
-### Push `-ss`/`-t` into the render inputs and delete `trim_media`
+### Push `-ss`/`-t` into the render inputs and delete `trim_media` — NOT WORTH IT
 
-`Graph.input` already accepts both. That removes an encode *and* a decode —
-the whole of item 3 rather than 65% of it — but it is a multi-file change
-(the bar-colour sample, loudnorm and wav extract all currently receive the
-pre-trimmed file) and needs A/V sync verified across the seek.
+This was billed as the bigger version of item 3. Measured after item 3
+shipped, it is not: the trim now costs **3.1s wall** (20.8s CPU) of a 95.9s
+render, and seeking into the 33-minute original is actually *cheaper* to
+decode than the intermediate (0.40s vs 0.63s for the same window, because
+crf 10 is a higher bitrate than the source at that point). Deleting it buys
+~4s for a five-call change that needs A/V sync verified at every seek. Left
+undone deliberately; revisit only if the trim's cost grows.
 
 ### A golden parity gate that lives in this repo
 
