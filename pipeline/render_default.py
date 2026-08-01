@@ -37,6 +37,7 @@ ARABIC_FONTS = {
 }
 ENGLISH_FONTS = {
     "albertus": os.path.join(FONT_DIR, "Albertus MT Lt Regular.ttf"),
+    "gentium": os.path.join(FONT_DIR, "GentiumPlus-Regular.ttf"),
 }
 
 # Tajweed ANNOTATION marks (reading aids, not letters or vowels) that these
@@ -213,28 +214,30 @@ def render_text_png(text, font_path, size, shadow_cfg):
     return _draw_with_shadow(ink, w, h, shadow_cfg), w, h
 
 
-def wrap_by_chars(text, max_chars):
-    """Greedy wrap driven by character count, breaking only between words."""
-    lines, cur, n = [], [], 0
+def wrap_by_width(text, font, max_width, max_chars):
+    """Greedy wrap by MEASURED pixel width (max_chars as a readability cap),
+    breaking only between words."""
+    lines, cur = [], []
     for w in text.split():
-        extra = len(w) + (1 if cur else 0)
-        if cur and n + extra > max_chars:
+        cand = " ".join(cur + [w])
+        if cur and (len(cand) > max_chars or
+                    _PROBE.textbbox((0, 0), cand, font=font)[2] > max_width):
             lines.append(" ".join(cur))
-            cur, n = [w], len(w)
+            cur = [w]
         else:
             cur.append(w)
-            n += extra
     if cur:
         lines.append(" ".join(cur))
     return lines
 
 
-def safe_char_count(center_x, width, margin, size, ratio=0.32):
-    """Max chars/line before clipping: a centred block shifted off true
-    center can only extend as far as the CLOSER screen edge. `ratio` is the
-    calibrated avg glyph width / point size for the English face."""
-    usable = 2 * max(1, min(center_x - margin, (width - margin) - center_x))
-    return max(10, int(usable / (size * ratio)))
+def assert_fits(kind, i, png_w, center_x, frame_w):
+    """A caption PNG centred on center_x must land inside the frame."""
+    left = center_x - png_w // 2
+    if left < 0 or left + png_w > frame_w:
+        raise SystemExit(
+            "%s of card %d is %dpx wide and overflows the %dpx frame -- "
+            "lower text_width or arabic_scale" % (kind, i + 1, png_w, frame_w))
 
 
 # ---------- compositing -----------------------------------------------------
@@ -370,7 +373,7 @@ def render(plan):
                   % (width, height, info["width"], info["height"]))
     # Subtitles are CENTERED by default; the offsets are the only knobs.
     center_x = width // 2 + int(cfg["x_offset"])
-    margin = int(width * 0.06)
+    margin = int(width * (1.0 - cfg["text_width"]) / 2)
     max_ar_width = 2 * min(center_x - margin, (width - margin) - center_x)
 
     texts = [strip_display_marks(p["text"]) for p in arabic]
@@ -391,9 +394,8 @@ def render(plan):
     ar_h = max(h for _, _, h in ar_pngs)
 
     en_font = ImageFont.truetype(en_font_path, en_size)
-    chars = min(cfg["english_max_chars"],
-                safe_char_count(center_x, width, margin, en_size))
-    en_wrapped = [wrap_by_chars(p["text"], chars) if p["text"] else []
+    en_wrapped = [wrap_by_width(p["text"], en_font, max_ar_width,
+                                cfg["english_max_chars"]) if p["text"] else []
                   for p in english]
     en_line_h = int(en_size * 1.25)
     en_h = max((len(ls) for ls in en_wrapped), default=0) * en_line_h
@@ -410,12 +412,14 @@ def render(plan):
     for i, ((ar_img, aw, ah), lines, ph) in enumerate(
             zip(ar_pngs, en_wrapped, arabic)):
         card = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        assert_fits("arabic", i, aw, center_x, width)
         card.paste(ar_img, (center_x - aw // 2, block_top + (ar_h - ah) // 2),
                    ar_img)
         y = block_top + ar_h + gap
         for line in lines:
             img, lw, lh = render_text_png(line, en_font_path, en_size,
                                           EN_SHADOW)
+            assert_fits("english", i, lw, center_x, width)
             card.paste(img, (center_x - lw // 2,
                              y + (en_line_h - lh) // 2), img)
             y += en_line_h

@@ -86,7 +86,8 @@ DEFAULTS = {
     "arabic_scale": 1.1375,      # x base size of height * 0.09
     "english_scale": 1.0,        # x the locked 0.72 English:Arabic ratio
     "line_gap": 0.0,             # Arabic->English gap, frac of height
-    "dim": 0.35,                 # video brightness under captions (0-1)
+    "dim": 0.30,                 # video brightness under captions (0-1)
+    "text_width": 0.88,          # frac of frame width captions may occupy
     "english_max_chars": 60,     # English wrap cap
 
     # bars style only ----------------------------------------------------
@@ -136,7 +137,7 @@ else has a working default.
 
     # default style: orientation (auto|vertical|horizontal), detect_subject,
     # background_image + frame_size, arabic_font, english_font, arabic_scale,
-    # english_scale, line_gap, dim, english_max_chars
+    # english_scale, line_gap, dim, text_width, english_max_chars
     # bars style: bar_color ("#RRGGBB" | omit for auto), crop {x,y,w,h},
     #   fx: {heat: false, ...} to switch stages off (grade scrim glow
     #   barglow textglow scan snow heat; heat is ~half the render time)

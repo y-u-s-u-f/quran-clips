@@ -119,7 +119,7 @@ verse_numbers: true               # ayah ornament (default: on for `default`,
 
 # default style: orientation, detect_subject, background_image + frame_size,
 #   arabic_font (uthmanic_hafs|thuluth), english_font, arabic_scale,
-#   english_scale, line_gap, dim, english_max_chars
+#   english_scale, line_gap, dim, text_width, english_max_chars
 # bars style:    bar_color ("#RRGGBB", omit for auto-derivation from the
 #   graded footage), crop {x,y,w,h}
 # plumbing:      input / whisper / output, only to override the defaults
