@@ -13,8 +13,10 @@ script stays independently runnable; do not "deduplicate" that.
 
 - **`pipeline/fetch.py`** — source intake -> `sources/<id>/`. YouTube via
   yt-dlp (proxy-pool escalation, `web_embedded` retry, `ensure_aac`,
-  stub-download gate in `usable()`), local files via symlink. No third-party
-  imports.
+  stub-download gate in `usable()`), local files via symlink. Everything is
+  held to `MAX_FPS` (30) at intake -- the format string prefers a `<=30fps`
+  rendition and a faster local file is re-encoded down once, rather than
+  paying for the surplus frames in every later decode. No third-party imports.
 - **`pipeline/transcribe.py`** — `sources/<id>/source.*` -> `whisper.json`
   + `whisper.srt`. Backend (mlx/faster) selected per machine, run as a
   SUBPROCESS with inline source snippets (`_SNIPPETS`) against

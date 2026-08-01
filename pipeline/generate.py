@@ -177,7 +177,7 @@ def get_video_info(path):
             "duration": float(data.get("format", {}).get("duration", 0))}
 
 
-def trim_media(path, out_path, start, end):
+def trim_media(path, out_path, start, end, has_video):
     """Cut [start, end) out of the source and re-encode. Re-encoding rather
     than stream-copying is deliberate: a copy cuts only at the nearest
     keyframe, which shifts the real start by up to a GOP and would offset
@@ -186,7 +186,7 @@ def trim_media(path, out_path, start, end):
     if end is not None:
         cmd += ["-to", "%.3f" % end]
     cmd += ["-i", path]
-    if get_video_info(path)["width"]:
+    if has_video:
         cmd += ["-c:v", "libx264", "-preset", "slow", "-crf", "16",
                 "-pix_fmt", "yuv420p"]
     else:
@@ -720,7 +720,8 @@ def run_config(config_path, output_override=None):
                                else "trimmed.mp4")
         print("      trimming to %s-%ss" % (t0, t1 if t1 is not None else "end"))
         source = trim_media(source, trimmed, float(t0),
-                            None if t1 is None else float(t1))
+                            None if t1 is None else float(t1),
+                            bool(info["width"]))
         info = get_video_info(source)
     still = cfg.get("background_image")
     if still and not os.path.exists(still):

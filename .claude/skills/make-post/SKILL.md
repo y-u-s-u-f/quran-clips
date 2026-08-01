@@ -34,8 +34,11 @@ tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel-name>.yaml
 ffmpeg -v error -i reels/<reel-name>.mp4 -f null -               # decode gate
 ```
 
-- **`fetch.py`** downloads into `sources/<id>/` (YouTube) or symlinks a
-  local file. It refuses a stub download (size + probeable duration), keeps
+- **`fetch.py`** downloads into `sources/<id>/` (YouTube) or symlinks a local
+  file. Everything is held to 30fps at intake: a `<=30fps` rendition is
+  preferred on download, and a faster local file is re-encoded down once
+  instead of being symlinked.
+  It refuses a stub download (size + probeable duration), keeps
   an existing `source.mp4` untouched, and guarantees AAC audio (Opus in an
   MP4 deadlocks ffmpeg at some seek points). Captions land in
   `captions.srt` when YouTube has them.

@@ -528,8 +528,11 @@ def schedule(phrases, dur, kinds=None):
 # ---------------------------------------------------------------------------
 
 def measure_loudness(src, dur):
+    # -vn: without it the null muxer still pulls the video stream, so pass 1
+    # decodes the whole clip's picture to measure its audio (measured 2.07s ->
+    # 0.60s CPU on a 23s 1080p source; the JSON is byte-identical).
     cmd = [FFMPEG, "-hide_banner", "-nostats", "-t", "%.3f" % dur, "-i", src,
-           "-af", "loudnorm=I=%s:TP=%s:LRA=%s:print_format=json"
+           "-vn", "-af", "loudnorm=I=%s:TP=%s:LRA=%s:print_format=json"
            % (AUDIO["lufs"], AUDIO["tp"], AUDIO["lra"]),
            "-f", "null", "-"]
     p = subprocess.run(cmd, capture_output=True, text=True)

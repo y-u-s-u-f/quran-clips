@@ -42,7 +42,9 @@ generate.py
 
 ```
 sources/<id>/                one folder per source video
-    source.mp4               downloaded (fetch.py), symlinked local file, or
+    source.mp4               downloaded (fetch.py; <=30fps preferred),
+                             symlinked local file (re-encoded to 30fps if
+                             the original is faster), or
                              hand-placed
     captions.srt             YouTube Arabic auto-captions, when they exist
     whisper.json             word-level timings   (transcribe.py)

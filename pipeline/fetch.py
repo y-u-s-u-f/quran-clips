@@ -1,7 +1,7 @@
 """pipeline/fetch.py -- source intake. One folder per source under sources/.
 
     python3 pipeline/fetch.py <youtube-url-or-id>          download
-    python3 pipeline/fetch.py /path/to/video.mp4           symlink a local file
+    python3 pipeline/fetch.py /path/to/video.mp4           take in a local file
     python3 pipeline/fetch.py <src> --name my-slug         pick the folder name
     python3 pipeline/fetch.py <url> --proxy                route via .env pool
     python3 pipeline/fetch.py <url> --proxy http://u:p@h:p explicit proxy
@@ -9,8 +9,12 @@
                                                            download a section
 
 Produces sources/<id>/:
-    source.mp4      the video (downloaded, or a symlink to the local file)
+    source.mp4      the video (downloaded, or a symlink to the local file --
+                    re-encoded instead when the local file is above 30fps)
     captions.srt    YouTube's Arabic auto-captions, only when YouTube has them
+
+Everything is held to 30fps at intake: the reels render at 30, so surplus
+frames only cost decode and filter time in every stage downstream.
 
 A hand-made source needs no fetch at all: create sources/<name>/ and put a
 source.mp4 in it.
@@ -41,6 +45,10 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = os.path.join(ROOT, "sources")
+
+# Reels render at 30fps, so nothing above it survives to the screen. Held down
+# at intake -- once here -- rather than in every downstream decode.
+MAX_FPS = 30
 
 
 # --- machine config (.env) -------------------------------------------------
@@ -140,6 +148,19 @@ def probe_duration(path):
         return 0.0
 
 
+def video_fps(path):
+    """Frames per second of the first video stream; 0.0 when there is none."""
+    p = subprocess.run([ffprobe(), "-v", "error", "-select_streams", "v:0",
+                        "-show_entries", "stream=avg_frame_rate",
+                        "-of", "default=nw=1:nk=1", path],
+                       capture_output=True, text=True)
+    num, _, den = (p.stdout or "").strip().partition("/")
+    try:
+        return float(num) / (float(den) or 1.0)
+    except ValueError:
+        return 0.0
+
+
 def audio_codec(path):
     p = subprocess.run([ffprobe(), "-v", "error", "-select_streams", "a:0",
                         "-show_entries", "stream=codec_name",
@@ -190,8 +211,14 @@ def usable(path, min_bytes=100_000):
 
 # Prefer a real <=1080p video+audio pair, and prefer M4A (AAC) audio -- see
 # ensure_aac for why an Opus track in an MP4 is not acceptable here.
-FORMAT = ("bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/"
-          "b[height<=1080]/bv*+ba/b")
+# <=30fps first: reels are rendered at 30, so a 60fps rendition is a bigger
+# download whose every other frame is decoded and filtered only to be dropped
+# again. The unconstrained selectors stay as fallbacks -- a video published
+# only at 60fps must still fetch.
+FORMAT = ("bv*[height<=1080][fps<=%(fps)d]+ba[ext=m4a]/"
+          "bv*[height<=1080][fps<=%(fps)d]+ba/"
+          "bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/"
+          "b[height<=1080]/bv*+ba/b") % {"fps": MAX_FPS}
 
 # The 403 / DRM-only fallback: when the default player clients refuse,
 # `web_embedded` is often the only one still exposing 1080p. Cheap to retry
@@ -279,16 +306,41 @@ def fetch_youtube(vid, out_dir, proxy=None, timestamps=None):
 # --- local files -----------------------------------------------------------
 
 def fetch_local(path, out_dir):
+    """Symlink the file in place. A source ABOVE MAX_FPS is re-encoded down to
+    it instead: the renderers drop the surplus frames anyway, so carrying them
+    only buys every later pass (bar-colour sample, loudnorm, the render's own
+    decode + grade) twice the work. The user's own file is never touched."""
     src = os.path.abspath(path)
     if not os.path.isfile(src):
         raise SystemExit("not a file: %s" % src)
-    dst = os.path.join(out_dir, "source" + os.path.splitext(src)[1].lower())
+    fps = video_fps(src)
+    ext = ".mp4" if fps > MAX_FPS else os.path.splitext(src)[1].lower()
+    dst = os.path.join(out_dir, "source" + ext)
     if os.path.islink(dst) or os.path.exists(dst):
         print("  video   : %s  (already present, untouched)"
               % os.path.relpath(dst, ROOT))
         return
-    os.symlink(src, dst)
-    print("  video   : %s -> %s" % (os.path.relpath(dst, ROOT), src))
+    if fps <= MAX_FPS:
+        os.symlink(src, dst)
+        print("  video   : %s -> %s" % (os.path.relpath(dst, ROOT), src))
+        return
+    print("  fps     : %.3f -> %d (re-encoded once, at intake)" % (fps, MAX_FPS))
+    # crf 16: this copy becomes the master every reel is cut from, so it is
+    # encoded well above the crf 18 the reels themselves are delivered at.
+    acodec = ["-c:a", "copy"] if audio_codec(src) == "aac" else \
+        ["-c:a", "aac", "-b:a", "192k"]
+    tmp = dst + ".part.mp4"
+    rc = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-loglevel",
+                         "error", "-y", "-i", src, "-r", str(MAX_FPS),
+                         "-c:v", "libx264", "-preset", "medium", "-crf", "16",
+                         "-pix_fmt", "yuv420p"] + acodec
+                        + ["-movflags", "+faststart", tmp]).returncode
+    if rc != 0 or not usable(tmp):
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise SystemExit("could not re-encode %s to %dfps" % (src, MAX_FPS))
+    os.replace(tmp, dst)
+    print("  video   : %s  [from %s]" % (os.path.relpath(dst, ROOT), src))
 
 
 # --- main ------------------------------------------------------------------

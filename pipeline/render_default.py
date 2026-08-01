@@ -240,6 +240,25 @@ def assert_fits(kind, i, png_w, center_x, frame_w):
             "lower text_width or arabic_scale" % (kind, i + 1, png_w, frame_w))
 
 
+def trim_to_ink(card):
+    """A full-frame card cropped to its non-transparent pixels. -> (img, x, y)
+
+    The compositor pays for the whole overlay every frame a card is up, and a
+    card's ink covers a fraction of the frame; what is cropped away is
+    (0,0,0,0), which `overlay` composites to nothing. The box is snapped
+    OUTWARD to even coordinates because overlay blends in yuv420 by default:
+    on an odd edge the overlay's 2x2 chroma/alpha blocks would straddle a
+    different grid than the full-frame card's and the result would shift.
+    """
+    box = card.getbbox()
+    if box is None:                       # an empty card composites to nothing
+        return card, 0, 0
+    x0, y0 = box[0] - box[0] % 2, box[1] - box[1] % 2
+    x1 = min(card.width, box[2] + box[2] % 2)
+    y1 = min(card.height, box[3] + box[3] % 2)
+    return card.crop((x0, y0, x1, y1)), x0, y0
+
+
 # ---------- compositing -----------------------------------------------------
 
 def composite(video, overlays, out_path, dim, duration,
@@ -423,10 +442,11 @@ def render(plan):
             card.paste(img, (center_x - lw // 2,
                              y + (en_line_h - lh) // 2), img)
             y += en_line_h
+        cropped, ox, oy = trim_to_ink(card)
         path = os.path.join(png_dir, "%03d.png" % i)
-        card.save(path)
+        cropped.save(path)
         overlays.append({"path": path, "start": ph["start"], "end": ph["end"],
-                         "x": 0, "y": 0})
+                         "x": ox, "y": oy})
 
     if cfg["signature"]:
         sig_size = max(12, int(height * SIGNATURE_SIZE_FRAC))
@@ -440,9 +460,10 @@ def render(plan):
         card.paste(sig_img, (width // 2 - sw // 2,
                              int(height * SIGNATURE_Y_FRAC) - sh // 2
                              + int(cfg["signature_offset"])), sig_img)
+        cropped, ox, oy = trim_to_ink(card)
         sig_path = os.path.join(png_dir, "signature.png")
-        card.save(sig_path)
-        overlays.append({"path": sig_path, "x": 0, "y": 0, "full": True})
+        cropped.save(sig_path)
+        overlays.append({"path": sig_path, "x": ox, "y": oy, "full": True})
 
     composite(source, overlays, plan["out"], cfg["dim"], info["duration"],
               still_image=still, size=(width, height), scale_to=scale_to)
