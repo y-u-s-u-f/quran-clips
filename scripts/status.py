@@ -52,7 +52,10 @@ REELS = os.path.join(ROOT, "reels")
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import render_text  # reuse the repo's own indentation YAML reader  # noqa: E402
 
-FFPROBE = "/opt/homebrew/bin/ffprobe"
+sys.path.insert(0, ROOT)
+from qc import env as _env  # noqa: E402
+
+FFPROBE = _env.require("ffprobe", "read reel duration")
 TAG_ATTR = "com.apple.metadata:_kMDItemUserTags"
 # Finder tag color indices: 0 none,1 grey,2 green,3 purple,4 blue,5 yellow,6 red,7 orange
 # Reels carry exactly ONE tag: plain green or plain red. No keyword tags, no

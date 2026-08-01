@@ -1028,6 +1028,39 @@ def _sample_frames(path, n):
     return [int(round(i * (nb - 1) / float(max(1, n - 1)))) for i in range(n)]
 
 
+def _decode_errors(path):
+    """Decode every packet and return the ffmpeg error lines. [] means clean.
+
+    Existence checks and ffprobe metadata are NOT integrity checks: the moov
+    atom, dimensions, frame rate and duration all survive a corrupted bitstream,
+    so a file whose H.264 payload was interleaved by a second writer still
+    reports 1920x1080 at the right duration and passes every other assertion
+    here while being unplayable. Only a full decode pass sees it.
+
+    Cheap enough to be unconditional: no filters, no encode, discard the output.
+    """
+    import subprocess
+    from qc.proc import FFMPEG
+    p = subprocess.run([FFMPEG, "-v", "error", "-xerror", "-i", path,
+                        "-f", "null", "-"],
+                       capture_output=True, text=True)
+    return [ln for ln in (p.stderr or "").splitlines() if ln.strip()]
+
+
+def _frame_count(path):
+    """Frames actually decodable, which is not what the container claims."""
+    import subprocess
+    from qc.proc import FFPROBE
+    p = subprocess.run([FFPROBE, "-v", "error", "-select_streams", "v:0",
+                        "-count_frames", "-show_entries",
+                        "stream=nb_read_frames", "-of", "csv=p=0", path],
+                       capture_output=True, text=True)
+    try:
+        return int((p.stdout or "").strip().split(",")[0])
+    except (ValueError, IndexError):
+        return None
+
+
 def _loudness(path):
     """Integrated loudness of the finished file, per EBU R128."""
     import re as _re
@@ -1052,14 +1085,16 @@ def check_output(clip_dir):
     clip = render_text.load_yaml(os.path.join(clip_dir, "clip.yaml"))
     style = render_text.load_yaml(render_text.template_path(clip))
     bars = render_text.style_of(clip) == "bars"
+    # Canvas comes from the template for BOTH styles. It used to be read from the
+    # template for bars and hardcoded 1920x1080 for default, so the two disagreed
+    # with the renderer whenever a template was edited.
+    W, H = render_text.canvas_of(style)
     if bars:
-        W = int(style["canvas"]["width"])
-        H = int(style["canvas"]["height"])
         fps = int(style["meta"]["fps"])
         lufs = float(style["audio"]["lufs"])
     else:
         from qc.audio import LUFS
-        W, H, fps, lufs = 1920, 1080, 30, LUFS
+        fps, lufs = int((style.get("meta") or {}).get("fps") or 30), LUFS
 
     seg = clip["segment"]
     dur = round(_hms(seg["end"]) - _hms(seg["start"]), 3)
@@ -1091,6 +1126,33 @@ def check_output(clip_dir):
         res.fail("output", "the moov atom is AFTER the media data: re-encode "
                            "with -movflags +faststart or the reel stalls "
                            "before it starts playing")
+
+    # INTEGRITY, before trusting anything measured above. Every assertion so far
+    # reads container metadata, which survives a corrupted bitstream intact: a
+    # file whose H.264 payload was interleaved by a second writer still reports
+    # the right dimensions, frame rate and duration. Decoding is the only way to
+    # see it, and it is the difference between shipping a reel and shipping an
+    # unplayable one.
+    errs = _decode_errors(path)
+    if errs:
+        res.fail("output",
+                 "the bitstream does not decode cleanly -- %d ffmpeg error(s), "
+                 "first: %s\n    Metadata (size, fps, duration) can look "
+                 "perfect on a corrupted file, so this is the check that "
+                 "catches it. Usual cause is two writers on one output path: "
+                 "re-render to a path nothing else owns."
+                 % (len(errs), errs[0][:160]))
+    else:
+        got_frames = _frame_count(path)
+        want = int(round(dur * fps))
+        # One frame of slack: the segment boundary rarely lands exactly on a
+        # frame and the encoder rounds.
+        if got_frames is not None and abs(got_frames - want) > 1:
+            res.fail("output",
+                     "decoded %d frames, expected about %d (%.3fs x %d fps) -- "
+                     "the encode is truncated even though the container "
+                     "duration reads %.3fs"
+                     % (got_frames, want, dur, fps, got_dur))
     if (d.get("format", {}).get("tags") or {}).get("comment", "") \
             .startswith("qc-preview"):
         res.fail("output", "this file is tagged qc-preview -- it is not a "

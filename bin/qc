@@ -1,10 +1,20 @@
 #!/bin/sh
-# `qc` front-end CLI. Always runs under tools/render-venv (PyYAML + the RAQM
-# Pillow build); NEVER under /opt/homebrew/bin/python3 directly, and nothing in
-# this repo may pip-install into that interpreter -- a past install there wiped
-# the RAQM Pillow the renderer depends on. If tools/render-venv is missing (it
-# is gitignored), recreate it per SKILL.md:76-82.
+# `qc` front-end CLI.
+#
+# Interpreter choice, first hit wins:
+#   $QC_RENDER_PYTHON      explicit override
+#   tools/render-venv      the documented layout (PyYAML + a RAQM Pillow)
+#   python3                whatever is on PATH
+#
+# NOTHING in this repo may pip-install into the interpreter that backs
+# tools/render-venv: a past install there replaced the RAQM Pillow build the
+# Arabic renderer depends on. Create the venv with --system-site-packages over a
+# python whose Pillow has RAQM, per the README.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-PY="$ROOT/tools/render-venv/bin/python"
-[ -x "$PY" ] || PY=python3
+
+PY="$QC_RENDER_PYTHON"
+[ -n "$PY" ] && [ -x "$PY" ] || PY="$ROOT/tools/render-venv/bin/python"
+[ -x "$PY" ] || PY=$(command -v python3)
+[ -n "$PY" ] || { echo "qc: no python3 found on PATH" >&2; exit 127; }
+
 exec "$PY" -c "import sys; sys.path.insert(0, '$ROOT'); import qc.__main__ as m; sys.exit(m.main())" "$@"

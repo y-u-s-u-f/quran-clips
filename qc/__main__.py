@@ -12,6 +12,12 @@
     qc render <clip> [--preview]       render (preview = half size, <=30s)
     qc frames <clip> --at 0,6,12,18    full-fidelity stills at these seconds
     qc export <clip> [<clip>...] | all export a finished clip to reels/
+    qc doctor [-v]                     resolved tool paths; what is missing
+
+`doctor` prints where ffmpeg/ffprobe/yt-dlp/claude and the venv interpreters
+resolved from, which ASR backend this host selects, and which commands are
+blocked by anything missing. Resolution order for a tool is $QC_<TOOL>, then the
+`[tools]` table in qc.toml, then PATH, then a platform hint.
 
 `check` runs no ffmpeg and takes under a second: clip.yaml schema (an unknown
 key is an ERROR -- a typo'd one is silently ignored by the renderer), phrase
@@ -109,6 +115,10 @@ def main(argv=None):
 
     if cmd == "propose":
         return _propose(argv)
+
+    if cmd == "doctor":
+        from . import doctor
+        return doctor.run(argv)
 
     if cmd == "crop":
         from .author import crop, fetch

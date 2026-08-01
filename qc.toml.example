@@ -1,0 +1,49 @@
+# qc.toml.example -- copy to qc.toml and edit. Entirely optional.
+#
+# Every key here has a working default, so a machine with ffmpeg, ffprobe and
+# yt-dlp on PATH needs no config at all. Run `qc doctor` to see what resolved
+# and where from.
+#
+# Precedence for any tool:  $QC_<TOOL>  >  this file  >  PATH  >  platform hint
+# (`qc doctor -v` prints which of those won for each entry.)
+#
+# NOTHING that affects a rendered pixel belongs in here. Style geometry, colours
+# and type live in templates/*.yaml, which is committed and reviewed; a
+# look-affecting number in an untracked file would make a render impossible to
+# reproduce from the repo alone.
+
+[tools]
+# Absolute paths to the external binaries. Only needed when a tool is not on
+# PATH, or when you must pin an exact build -- the golden media md5s are only
+# valid for the ffmpeg recorded in tests/golden/ENV.txt, so pinning ffmpeg here
+# is the supported way to keep those tiers meaningful.
+# ffmpeg  = "/opt/homebrew/bin/ffmpeg"
+# ffprobe = "/opt/homebrew/bin/ffprobe"
+# yt-dlp  = "/opt/homebrew/bin/yt-dlp"
+# claude  = "/opt/homebrew/bin/claude"
+
+[interpreters]
+# The three sibling venvs. Defaults to tools/<name>-venv/bin/python, and falls
+# back to the running interpreter when that path does not exist -- which is what
+# makes a single-venv install work with no configuration.
+#
+# Keep `render` pointed at an interpreter whose Pillow has RAQM (Arabic shaping)
+# and never pip-install whisper or opencv into it.
+# render = "~/venvs/qc-render/bin/python"
+# author = "~/venvs/qc-author/bin/python"
+# asr    = "~/venvs/qc-asr/bin/python"
+
+[asr]
+# backend: "mlx" (Apple silicon, the reference backend the committed timings
+# were produced with) or "faster" (faster-whisper / CTranslate2, CPU or CUDA,
+# runs anywhere). Defaults to mlx on Apple silicon and faster elsewhere.
+#
+# Switching backends re-times a clip: the two runtimes do not emit identical
+# word boundaries. Existing ASR caches record which backend wrote them and are
+# reused with a warning rather than silently re-cut.
+# backend = "faster"
+#
+# Model id, if you want something other than the backend's large-v3-turbo
+# default. Must be a repo the chosen backend understands: mlx-community/... for
+# mlx, a CTranslate2 conversion for faster.
+# model = "deepdml/faster-whisper-large-v3-turbo-ct2"

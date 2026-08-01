@@ -17,10 +17,21 @@ and make the few judgement calls the tools hand up. Do not re-derive by hand
 anything a command already does.
 
 Repo root `~/quran-clips`. All commands below are run from there.
-`./bin/qc` picks `tools/render-venv` automatically; scripts under `scripts/`
-must be invoked with `tools/render-venv/bin/python` explicitly.
-`./bin/qc` with no arguments prints the authoritative usage — read it if a flag
+`./bin/qc` and `./bin/quran-clips` are the same CLI under two names; scripts under
+`scripts/` must be invoked with the render interpreter explicitly.
+Either name with no arguments prints the authoritative usage — read it if a flag
 here looks stale.
+
+**Run `./bin/qc doctor` FIRST on an unfamiliar machine, and whenever anything
+shells out unexpectedly.** It prints where ffmpeg/ffprobe/yt-dlp/claude and the
+three interpreters resolved from, which ASR backend this host selects, the egress
+plan, and which commands anything missing would block. That is one second and it
+replaces guessing; before it existed a misconfigured host announced itself as a
+traceback several minutes into a render.
+
+Machine-level settings live in `.env` (see `.env.example`): tool paths, the ASR
+model, and the proxy pool. Nothing there affects a rendered pixel — style
+geometry stays in the committed `templates/*.yaml`.
 
 ## Styles
 - `bars` — 1080x1920, letterboxed footage band, Arabic-only captions on pills.
@@ -123,6 +134,13 @@ What each one does:
   Those are the boundaries to confirm by ear before export.
   *Line breaks.* The breaker optimises for the width cap, not for balance
   between the two lines of a card — see "Caption line balance" below.
+- **`check --output` now DECODES the file, not just its header.** Geometry, fps,
+  duration and faststart all read from container metadata, which survives a
+  corrupted bitstream intact: a file whose payload was interleaved by a second
+  writer reports perfect metadata and is unplayable. The decode pass plus a
+  decoded-frame count is what catches it. If it fires, the usual cause is two
+  writers on one output path — re-render to a path nothing else owns rather than
+  re-running the same command.
 - **`check`** is the QA stage. Eleven assertions: schema (unknown key = error),
   phrase/cut ordering, glyph coverage, Arabic == mushaf text (waqf signs and
   U+0640 tatweel stripped first — everything else must match exactly), no card spanning
@@ -200,6 +218,45 @@ A card can only be a single line if its ink is tall enough for the pill: the
 pill-ratio assertion fails a line with no ascender (`تُرْجَعُونَ` alone measures
 1.55 against a 1.8 floor). Group it with a word carrying a `ك`/`ل`/`ا`.
 
+## Egress: downloads go through a proxy pool on a cloud host
+
+`qc source add` is the ONLY command that leaves the machine. On a cloud host
+YouTube bot-checks the datacentre IP outright ("Sign in to confirm you're not a
+bot"), so configure the pool in `.env` and let the CLI escalate:
+
+    QC_PROXY_STATIC=user:pass@host:port,...      # five static residential exits
+    QC_PROXY_DATACENTER=user:pass@host:port,...  # fallback tier
+    QC_PROXY_ENABLED=auto                        # auto | always | never
+
+Order is fixed: **static residential -> datacentre -> fail.** No direct attempt is
+made once a pool is configured. `qc doctor` prints the plan; passwords are
+redacted in every log line and error.
+
+Three things worth knowing before debugging a failed download, all measured:
+
+- **A rotating proxy cannot download.** yt-dlp resolves a signed googlevideo URL
+  that embeds the resolving exit IP, so a rotating exit 403s the media fetch. The
+  pool is sticky per video id for exactly this reason. Rotating exits are fine for
+  small metadata calls and nothing else.
+- **The bot check fires at the player-API stage, before any bytes move, and burns
+  per exit IP.** Retrying one endpoint harder makes it worse; moving to the next
+  endpoint is what recovers. Sweeping
+  `--extractor-args youtube:player_client=<tv|web_safari|ios|mweb|android_vr>`
+  helps; repeated attempts on one exit do not. Keep a couple of non-US exits in
+  reserve — they often still resolve when the primary ones are burned.
+- **`--download-sections` needs the relay.** It always routes the range fetch
+  through a child ffmpeg, and ffmpeg cannot CONNECT-tunnel https through an
+  authenticated proxy: it reports `402 Payment Required`, which looks like a
+  billing failure and is not (curl on the same endpoint and URL returns 206).
+  `qc.relay` serves an unauthenticated local port that does the upstream CONNECT,
+  which is what keeps range downloads working. Do not "fix" a stalled range fetch
+  by exporting `http_proxy` — ffmpeg ignores it for https — and do not add
+  `--force-keyframes-at-cuts`, which produced a 262-byte stub over a proxy.
+
+**Never accept a download because the file exists.** A stalled or stub fetch
+leaves a file that is present and worthless, so gate on real size AND a probeable
+duration before treating a source as usable.
+
 ## Regression harness
 `scripts/golden.py` freezes, for four golden clips (bars, default, 1-cut and
 2-cut splice), the exact ffmpeg argv + filtergraph, the md5 of every intermediate
@@ -223,8 +280,20 @@ reports "golden invalid" rather than a fake regression.
   destroyed the RAQM-enabled Pillow that does Arabic shaping, and it is not
   reproducible from PyPI. Use the venvs: `tools/render-venv` (rendering + all
   `scripts/`; `--system-site-packages`, PyYAML only), `tools/asr-venv`
-  (mlx-whisper), `tools/author-venv` (opencv/numpy for `qc crop`). `tools/` is
+  (whisper), `tools/author-venv` (opencv/numpy for `qc crop`). `tools/` is
   gitignored, so a fresh clone recreates them from `requirements/`.
+  The interpreter is no longer hardcoded — it resolves per machine and each venv
+  is overridable (`QC_RENDER_PYTHON`, `QC_AUTHOR_PYTHON`, `QC_ASR_PYTHON`), and
+  falls back to the running python when `tools/<n>-venv` is absent. The RULE is
+  unchanged and is about dependency isolation, not about one absolute path:
+  whisper and opencv must never resolve into the render interpreter.
+- **The ASR backend is per machine.** `mlx` (Apple silicon, the reference backend
+  the committed timings came from) or `faster` (faster-whisper, everywhere else),
+  auto-selected, overridable with `QC_ASR_BACKEND`. **Switching backends re-times
+  a clip** — the two runtimes do not emit identical word boundaries, so cut points
+  move. Caches record which backend wrote them and warn rather than silently
+  re-cutting a reviewed clip. If you see that warning on a clip you are revising,
+  delete the cache and re-derive, or keep the original backend.
 - **NEVER `golden.py bless` to silence a failing golden.** A failure means
   something broke. Diagnose it, or stop and report. Bless only re-records a
   change you deliberately made and understand.

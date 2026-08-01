@@ -22,6 +22,8 @@ import shutil
 import subprocess
 import sys
 
+from .. import env as _env, proxy as _proxy
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SOURCES = os.path.join(ROOT, "sources")
 META = os.path.join(SOURCES, "meta")
@@ -39,13 +41,7 @@ FORMAT = ("bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/"
 
 
 def yt_dlp():
-    exe = shutil.which("yt-dlp")
-    if not exe:
-        raise SystemExit(
-            "yt-dlp not found on PATH. `brew install yt-dlp` (do NOT pip-install "
-            "it into /opt/homebrew/bin/python3)."
-        )
-    return exe
+    return _env.require("yt-dlp", "download source video and captions")
 
 
 def video_id(url):
@@ -60,11 +56,50 @@ def video_id(url):
 
 
 def _run(args, capture=False):
-    if capture:
-        p = subprocess.run(args, capture_output=True, text=True)
-        return p.returncode, p.stdout, p.stderr
-    p = subprocess.run(args)
-    return p.returncode, "", ""
+    """Run yt-dlp, routed through the proxy chain when one is configured.
+
+    Every network call in the pipeline funnels through here, which is why the
+    escalation lives at this single point: static residential exits first, then
+    datacentre, then fail. See `qc.proxy` for why the order is not negotiable
+    (a signed googlevideo URL embeds its resolving exit IP, so a rotating exit
+    403s the fetch, and the bot check burns per exit rather than per attempt).
+
+    Output is streamed to the terminal on a non-capture run only when there is a
+    single attempt; with a pool it must be captured so a failed endpoint can be
+    reported and the next one tried.
+    """
+    def build(url):
+        return list(args) + (["--proxy", url] if url else [])
+
+    if not _proxy.enabled():
+        if capture:
+            p = subprocess.run(args, capture_output=True, text=True)
+            return p.returncode, p.stdout, p.stderr
+        p = subprocess.run(args)
+        return p.returncode, "", ""
+
+    try:
+        # Pinned per video id: the metadata call and the media fetch have to
+        # leave from the SAME exit or the signed URL is invalid.
+        p, _url = _proxy.run_with_proxy(build, key=_proxy_key(args),
+                                        why="yt-dlp")
+    except SystemExit as e:
+        sys.stderr.write("%s\n" % e)
+        return 1, "", str(e)
+    if not capture:
+        # Preserve the streaming-ish behaviour callers expect from a plain run.
+        sys.stderr.write(p.stderr or "")
+        sys.stdout.write(p.stdout or "")
+    return p.returncode, p.stdout, p.stderr
+
+
+def _proxy_key(args):
+    """Sticky-session key: the video id, so one source keeps one exit."""
+    for a in args:
+        m = re.search(r"([A-Za-z0-9_-]{11})$", str(a))
+        if m and ("youtu" in str(a) or len(str(a)) == 11):
+            return m.group(1)
+    return "yt-dlp"
 
 
 def _with_fallback(base_args, capture=False):

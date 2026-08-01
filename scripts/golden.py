@@ -34,8 +34,14 @@ import subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 GOLD = os.path.join(ROOT, "tests", "golden")
-PYTHON = os.path.join(ROOT, "tools", "render-venv", "bin", "python")
-FFMPEG = "/opt/homebrew/bin/ffmpeg"
+sys.path.insert(0, ROOT)
+from qc import env as _env  # noqa: E402
+
+# The render interpreter and ffmpeg are machine properties, not repo constants:
+# resolve them so the golden tiers run off macOS (they used to die on a
+# hardcoded /opt/homebrew/bin/ffmpeg before comparing a single byte).
+PYTHON = _env.interpreter("render")
+FFMPEG = _env.require("ffmpeg", "record and compare golden renders")
 
 ARGV_MARK = "=== DRY RUN ARGV ==="
 FC_MARK = "=== DRY RUN FILTER_COMPLEX ==="

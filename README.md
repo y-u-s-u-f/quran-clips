@@ -113,7 +113,9 @@ qc author <id> 9:128 <start> <end> -o clips/<name>
                          fill the English -> clip.yaml
 qc check clips/<name>    ~1s of assertions. Never render over a failure
 qc render clips/<name>   -> clips/<name>/output/final.mp4
-qc check --output ...    geometry, letterbox purity, loudness of the result
+qc check --output ...    decodes the result: geometry, letterbox purity,
+                         loudness, and that the bitstream is not corrupt
+qc doctor                resolved tools, ASR backend, egress plan
 qc export clips/<name>   -> reels/RECITER-SURAH-a-b.mp4 with metadata
 ```
 
@@ -134,15 +136,33 @@ let an agent drive: eleven assertions, under a second, no ffmpeg.
 5. Phrase/cut ordering, caption geometry, no hard-cut changeover, English
    present-or-absent per style, known fx names.
 
+`check --output` additionally DECODES the finished file. Container metadata
+survives a corrupted bitstream -- a file whose payload was interleaved by a second
+writer still reports the right geometry and duration -- so a decode pass plus a
+decoded-frame count is the only thing that catches it.
+
 ## Setting it up
 
-macOS, Apple silicon. The ASR stage uses `mlx-whisper`.
+macOS or Linux. Every external tool is resolved per machine (`$QC_*`, then
+`qc.toml`, then PATH, then a platform hint), so there are no absolute paths baked
+into the code. **Run `./bin/qc doctor` after setup**: it prints what resolved,
+which ASR backend this host selects, the egress plan, and what any missing piece
+would block.
+
+`./bin/qc` and `./bin/quran-clips` are the same CLI under two names.
 
 ```sh
+# macOS
 brew install ffmpeg yt-dlp python@3.14
+# Debian/Ubuntu
+sudo apt install ffmpeg yt-dlp python3-venv
 
-# rendering + everything under scripts/ (Pillow must have RAQM for Arabic
-# shaping — it comes from the Homebrew python via --system-site-packages)
+# The venvs below are only needed when your CURRENT interpreter cannot already
+# import what a stage wants. Run `./bin/qc doctor` first -- it reports what each
+# stage resolves to, and an environment that already works is never rebuilt.
+#
+# Pillow must have RAQM for Arabic shaping, which is why render uses
+# --system-site-packages over a python whose Pillow already has it.
 python3.14 -m venv --system-site-packages tools/render-venv
 tools/render-venv/bin/pip install -r requirements/render.txt
 
@@ -152,10 +172,29 @@ tools/author-venv/bin/pip install -r requirements/author.txt
 mkdir -p tools/models && curl -sSL -o tools/models/face_detection_yunet_2023mar.onnx \
   https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
 
-# word-level ASR, kept in its own venv so nothing resolves against the renderer
+# word-level ASR, kept out of the render interpreter so whisper can never
+# replace its RAQM Pillow. mlx-whisper on Apple silicon; faster-whisper elsewhere.
 python3.14 -m venv tools/asr-venv
-tools/asr-venv/bin/pip install mlx-whisper
+tools/asr-venv/bin/pip install mlx-whisper        # Apple silicon
+# tools/asr-venv/bin/pip install faster-whisper   # Linux / Intel
 ```
+
+Machine-level settings live in `.env` (gitignored; see `.env.example`): tool
+paths, the ASR backend and model, and the proxy pool. All optional -- with ffmpeg
+on PATH nothing needs configuring. Nothing in `.env` affects a rendered pixel;
+style geometry stays in the committed `templates/*.yaml`.
+
+On a cloud host YouTube bot-checks the datacentre IP, so `qc source add` can route
+through a proxy pool and escalates **static residential -> datacentre -> fail**:
+
+```sh
+QC_PROXY_STATIC=user:pass@host:port,...        # five static residential exits
+QC_PROXY_DATACENTER=user:pass@host:port,...    # fallback tier
+```
+
+A signed googlevideo URL embeds the exit IP that resolved it, so only sticky exits
+can download and the pool is pinned per video id. Credentials are redacted in
+every log line.
 
 Then ask Claude Code for a post, or drive it by hand:
 
