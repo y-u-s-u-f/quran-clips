@@ -1,0 +1,30 @@
+# Maryam 19:88-95, Hamzah Ansari -- default style reel.
+# No trim: pipeline/align.py derives it from the forced alignment.
+style: default
+signature: "TilawatQuraniyyah"
+
+surah: 19
+ayah_start: 88
+ayah_end: 95
+
+trim: [0.00, 73.11]
+
+
+
+groups:
+  - n_words: 4
+    english: "And they say, \"The Most Merciful has taken [for Himself] a son.\""
+  - n_words: 4
+    english: "You have done an atrocious thing."
+  - n_words: 9
+    english: "The heavens almost rupture therefrom and the earth splits open and the mountains collapse in devastation"
+  - n_words: 4
+    english: "That they attribute to the Most Merciful a son."
+  - n_words: 6
+    english: "And it is not appropriate for the Most Merciful that He should take a son."
+  - n_words: 10
+    english: "There is no one in the heavens and earth but that he comes to the Most Merciful as a servant."
+  - n_words: 4
+    english: "He has enumerated them and counted them a [full] counting."
+  - n_words: 5
+    english: "And all of them are coming to Him on the Day of Resurrection alone."

@@ -1,6 +1,6 @@
 # pipeline/ — Qur'an reel pipeline
 
-Turn a recitation video (YouTube or local) into a subtitled reel. Four
+Turn a recitation video (YouTube or local) into a subtitled reel. Five
 workflow scripts plus two style renderers; each step reads and writes plain
 files in the repo tree, so every stage can be run, inspected and re-run on
 its own.
@@ -16,7 +16,7 @@ Source
         │                             can start from these)
         └── no captions ────────────► Whisper
 
-Whisper (transcribe.py, word-level)
+Whisper (transcribe.py, word-level)   -- ONLY to discover the verse span
     └── whisper.json + whisper.srt
 
 Identify verses + timestamps
@@ -24,14 +24,20 @@ Identify verses + timestamps
         stated in the reel config
 
 Write the reel config YAML (by hand / by the agent)
-    ├── timestamps         trim window; per-card word groups
     ├── verse groups       n_words splits + English per card
+    ├── trim window        or omit it and let align.py derive it
     └── config             style, signature, offsets, fonts, ...
+
+align.py (CTC forced alignment of the KNOWN mushaf text)
+    ├── <reel>.align.json  per-word timings
+    ├── writes `trim:` back into the config when it was omitted
+    └── corrects ibtida' restarts off whisper.json, when it exists
 
 generate.py
     ├── validates the config (unknown key = error; groups must cover the
     │   verse range's word count exactly)
-    ├── aligns the mushaf words against whisper.json for word-level timing
+    ├── word timing from <reel>.align.json when it exists, else aligns the
+    │   mushaf words against whisper.json
     ├── builds/corrects captions (silences, suppress, nudge, verse numbers)
     └── dispatches on style:
         ├── render_default.py   landscape/vertical, Arabic + English
@@ -50,6 +56,7 @@ sources/<id>/                one folder per source video
     whisper.json             word-level timings   (transcribe.py)
     whisper.srt              readable transcript  (transcribe.py)
     <reel-name>.yaml         one config per reel cut from this source
+    <reel-name>.align.json   that reel's forced word timings (align.py)
     meta.yaml                fetched video metadata (legacy sources carry it)
 
 reels/<reel-name>.mp4        generated output only, flat, no subfolders
@@ -72,7 +79,7 @@ legacy/                      the first- and second-generation implementations,
 python3 pipeline/fetch.py "https://www.youtube.com/watch?v=..."
 python3 pipeline/fetch.py ~/Videos/recitation.mp4 --name my-reciter
 
-# 2. transcribe it                     -> whisper.json + whisper.srt
+# 2. transcribe it -- ONLY if you don't know which verses these are
 python3 pipeline/transcribe.py sources/<id>
 
 # 3. find the verses (if you don't already know them)
@@ -81,9 +88,17 @@ python3 pipeline/quran.py 78:31-40          # read the span + translation
 
 # 4. write sources/<id>/<reel-name>.yaml    (schema below)
 
-# 5. render                             -> reels/<reel-name>.mp4
+# 5. time it                            -> <reel-name>.align.json (+ trim:)
+tools/align-venv/bin/python pipeline/align.py sources/<id>/<reel-name>.yaml
+
+# 6. render                             -> reels/<reel-name>.mp4
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel-name>.yaml
 ```
+
+Steps 2-3 exist only to answer "which verses is this?". If you already
+know, name the span in the config and neither `transcribe.py` nor
+`whisper.json` is needed at all: `align.py` times the reel from the mushaf
+text directly.
 
 ## The reel config
 
@@ -98,7 +113,9 @@ surah: 78                         # omit all three to auto-detect from the
 ayah_start: 31                    # transcript (reliable for short spans only)
 ayah_end: 40
 
-trim: [15.0, 55.0]                # seconds of the source this reel covers
+trim: [15.0, 55.0]                # seconds of the source this reel covers.
+                                  # Omit it and align.py measures it off the
+                                  # recitation and writes it back here.
 
 groups:                           # caption cards, in Arabic word order
   - n_words: 4                    # must sum EXACTLY to the span's word count
@@ -158,8 +175,14 @@ Rules the pipeline enforces rather than trusts:
 is the full guide. In short: `fetch.py`, `transcribe.py` and `quran.py` run
 on any python3 with ffmpeg and yt-dlp on PATH; rendering needs Pillow
 **with RAQM** (HarfBuzz Arabic shaping) plus PyYAML in `tools/render-venv`;
-transcription needs a Whisper backend in `tools/asr-venv`. The two venvs
-exist so whisper's dependency tree can never replace the RAQM Pillow.
+transcription needs a Whisper backend in `tools/asr-venv`; forced alignment
+needs `ctc-forced-aligner` (torch) in `tools/align-venv`. The extra venvs
+exist so neither whisper's nor torch's dependency tree can ever replace the
+RAQM Pillow.
+
+`align.py` installs from git, not PyPI: the PyPI name `ctc-forced-aligner`
+belongs to an unrelated English-only project. Its MMS checkpoint (~1.2 GB)
+downloads to the HuggingFace cache on first run.
 
 Machine config lives in `.env` (gitignored; see `.env.example`):
 `QC_ASR_BACKEND` / `QC_ASR_MODEL` / `QC_ASR_PYTHON`, `QC_FFMPEG` /

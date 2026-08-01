@@ -1,0 +1,35 @@
+# Faatir 35:31-34, Ahmad al-Arabi -- default style reel.
+style: default
+signature: "TilawatQuraniyyah"
+
+surah: 35
+ayah_start: 31
+ayah_end: 34
+
+trim: [0.0, 107.9]
+
+groups:
+  - n_words: 11
+    english: "And that which We have revealed to you, [O Muhammad], of the Book is the truth, confirming what was before it."
+  - n_words: 5
+    english: "Indeed, Allah, of His servants, is Acquainted and Seeing."
+  - n_words: 7
+    english: "Then we caused to inherit the Book those We have chosen of Our servants;"
+  - n_words: 10
+    english: "and among them is he who wrongs himself, and among them is he who is moderate, and among them is he who is foremost in good deeds by permission of Allah."
+  - n_words: 4
+    english: "That [inheritance] is what is the great bounty."
+  - n_words: 10
+    english: "[For them are] gardens of perpetual residence which they will enter. They will be adorned therein with bracelets of gold and pearls,"
+  - n_words: 3
+    english: "and their garments therein will be silk."
+  - n_words: 7
+    english: "And they will say, \"Praise to Allah, who has removed from us [all] sorrow."
+  - n_words: 4
+    english: "Indeed, our Lord is Forgiving and Appreciative -"
+
+# card 8 ("وقالوا...الحزن") is recited twice in a row (ibtida' restart);
+# alignment lands on the second utterance -- pull its start back to the
+# first "وقالوا" onset (76.72s) so the caption covers both.
+nudge:
+  - {group: 7, start: -6.94}

@@ -5,7 +5,7 @@ To *produce a reel* rather than change code, invoke the `make-post` skill
 
 ## Codebase map
 
-Qur'an recitation video -> subtitled reel. Six standalone scripts under
+Qur'an recitation video -> subtitled reel. Seven standalone scripts under
 `pipeline/`; each is runnable on its own, reads and writes plain files, and
 owns one stage. There is deliberately NO shared util module — `fetch.py`
 and `transcribe.py` each carry their own ~15-line `.env` reader so every
@@ -31,6 +31,19 @@ script stays independently runnable; do not "deduplicate" that.
   is IDF + contiguity scoring for lossy transcript text. Ported from
   `legacy/qc/quran.py` and verified byte-identical on all 6236 ayat — treat
   its normalisation tables as frozen.
+- **`pipeline/align.py`** — reel config -> `<reel>.align.json`. CTC forced
+  alignment (Meta's MMS via `ctc-forced-aligner`, in `tools/align-venv`) of
+  the KNOWN mushaf text onto the audio: it never chooses WHAT was said, only
+  WHEN, so it cannot hallucinate and its onsets beat Whisper's. Omitting
+  `trim:` makes it align the whole source and write the measured window back
+  into the YAML (`write_trim`, a line edit — `safe_dump` would eat the
+  configs' hand-written comments). Whisper is needed ONLY to discover the
+  verse span; name the span and transcribe.py is skippable entirely.
+  Ibtidāʾ restarts (a phrase recited twice) have only one reference word to
+  claim them, so alignment times the second utterance — `find_repeats`/
+  `apply_repeats` recover the first from whisper.json's consecutive
+  identical segments, the one thing the transcript knows that the mushaf
+  cannot. The scores do NOT reveal a restart; a held madd scores as low.
 - **`pipeline/generate.py`** — per-reel YAML -> render. Owns everything
   style-independent: `load_config` (DEFAULTS is the schema; unknown key =
   error; `signature` required), `resolve_paths` (input/whisper/output
@@ -84,9 +97,11 @@ script stays independently runnable; do not "deduplicate" that.
    A look change is an owner decision, never a refactor side-effect.
 3. **Interpreter split.** generate/render run ONLY under
    `tools/render-venv/bin/python` (RAQM Pillow — without RAQM Arabic
-   renders unjoined, silently; the renderers hard-exit on it). Never
-   pip-install anything into that interpreter; `./install.sh` is the only
-   sanctioned venv builder.
+   renders unjoined, silently; the renderers hard-exit on it); whisper runs
+   under `tools/asr-venv`, `align.py` under `tools/align-venv` (torch).
+   Never pip-install anything into the render interpreter; `./install.sh`
+   is the only sanctioned venv builder. `align.py` imports `generate` only
+   for config/path/verse helpers — nothing that pulls in Pillow.
 4. **Nothing outside committed files may affect a rendered pixel.** Style
    values are constants in the renderer files; `.env` is machine config
    (binaries, ASR, proxies) only.

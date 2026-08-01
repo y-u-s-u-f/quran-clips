@@ -11,13 +11,15 @@
 #      Pillow lacks RAQM but the system python's has it)
 #   3. builds tools/asr-venv    -- mlx-whisper on Apple silicon,
 #      faster-whisper everywhere else (override with QC_ASR_BACKEND in .env)
+#   3b. builds tools/align-venv -- ctc-forced-aligner (torch) for align.py
 #   4. fetches the YuNet face model (used by the default style's 9:16 crop)
 #   5. copies .env.example -> .env when absent
 #   6. prints a doctor-style summary of what resolved and what is missing
 #
-# The two venvs exist so whisper's dependency tree can NEVER be installed
-# into the interpreter that renders Arabic: a careless resolve once replaced
-# a RAQM-enabled Pillow and every caption silently rendered unjoined.
+# The extra venvs exist so whisper's and torch's dependency trees can NEVER
+# be installed into the interpreter that renders Arabic: a careless resolve
+# once replaced a RAQM-enabled Pillow and every caption silently rendered
+# unjoined.
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -120,6 +122,33 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 3b. align venv (CTC forced alignment -- torch/transformers, kept out of the
+#     render venv for the same reason as whisper's tree)
+# ---------------------------------------------------------------------------
+say "== align venv"
+FVENV="$ROOT/tools/align-venv"
+FPY="$FVENV/bin/python"
+# PyPI's "ctc-forced-aligner" is an UNRELATED project (an English-only onnx
+# aligner); Meta's MMS one only ships from git.
+FPKG="git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"
+if [ "$CHECK_ONLY" = 0 ]; then
+    if [ ! -x "$FPY" ]; then
+        say "  creating $FVENV"
+        "$PY" -m venv "$FVENV" || exit 1
+        "$FPY" -m pip -q install --upgrade pip
+    fi
+    "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null || {
+        say "  installing ctc-forced-aligner + torch (first align will also download the ~1.2GB MMS model)"
+        "$FPY" -m pip -q install "$FPKG" pyyaml
+    }
+fi
+if [ -x "$FPY" ] && "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null; then
+    ok+=("align venv   $FPY (ctc-forced-aligner)")
+else
+    bad+=("align venv: cannot import ctc_forced_aligner -- align.py cannot run (generate.py still works off whisper.json). $FPY -m pip install $FPKG pyyaml")
+fi
+
+# ---------------------------------------------------------------------------
 # 4. face model (default style's subject-centred 9:16 crop; optional)
 # ---------------------------------------------------------------------------
 MODEL="$ROOT/tools/models/face_detection_yunet_2023mar.onnx"
@@ -160,5 +189,6 @@ fi
 say ""
 say "All set. Next:"
 say "  python3 pipeline/fetch.py <youtube-url-or-file>"
-say "  python3 pipeline/transcribe.py sources/<id>"
+say "  python3 pipeline/transcribe.py sources/<id>        # only to find the span"
+say "  tools/align-venv/bin/python pipeline/align.py sources/<id>/<reel>.yaml"
 say "  tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml"

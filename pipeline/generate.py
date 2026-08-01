@@ -15,12 +15,18 @@ the config's `style:` key.
     `quran.ayah()` -- the committed Uthmani text -- never from the Whisper
     transcript and never retyped. The transcript's only job is TIMING.
 
+Word timing comes from <reel>.align.json (pipeline/align.py's CTC forced
+alignment) when it exists beside the config; otherwise the mushaf words are
+matched onto whisper.json here. A config that names its verse span and has
+been through align.py never reads a transcript at all.
+
 Config resolution: `input` defaults to the source.* next to the config,
 `whisper` to the whisper.json next to it, `output` to reels/<config-name>.mp4.
 So the normal layout needs none of the three spelled out:
 
     sources/<id>/source.mp4
-    sources/<id>/whisper.json      (from transcribe.py)
+    sources/<id>/whisper.json      (from transcribe.py; only when no
+                                    <reel>.align.json / no verse span)
     sources/<id>/my-reel.yaml      ->  reels/my-reel.mp4
 """
 import argparse
@@ -114,7 +120,8 @@ else has a working default.
     ayah_end: 56
 
     trim: [927.3, 957.3]            # seconds of source this reel covers.
-                                    # Omit to use the whole source.
+                                    # Omit and pipeline/align.py measures it
+                                    # off the recitation and writes it here.
 
     groups:                         # caption cards, in Arabic word order.
       - n_words: 6                  # n_words must sum EXACTLY over the verse
@@ -309,14 +316,57 @@ def align_words(ref_words, asr_words):
 
     # Monotonic guarantee: a skeleton mismatch can land a match slightly out
     # of order; downstream grouping assumes non-decreasing time.
+    _enforce_monotonic(stamps)
+    n_matched = len(matches)
+    print("      aligned %d/%d mushaf words to the transcript (%d interpolated)"
+          % (n_matched, n, n - n_matched))
+    return stamps
+
+
+def _enforce_monotonic(stamps):
     t = 0.0
     for st in stamps:
         st["start"] = max(st["start"], t)
         st["end"] = max(st["end"], st["start"])
         t = st["end"]
-    n_matched = len(matches)
-    print("      aligned %d/%d mushaf words to the transcript (%d interpolated)"
-          % (n_matched, n, n - n_matched))
+
+
+def align_path_for(config_path):
+    """Where pipeline/align.py writes this reel's forced word timings."""
+    return os.path.splitext(os.path.abspath(config_path))[0] + ".align.json"
+
+
+def require_whisper(cfg):
+    """whisper.json is needed only to DISCOVER things -- the verse span, and
+    the timings when no forced alignment exists. A config that names its span
+    and has been through align.py never reads it."""
+    if not os.path.exists(cfg["whisper"]):
+        raise SystemExit(
+            "%s not found -- run pipeline/transcribe.py on this source first, "
+            "or name the span (surah/ayah_start/ayah_end) in the config and "
+            "run pipeline/align.py, which needs no transcript"
+            % cfg["whisper"])
+    return cfg["whisper"]
+
+
+def load_forced_alignment(path, ref_words):
+    """Per-word timestamps from pipeline/align.py's CTC forced alignment
+    (Meta's MMS model, run against the KNOWN mushaf text -- see align.py's
+    docstring). Already 1:1 with ref_words, since the aligner places
+    exactly one span per known word: no Needleman-Wunsch matching or
+    interpolation needed. Falls back to align_words() + whisper.json when
+    this file doesn't exist."""
+    data = json.load(open(path, encoding="utf-8"))
+    words = data["words"]
+    if len(words) != len(ref_words):
+        raise ValueError(
+            "%s has %d words but the verse range has %d -- the config's "
+            "span changed since align.py ran; re-run pipeline/align.py"
+            % (path, len(words), len(ref_words)))
+    stamps = [{"start": w["t0"], "end": w["t1"]} for w in words]
+    _enforce_monotonic(stamps)
+    print("      %d/%d mushaf words timed by %s"
+          % (len(stamps), len(ref_words), data.get("backend", "?")))
     return stamps
 
 
@@ -688,9 +738,6 @@ def resolve_paths(cfg, config_path, output_override=None):
         cfg["whisper"] = os.path.join(src_dir, "whisper.json")
     elif not os.path.isabs(cfg["whisper"]):
         cfg["whisper"] = os.path.join(src_dir, cfg["whisper"])
-    if not os.path.exists(cfg["whisper"]):
-        raise SystemExit("%s not found -- run pipeline/transcribe.py %s first"
-                         % (cfg["whisper"], src_dir))
 
     cfg["output"] = os.path.abspath(
         output_override or cfg["output"]
@@ -732,10 +779,18 @@ def run_config(config_path, output_override=None):
     print("      %sx%s, %.1fs" % (info["width"] or "-", info["height"] or "-",
                                   info["duration"]))
 
-    print("[2/6] Loading whisper words...")
-    asr_words, asr_backend = load_whisper_window(
-        cfg["whisper"], t0w, t0w + info["duration"] if cfg.get("trim") else None)
-    print("      %d words in window (backend %s)" % (len(asr_words), asr_backend))
+    align_path = align_path_for(config_path)
+    forced = os.path.exists(align_path)
+    asr_words = []
+    if forced and cfg["surah"] is not None:
+        print("[2/6] Word timings from %s" % os.path.basename(align_path))
+    else:
+        print("[2/6] Loading whisper words...")
+        asr_words, asr_backend = load_whisper_window(
+            require_whisper(cfg), t0w,
+            t0w + info["duration"] if cfg.get("trim") else None)
+        print("      %d words in window (backend %s)"
+              % (len(asr_words), asr_backend))
 
     surah, a0, a1 = cfg["surah"], cfg["ayah_start"], cfg["ayah_end"]
     if surah is None:
@@ -756,8 +811,12 @@ def run_config(config_path, output_override=None):
     verses = fetch_verses(int(surah), a0, a1)
     words = spoken_words(verses)
 
-    print("[4/6] Aligning %d mushaf words..." % len(words))
-    stamps = align_words(words, asr_words)
+    if forced:
+        print("[4/6] Using forced alignment (pipeline/align.py)...")
+        stamps = load_forced_alignment(align_path, words)
+    else:
+        print("[4/6] Aligning %d mushaf words..." % len(words))
+        stamps = align_words(words, asr_words)
 
     print("[5/6] Building captions...")
     if cfg.get("groups"):

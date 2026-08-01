@@ -26,13 +26,19 @@ second, and it names exactly what is missing and which stage it blocks.
 
 ```
 python3 pipeline/fetch.py <url-or-path> [--name SLUG] [--proxy] [--timestamps A-B]
-python3 pipeline/transcribe.py sources/<id>
+python3 pipeline/transcribe.py sources/<id>                      # ONLY if span unknown
 python3 pipeline/quran.py --search "<arabic from whisper.srt>"   # if span unknown
 python3 pipeline/quran.py <s>:<a>-<b>                            # read the span
 # write sources/<id>/<reel-name>.yaml                            # see below
+tools/align-venv/bin/python pipeline/align.py sources/<id>/<reel-name>.yaml
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel-name>.yaml
 ffmpeg -v error -i reels/<reel-name>.mp4 -f null -               # decode gate
 ```
+
+If you already know which verses the clip is, SKIP transcribe.py entirely:
+name `surah`/`ayah_start`/`ayah_end` in the config and `align.py` times the
+reel straight off the mushaf text. Whisper exists only to answer "which
+verses is this?".
 
 - **`fetch.py`** downloads into `sources/<id>/` (YouTube) or symlinks a local
   file. Everything is held to 30fps at intake: a `<=30fps` rendition is
@@ -49,11 +55,17 @@ ffmpeg -v error -i reels/<reel-name>.mp4 -f null -               # decode gate
 - **`quran.py`** is the only source of Arabic text and translations.
   `--search` locates lossy transcript text in the mushaf; `s:a-b` prints
   the exact span; `--words` gives per-word English glosses.
-- **`generate.py`** validates the config (unknown key = error), aligns the
-  mushaf words against the transcript for timing, builds the captions, and
-  renders. Read its report: the alignment line
-  (`aligned N/M ... (K interpolated)`), the VERIFICATION BLOCK (below),
-  and, for bars, the per-card bar widths.
+- **`align.py`** times the reel: it takes the config's KNOWN mushaf text and
+  CTC-forced-aligns it onto the audio (Meta's MMS). It cannot invent words,
+  only place them, so its onsets are tighter than Whisper's. Writes
+  `<reel>.align.json`, which `generate.py` then prefers. With no `trim:` in
+  the config it aligns the whole source, derives the window from where the
+  first and last word actually land, and writes `trim:` back into the YAML.
+- **`generate.py`** validates the config (unknown key = error), takes word
+  timing from `<reel>.align.json` (else falls back to matching mushaf words
+  onto the transcript), builds the captions, and renders. Read its report:
+  the timing line, the VERIFICATION BLOCK (below), and, for bars, the
+  per-card bar widths.
 
 ## Verify every card's English — against BOTH translations
 
@@ -94,17 +106,22 @@ loudly before anything renders.
 
 Judgement calls the scripts hand up to you:
 
-- **Pick the trim window off the envelope, not the word list.** An ASR word
-  edge lands where the word is *identified*, not where the reciter stops: a
-  held final madd bleeds into the next word's span. Start a hair before the
-  first word's onset; end in the real trough after the last word — read
-  neighbouring times in `whisper.json` and, when in doubt, listen.
+- **Leave `trim:` out and let `align.py` measure it.** It derives the window
+  from where the first and last mushaf word actually land and writes it into
+  the config. Only set `trim:` by hand when the reel is a deliberate excerpt
+  of a longer recitation of the same span, or when the source holds a second
+  take you want to exclude — the aligner has no way to know which take you
+  meant.
 - **Card splits are semantic.** Split at waqf/breath points; never let a
   card span two ayat (put a card boundary at every ayah boundary); avoid a
   card opening on a connective like بِكُمْ.
-- **Repeated phrases** (ibtidāʾ restarts): alignment times ONE utterance.
-  If a caption should cover both, pull its start back with
-  `nudge: [{group: i, start: -X}]` — measured, not eyeballed.
+- **Repeated phrases** (ibtidāʾ restarts): `align.py` handles these itself
+  when `whisper.json` exists — Whisper transcribes both utterances, so two
+  consecutive identical segments give the restart away, and it pulls the
+  phrase's opening word back onto the first one. It PRINTS the correction;
+  read that line. Uncorrected only if you skipped `transcribe.py`. To
+  override, `nudge: [{group: i, start: -X}]` — measured, not eyeballed, and
+  the indices are 0-BASED (card 8 in the printed block is `group: 7`).
 - **`suppress`** windows for anything that is not recitation (du'a,
   audience, talk).
 
