@@ -1,0 +1,36 @@
+# written by `qc source add` -- do not hand-edit the fetched
+# fields; anything below is what yt-dlp reported for this video.
+id: "iBAYTGTcMt8"
+url: "https://www.youtube.com/watch?v=iBAYTGTcMt8"
+title: "علي صلاح العمر - تلاوة مجودة - جلسة خاصة ماتيسر من النبأ"
+uploader: "القارئ علي صلاح عمر"
+upload_date: "20170216"
+duration: 287
+width: 568
+height: 320
+fps: 30
+has_ar_captions: false
+caption_langs: []
+# --- framing: solved by `qc crop`, ONE BLOCK PER STYLE.
+# Fixed camera -> one crop per SOURCE, but the composition rules differ per
+# style, so bars and default are separate solves. Clips inherit the block
+# matching their own style, and nothing else. Hand-tunable.
+framing:
+  default:
+    # HAND-SOLVED: auto exclude_boxes flagged 3 "burned-in" regions, but they
+    # are the twinkling fairy-light branch behind the reciters and small
+    # background clutter, not a logo/watermark -- the branch sits almost
+    # directly above his head (box x134-255,y0-70 vs face at 160,78), so no
+    # window can both frame him at FACE_Y_FRAC and clear it. Source is already
+    # ~16:9 (568x320), so the full frame is the solve once the false-positive
+    # boxes are dropped: fx/fy land inside the normal target bands untouched.
+    crop: {x: 0, y: 0, w: 568, h: 320}
+    text_center_x_frac: 0.681
+    caption_side: right
+    faces: right
+    face_px: {cx: 160, cy: 78, w: 35, h: 44}  # median over 40/40 frames
+    face_frac: {x: 0.282, y: 0.244}   # y rule: ~0.275
+    reciter_w_frac: 0.294
+    camera_spread_px: {cx: 267, cy: 8}
+    solved_over_frames: 40
+    exclude_boxes: []

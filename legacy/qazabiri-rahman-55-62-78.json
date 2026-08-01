@@ -1,0 +1,39 @@
+{
+  "input": "/home/ubuntu/quran-work/batch/qazabiri-rahman.m4a",
+  "output": "/home/ubuntu/quran-work/batch/out/qazabiri-rahman-reel.mp4",
+
+  "surah": 55,
+  "ayah_start": 62,
+  "ayah_end": 78,
+
+  "background_image": "/home/ubuntu/quran-work/batch/qazabiri-bg.jpg",
+  "frame_size": [1080, 1920],
+  "orientation": "vertical",
+  "trim": [43.5, null],
+  "signature": true,
+  "verse_numbers": true,
+
+  "tmp_dir": "/tmp/qreel_qaz",
+
+  "groups": [
+    {"n_words": 3, "english": "And below them both [in excellence] are two [other] gardens."},
+    {"n_words": 4, "english": "So which of the favors of your Lord would you deny?"},
+    {"n_words": 1, "english": "Dark green [in color]."},
+    {"n_words": 4, "english": "So which of the favors of your Lord would you deny?"},
+    {"n_words": 3, "english": "In both of them are two springs, spouting."},
+    {"n_words": 4, "english": "So which of the favors of your Lord would you deny?"},
+    {"n_words": 4, "english": "In both of them are fruit and palm trees and pomegranates."},
+    {"n_words": 4, "english": "So which of the favors of your Lord would you deny?"},
+    {"n_words": 3, "english": "In them are good and beautiful women."},
+    {"n_words": 4, "english": "So which of the favors of your Lord would you deny?"},
+    {"n_words": 4, "english": "Fair ones reserved in pavilions."},
+    {"n_words": 4, "english": "So which of the favors of your Lord would you deny?"},
+    {"n_words": 6, "english": "Untouched before them by man or jinnī."},
+    {"n_words": 4, "english": "So which of the favors of your Lord would you deny?"},
+    {"n_words": 4, "english": "Reclining on green cushions"},
+    {"n_words": 2, "english": "and beautiful fine carpets."},
+    {"n_words": 4, "english": "So which of the favors of your Lord would you deny?"},
+    {"n_words": 3, "english": "Blessed is the name of your Lord,"},
+    {"n_words": 3, "english": "Owner of Majesty and Honor."}
+  ]
+}

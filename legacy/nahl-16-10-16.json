@@ -1,0 +1,95 @@
+{
+  "input": "/home/ubuntu/quran-work/nahl/src.mp4",
+  "output": "/home/ubuntu/quran-work/batch/out/nahl-qarafi-reel-v3.mp4",
+  "orientation": "horizontal",
+  "tmp_dir": "/tmp/qreel_nahl_v3",
+  "signature": true,
+  "surah": 16,
+  "ayah_start": 10,
+  "ayah_end": 16,
+  "groups": [
+    {
+      "n_words": 6,
+      "english": "It is He who sends down rain from the sky;"
+    },
+    {
+      "n_words": 3,
+      "english": "from it is drink"
+    },
+    {
+      "n_words": 4,
+      "english": "and from it is foliage in which you pasture [animals]."
+    },
+    {
+      "n_words": 7,
+      "english": "He causes to grow for you thereby the crops, olives, palm trees, grapevines,"
+    },
+    {
+      "n_words": 3,
+      "english": "and of all the fruits."
+    },
+    {
+      "n_words": 6,
+      "english": "Indeed in that is a sign for a people who give thought."
+    },
+    {
+      "n_words": 6,
+      "english": "And He has subjected for you the night and day and the sun and moon,"
+    },
+    {
+      "n_words": 3,
+      "english": "and the stars are subjected by His command."
+    },
+    {
+      "n_words": 6,
+      "english": "Indeed in that are signs for a people who reason."
+    },
+    {
+      "n_words": 7,
+      "english": "And [He has subjected] whatever He multiplied for you on the earth of varying colors."
+    },
+    {
+      "n_words": 6,
+      "english": "Indeed in that is a sign for a people who remember."
+    },
+    {
+      "n_words": 4,
+      "english": "And it is He who subjected the sea"
+    },
+    {
+      "n_words": 4,
+      "english": "for you to eat from it tender meat"
+    },
+    {
+      "n_words": 4,
+      "english": "and to extract from it ornaments which you wear."
+    },
+    {
+      "n_words": 4,
+      "english": "And you see the ships plowing through it,"
+    },
+    {
+      "n_words": 3,
+      "english": "and [He subjected it] that you may seek of His bounty;"
+    },
+    {
+      "n_words": 2,
+      "english": "and perhaps you will be grateful."
+    },
+    {
+      "n_words": 7,
+      "english": "And He has cast into the earth firmly set mountains, lest it shift with you,"
+    },
+    {
+      "n_words": 4,
+      "english": "and [made] rivers and roads, that you may be guided,"
+    },
+    {
+      "n_words": 4,
+      "english": "And landmarks. And by the stars they are [also] guided."
+    }
+  ],
+  "dim": 0.3325,
+  "arabic_scale": 0.7922,
+  "x_offset": 0
+}
