@@ -107,13 +107,20 @@ What each one does:
   `! restart detected` (ibtidāʾ) and `! Pn->Pn+1 is NOT a true waqf` — pass those
   up to the user; they are judgement calls, not bugs.
   **Two things `author` gets wrong often enough to check every time:**
-  *Held final words.* The last card's `t1` and `segment.end` come from the ASR
-  word end, which lands where the word is *identified*, not where the reciter
-  stops. On a long melisma that cuts the clip mid-hold. Read the RMS envelope
-  past the nominal end and move `segment.end` into the real trough before the
-  next ayah. The same applies to any card boundary the reciter stretches: the
-  next caption starts crossfading `crossfade_s` BEFORE the boundary, so a `t1`
-  set at the ASR end makes the next card appear while he is still holding.
+  *Held words — at EVERY boundary, not just the clip's end.* An ASR word edge
+  lands where the word is *identified*, not where the reciter stops: a held
+  final madd bleeds into the NEXT word's ASR span, so the raw edge sits
+  seconds before the real seam. The tell: a short word carrying an implausibly
+  long span right after a madd-final word (on as-sajdah-10-11, قُلْ "spanned"
+  1.76s because كافرون was held 1.55s into it — the swap fired mid-hold and
+  the owner heard it instantly). At the clip's end this cuts the clip
+  mid-hold: read the envelope past the nominal end and move `segment.end`
+  into the real trough. At interior ayah boundaries the emitter now rescues
+  this itself (`emit._bleed_dip`, 2026-07-31: a deep dip inside the incoming
+  word's span beats the word edge) — but a LEGATO junction, where the reciter
+  runs one word into the next with no envelope drop at all, has no measurable
+  seam; author's number there is an estimate and the emitted comment says so.
+  Those are the boundaries to confirm by ear before export.
   *Line breaks.* The breaker optimises for the width cap, not for balance
   between the two lines of a card — see "Caption line balance" below.
 - **`check`** is the QA stage. Eleven assertions: schema (unknown key = error),
@@ -142,6 +149,17 @@ Fixing a clip: edit `clips/<name>/clip.yaml` (segment start/end, `segment.cuts`,
 the card split, `bar_color`), re-run `qc check`, re-render. Per-clip problems get
 per-clip fixes; only an account-wide shift touches `templates/*.yaml`, and
 `bar.auto.*` is reference-validated — never hand-tune it.
+
+**Moving a card boundary by hand: the new time must be MEASURED, never
+copied.** Raw Whisper word edges are not boundaries (held finals bleed into
+the next word's span — see above), and eyeballed times drift. The recipe:
+re-run `qc author <id> <s>:<a>-<b> <start> <end> -n` on the clip's own window
+(the ASR is cached under `sources/_align/`, so this is fast) and read the
+boundary times and per-edge comments it emits — they are envelope-snapped.
+If your grouping differs from author's, the emitted numbers still give you
+every dip; put the swap at the dip's swap-in (`t0`), which is just before the
+next word's attack. A boundary you cannot back with a dip is an ear call —
+say so in the yaml comment instead of writing a confident number.
 
 ## Caption line balance (bars)
 

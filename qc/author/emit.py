@@ -225,6 +225,30 @@ def english(p, use_llm=True):
     return out
 
 
+def _bleed_dip(ds, events, k, lo2, min_depth=8.0):
+    """The dip a held final word pushed into the NEXT word's ASR span.
+
+    Whisper places a word edge where the word is *identified*, not where the
+    reciter stops: a long final madd bleeds into the next word's span, so the
+    real breath sits well past the ASR edge -- outside word_dips' matching
+    radius -- and inside the incoming word's claimed span. On as-sajdah-10-11
+    the ayah 10 -> 11 edge landed at 16.62 while كافرون was held to 17.65; the
+    16.5 dB breath at 17.67-18.17 sat un-matched inside قل's 1.76s span and
+    the caption swapped 1.55s early (the owner heard it immediately). So
+    before inventing a boundary from the word edges, look for a real dip in
+    (edge - 0.2, incoming word's end) and take the deepest one that clears
+    `min_depth` -- deep enough to be a breath, not a consonant closure.
+    """
+    lo = events[k]["t1"] - 0.2
+    hi = events[lo2]["t1"]
+    best = None
+    for d in ds:
+        if lo < d["t"] < hi and d["depth"] >= min_depth:
+            if best is None or d["depth"] > best["depth"]:
+                best = d
+    return dict(best) if best else None
+
+
 def _gap_edge(events, k, speech):
     """A card boundary between events k and k+1 that no envelope dip matched.
 
@@ -296,9 +320,14 @@ def plan(src, surah, a, b, start, end, workdir, pad=A.PAD,
     edges = []
     for (lo1, hi1), (lo2, _) in zip(bounds, bounds[1:]):
         # An ayah boundary is a cut whether or not the envelope agrees, so it
-        # is the one cut that can land where no dip was matched. Describe it
-        # from the inter-word gap instead of inventing a measurement.
-        bd = dict(wd[hi1]) if hi1 in wd else _gap_edge(ev, hi1, speech)
+        # is the one cut that can land where no dip was matched. Before
+        # trusting the ASR word edge, check whether a held final pushed the
+        # real breath inside the incoming word's span (_bleed_dip); only when
+        # the envelope truly shows nothing does _gap_edge describe the raw
+        # inter-word gap instead of inventing a measurement.
+        bd = dict(wd[hi1]) if hi1 in wd else \
+            (_bleed_dip(al["dips"], ev, hi1, lo2) or
+             _gap_edge(ev, hi1, speech))
         bd["reason"] = reason.get(hi1, "")
         # The swap-in time is where the envelope comes back up -- except at a
         # non-waqf boundary, where there is no "back up" to speak of and the
