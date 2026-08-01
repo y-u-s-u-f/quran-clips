@@ -140,9 +140,11 @@ trim: [15.0, 55.0]                # seconds of the source this reel covers.
                                   # only sound when the source is roughly the
                                   # reel; it aligns the WHOLE file, so on a
                                   # multi-surah recording set it by hand.
-                                  # Head: cut 0.10-0.15s before the first
-                                  # word. align.py's PAD is 0.30, which reads
-                                  # as a wait; tighten it and re-run --force.
+                                  # Head: align.py measures it -- auto-trim
+                                  # cuts 0.12s before the first word (never
+                                  # past the waqf it sits in), and a hand-set
+                                  # trim gets its head gap reported, with a
+                                  # warning over 0.25s. Tail keeps 0.30s.
 
 groups:                           # caption cards, in Arabic word order
   - n_words: 4                    # must sum EXACTLY to the span's word count

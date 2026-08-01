@@ -155,13 +155,20 @@ Judgement calls the scripts hand up to you:
 ## Trim: open ON the recitation, and measure the window
 
 **The reel must start with the first word, not before it.** Dead air at the
-head is where people scroll — even one second loses them. Aim for the cut
-0.10-0.15s before the first word's onset: enough lead not to clip the
-consonant attack, not enough to read as a wait. `align.py`'s auto-trim uses
-`PAD = 0.30` either side, which is over twice that; when it writes a `trim:`
-for you, TIGHTEN THE HEAD by hand afterwards and re-run it with `--force`.
-Check the result — the first word's `t0` in `<reel>.align.json` is the head
-gap, in seconds. Leave the tail alone: a held final word wants its decay.
+head is where people scroll — even one second loses them. `align.py` now
+MEASURES this, so it is no longer yours to do by hand:
+
+- **Auto-trim** (no `trim:` in the config) cuts 0.12s before the first
+  word's onset, clamped so it never reaches back past the start of the waqf
+  that onset comes out of — on a short breath it takes what air there is
+  rather than opening on the tail of the previous word. It prints what it
+  did: `head: 120ms before the first word (waqf gap 0.50s)`.
+- **A hand-set `trim:`** is never moved — it is yours — but the head gap is
+  reported every run, and anything over 0.25s is called out with the trim
+  start you should have used. Read that line.
+
+The tail is deliberately not measured: a held final word wants its decay,
+so it keeps a flat 0.30s.
 
 **Leave `trim:` out and let `align.py` measure it ONLY when the source is
 roughly the reel.** It aligns the whole source, so on a long recording —

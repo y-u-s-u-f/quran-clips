@@ -26,6 +26,16 @@ written back into the config. The <star> token between words is what
 makes this safe: the CTC path can absorb any amount of non-recitation
 audio, so nothing has to be guessed off an envelope by ear.
 
+The HEAD of that window is then measured rather than padded (head_cut):
+a reel has to open ON the recitation, and a flat pad produced reels that
+started with 0.38s of silence, which is where viewers scroll. The cut
+lands 0.12s before the first word's onset, clamped so it never reaches
+back past the start of the waqf that onset comes out of. A hand-set
+`trim:` is never moved -- it is the author's -- but its head gap is
+reported every run, and a loose one is called out with the value it
+should have had. The tail is deliberately still padded: a held final word
+wants its decay.
+
 whisper.json is needed only to DISCOVER the verse span. Name the span in
 the config and this script -- and generate.py after it -- never read a
 transcript, so transcribe.py can be skipped entirely.
@@ -48,7 +58,9 @@ has been used. Name the span and skip the transcript and a restart goes
 uncorrected; `nudge` is still the override either way, applied last.
 """
 import argparse
+import array
 import json
+import math
 import os
 import re
 import subprocess
@@ -63,7 +75,91 @@ import quran  # noqa: E402
 
 MODEL = "MahmoudAshraf/mms-300m-1130-forced-aligner"
 LANGUAGE = "ara"           # ISO 639-3; the mushaf is always Arabic
-PAD = 0.30                 # headroom kept either side of a derived trim
+
+# A reel opens ON the recitation. Dead air at the head is where viewers
+# scroll, and a flat 0.30s pad either side -- what this script used to keep
+# -- measurably produced reels starting with 0.38s of silence. The head is
+# now MEASURED (head_cut) and the tail is not: a held final word wants its
+# decay, so it keeps the pad.
+HEAD_LEAD = 0.12           # air kept before the first word, when available
+HEAD_LOOKBACK = 2.0        # how far back to look for the waqf it comes out of
+HEAD_MAX = 0.25            # a hand-set trim looser than this gets called out
+TAIL_PAD = 0.30
+ENV_STEP = 0.05            # RMS bin, seconds
+
+
+def rms_envelope(src, t0, t1, step=ENV_STEP):
+    """RMS in dBFS per `step` seconds over [t0, t1) -> [(t, db), ...].
+
+    `silencedetect` is unusable on these sources. A Haram recording's hall
+    reverb never falls below about -35 dB and the ambience floor sits near
+    -25, so no absolute threshold separates a waqf from speech: measured,
+    both `-32dB:d=0.35` and `-40dB:d=0.2` returned ZERO hits across a window
+    that plainly contains waqf pauses. The same audio's RELATIVE minima are
+    unmistakable -- a waqf reads as a 0.4-0.9s dip to -27..-34 dB against a
+    -11 dB speech level -- so the envelope is dumped and the dip found by
+    comparison against this window's own range, never against a constant.
+
+    stdlib only (`array`, `math`): the windows are ~2s of 16 kHz mono, and
+    align.py already pulls in torch -- it does not need to grow another
+    numerical dependency to sum 32000 squares."""
+    sr = 16000
+    n = max(1, int(sr * step))
+    raw = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error",
+         "-ss", "%.3f" % t0, "-to", "%.3f" % t1, "-i", src,
+         "-ar", str(sr), "-ac", "1", "-vn", "-f", "s16le", "-"],
+        check=True, capture_output=True).stdout
+    pcm = array.array("h")
+    pcm.frombytes(raw[:len(raw) - len(raw) % pcm.itemsize])
+    out = []
+    for i in range(0, len(pcm) - n + 1, n):
+        acc = sum(s * s for s in pcm[i:i + n])
+        # Floor the ratio at one LSB: digital silence would be -inf dB and
+        # a single -inf drags the window's range to meaninglessness.
+        out.append((t0 + i / float(sr),
+                    20.0 * math.log10(max(math.sqrt(acc / n), 1.0) / 32768.0)))
+    return out
+
+
+def head_cut(src, onset, lead=HEAD_LEAD, lookback=HEAD_LOOKBACK):
+    """Where to cut so the reel opens ON the recitation -> (t, gap_seconds).
+
+    `lead` before the first word's onset, but never back past the start of
+    the quiet run that onset comes out of: on a short breath there may be
+    less than `lead` of air to take, and opening on the tail of the previous
+    word is worse than opening a frame late.
+
+    "Quiet" is the bottom third of THIS window's own dynamic range, which is
+    what makes it work where a threshold does not (see rms_envelope). The
+    returned gap is the measured length of that run, 0.0 when none was found
+    -- continuous recitation with no waqf before the first word, where the
+    lead is simply taken and the caller is told nothing was measured."""
+    lo = max(0.0, onset - lookback)
+    if onset - lo < 4 * ENV_STEP:
+        return max(0.0, onset - lead), 0.0
+    env = rms_envelope(src, lo, onset)
+    if len(env) < 4:
+        return max(0.0, onset - lead), 0.0
+
+    floor = min(db for _t, db in env)
+    peak = max(db for _t, db in env)
+    if peak - floor < 6.0:            # nothing resembling speech-vs-gap here
+        return max(0.0, onset - lead), 0.0
+    quiet = [db < floor + 0.35 * (peak - floor) for _t, db in env]
+
+    # A CTC onset can sit a bin or two either side of the real attack, so the
+    # run is allowed to end slightly before the window does.
+    i = len(quiet) - 1
+    while i >= 0 and not quiet[i] and env[-1][0] - env[i][0] < 3 * ENV_STEP:
+        i -= 1
+    if i < 0 or not quiet[i]:
+        return max(0.0, onset - lead), 0.0
+    j = i
+    while j >= 0 and quiet[j]:
+        j -= 1
+    gap_start = env[j + 1][0]
+    return max(gap_start, onset - lead), env[i][0] + ENV_STEP - gap_start
 
 
 def extract_window(src, out_wav, t0, t1):
@@ -211,16 +307,35 @@ def align(config_path, force=False):
 
     if auto_trim:
         duration = generate.get_video_info(cfg["input"])["duration"]
+        onset = results[0]["start"]
+        cut, gap = head_cut(cfg["input"], onset)
         # Round FIRST, then shift by the same value that lands in the config:
         # the times below are relative to the trim generate.py will re-cut.
-        t0 = round(max(0.0, results[0]["start"] - PAD), 2)
-        t1 = round(min(duration, results[-1]["end"] + PAD), 2)
+        t0 = round(max(0.0, cut), 2)
+        t1 = round(min(duration, results[-1]["end"] + TAIL_PAD), 2)
         for r in results:
             r["start"] -= t0
             r["end"] -= t0
         write_trim(config_path, t0, t1)
         print("  derived trim: [%.2f, %.2f] -> written into %s"
               % (t0, t1, os.path.basename(config_path)))
+        print("  head: %.0fms before the first word (%s)"
+              % ((onset - t0) * 1000,
+                 "waqf gap %.2fs" % gap if gap else
+                 "no gap measured -- lead taken as-is"))
+    else:
+        # A hand-set trim is the author's, so it is reported and never moved.
+        # This is the one number that decides whether the reel opens ON the
+        # recitation, and it is free here: results[0] is already relative to
+        # the window the config asked for.
+        head = results[0]["start"]
+        if head > HEAD_MAX:
+            print("  ! %.2fs of dead air before the first word. A reel should "
+                  "open on the recitation -- even a second of nothing and "
+                  "people scroll. Set trim start to %.2f (%.0fms lead)."
+                  % (head, t0 + head - HEAD_LEAD, HEAD_LEAD * 1000))
+        else:
+            print("  head: %.0fms before the first word" % (head * 1000))
 
     window = (t1 - t0) if t1 is not None else None
     out_words = [{"w": w,

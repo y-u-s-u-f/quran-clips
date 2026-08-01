@@ -37,7 +37,14 @@ script stays independently runnable; do not "deduplicate" that.
   WHEN, so it cannot hallucinate and its onsets beat Whisper's. Omitting
   `trim:` makes it align the whole source and write the measured window back
   into the YAML (`write_trim`, a line edit — `safe_dump` would eat the
-  configs' hand-written comments). Whisper is needed ONLY to discover the
+  configs' hand-written comments). That window's HEAD is measured, not
+  padded (`head_cut` off an `rms_envelope`): `silencedetect` finds nothing
+  on a Haram source because the reverb floor never drops below ~−35dB, so
+  the dip is found against the window's OWN range instead of a threshold.
+  Verified by reproducing two trims that had been set by ear to within
+  10ms. A hand-set `trim:` is reported, never moved. The tail keeps a flat
+  pad on purpose — a held final word wants its decay.
+  Whisper is needed ONLY to discover the
   verse span; name the span and transcribe.py is skippable entirely.
   Ibtidāʾ restarts (a phrase recited twice) have only one reference word to
   claim them, so alignment times the second utterance — `find_repeats`/
