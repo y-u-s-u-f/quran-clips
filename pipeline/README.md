@@ -184,6 +184,10 @@ RAQM Pillow.
 belongs to an unrelated English-only project. Its MMS checkpoint (~1.2 GB)
 downloads to the HuggingFace cache on first run.
 
+`docs/asr-and-alignment.md` records which ASR models were measured for this
+pipeline and why the smaller Quran-specific ones were rejected — read it
+before proposing a model swap.
+
 Machine config lives in `.env` (gitignored; see `.env.example`):
 `QC_ASR_BACKEND` / `QC_ASR_MODEL` / `QC_ASR_PYTHON`, `QC_FFMPEG` /
 `QC_FFPROBE` / `QC_YT_DLP`, and the proxy pool `QC_PROXY_STATIC` /

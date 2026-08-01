@@ -73,6 +73,11 @@ script stays independently runnable; do not "deduplicate" that.
   classes with their three hooks (plate / per_phrase / apply), and the
   snow shader. Ported verbatim from `legacy/qc/`; the scalar algebra is not
   to be re-derived.
+- **`docs/asr-and-alignment.md`** — the measured comparison of ASR models
+  for this pipeline (Tarteel, fastconformer, whisper-small, wav2vec2) and
+  why each was rejected. Whisper is kept for one reason only: it is
+  autoregressive, so it transcribes an ibtidāʾ restart TWICE, which every
+  CTC alternative structurally cannot. Read before proposing a model swap.
 - **`legacy/`** — the two previous implementations, archived intact with
   specs, tests and golden fixtures. Reference material only: never run it,
   never edit it, never import from it in pipeline code.
