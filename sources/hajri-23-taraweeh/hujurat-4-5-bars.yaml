@@ -1,0 +1,36 @@
+# Al-Hujurat 49:4-5, Ilyas Hajri, 23rd night taraweeh -- the `bars` cut of
+# the merge test. Same span, timing and groups as the -vertical and -horizontal
+# cuts beside it; only the style and the framing differ, which is the point:
+# one config surface, three shapes.
+style: bars
+signature: "TilawatQuraniyyah"
+
+surah: 49
+ayah_start: 4
+ayah_end: 5
+
+# HAND-SET. The source is 17 minutes of taraweeh across at least two reciters
+# (the man changes around 700s), so align.py's auto-trim has no way to bound
+# itself -- see CLAUDE.md on the quiet failure that produces. Taken off the
+# transcript, then the head tightened onto align.py's measured
+# onset (it found 0.98s of dead air at 124.2): a reel opens ON the
+# recitation, 120ms of lead and no more.
+trim: [125.06, 151.2]
+
+
+# framing solved by pipeline/crop.py on 2026-08-01,
+# sonnet via claude code CLI, median of 4/4 sampled frames.
+# Head box 0.274 of the window, bars caption column 0.450 -> equal 0.092
+# gaps; face centre at 0.465 of the window height.
+# Re-solve with `pipeline/crop.py <this-file> --force`; edit these
+# by hand and they stay edited (crop.py then refuses without --force).
+crop: {x: 440, y: 68, w: 960, h: 540}
+x_offset: -352
+groups:
+  - n_words: 6        # 49:4
+    line_split: 3
+  - n_words: 3
+  - n_words: 6        # 49:5
+    line_split: 3
+  - n_words: 3
+  - n_words: 3

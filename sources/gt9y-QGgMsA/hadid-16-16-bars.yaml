@@ -28,7 +28,7 @@ trim: [816.20, 843.75]
 # The 9 measured frames behind it include this reel's window: crown 55-59px
 # across 816-841s.
 crop: {x: 0, y: 0, w: 1328, h: 747}
-x_offset: -226
+x_offset: -402
 
 # NUMBERS BELOW ARE AT 117pt, not the 120pt nominal: card 5's best split is
 # 2/3 at 395/497 against the 486px cap, so fit_pt takes the whole reel down

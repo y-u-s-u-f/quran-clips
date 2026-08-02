@@ -193,9 +193,9 @@ class Effect(object):
 # A gaussian is a low-pass: everything a wide blur keeps survives a coarsening
 # of the sampling grid, so blurring at reduced linear size and scaling back
 # costs 1/n^2 of the pixels for a difference below the 8-bit quantiser. The
-# same trade is already made in render_hz, whose two grade gradients are built
-# at 48x27 and bilinearly upscaled -- "that low resolution IS the softness of
-# the look".
+# same trade is made in render_text, whose two grade gradients are built at
+# 48x27 and bilinearly upscaled -- "that low resolution IS the softness of the
+# look".
 #
 # Quarter threshold: at 1/n the kernel still spans sigma/n samples, and sigma
 # 40 keeps that at 10. Half threshold (10) is a measurement that brings in scan

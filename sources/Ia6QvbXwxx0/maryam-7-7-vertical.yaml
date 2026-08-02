@@ -1,0 +1,28 @@
+style: vertical
+signature: "TilawatQuraniyyah"
+
+surah: 19
+ayah_start: 7
+ayah_end: 7
+reciter: "ماهر المعيقلي"
+
+# source is a 17-minute full-surah recitation so align.py's auto-trim can't
+# bound itself -- hand-set off whisper.srt (55.22-67.42), then tightened to
+# align.py's measured onset (1.88s dead air at 54.5 -> 56.26, 120ms lead)
+# and last word end (67.98) + 0.30s tail.
+trim: [56.26, 68.28]
+
+
+# framing solved by pipeline/crop.py on 2026-08-02,
+# sonnet via claude code CLI, median of 4/4 sampled frames.
+# Head centred (0.498 of the window), face centre at 0.483 of its
+# height; the caption band hangs under his head box.
+# Re-solve with `pipeline/crop.py <this-file> --force`; edit these
+# by hand and they stay edited (crop.py then refuses without --force).
+crop: {x: 680, y: 72, w: 414, h: 736}
+face_bottom: 0.600
+groups:
+  - n_words: 6
+    english: "O Zechariah, indeed We give you good tidings of a boy whose name will be John."
+  - n_words: 6
+    english: "We have not assigned to any before [this] name."

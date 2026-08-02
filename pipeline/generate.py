@@ -7,10 +7,9 @@ This file owns everything the styles share: config validation, verse
 resolution, aligning the Whisper word timings against the known-correct
 mushaf text, caption grouping, silence handling, suppress/nudge corrections
 and verse-number ornaments. Rendering and compositing are the style files'
-job -- render_default.py (landscape/vertical, Arabic + English),
-render_bars.py (vertical letterbox band, Arabic-only pills) and
-render_hz.py (native 1920x1080, Arabic + English over graded footage),
-dispatched on the config's `style:` key.
+job -- render_text.py (Arabic + English over graded footage, at either
+1080x1920 `vertical` or 1920x1080 `horizontal`) and render_bars.py (vertical
+letterbox band, Arabic-only pills), dispatched on the config's `style:` key.
 
     TEXT INTEGRITY. Caption Arabic is built by slicing the word list of
     `quran.ayah()` -- the committed Uthmani text -- never from the Whisper
@@ -57,7 +56,7 @@ FFPROBE = os.environ.get("QC_FFPROBE") or "ffprobe"
 MAX_HOLD = 3.0
 
 DEFAULTS = {
-    "style": "default",          # default | bars | hz
+    "style": "vertical",         # vertical | horizontal | bars
     "input": None,               # media path; default: source.* beside config
     "whisper": None,             # word timings; default: whisper.json beside it
     "output": None,              # default: reels/<config-name>.mp4
@@ -74,38 +73,43 @@ DEFAULTS = {
 
     "groups": None,              # caption splits -- see --print-schema
 
-    # signature is REQUIRED (no default): a string to burn into the bottom of
-    # every frame, or null for none. Every config must decide explicitly.
+    "signature": None,           # handle burned bottom-centre, or null/omitted
+                                 # for none. `bars` never burns one whatever
+                                 # this says -- see render_bars.py.
 
     "trim": None,                # [start, end] seconds cut from source first
     "suppress": [],              # [[a, b]] windows left uncaptioned
     "nudge": [],                 # [{"group": i, "start": dt, "end": dt}]
-    "verse_numbers": None,       # ayah ornament; default: true for `default`
-                                 # and `hz`, false for bars
+    "verse_numbers": None,       # ayah ornament; default: on for vertical and
+                                 # horizontal, off for bars
 
-    "x_offset": 0,               # px from dead center; +right / +down.
-    "y_offset": 0,               # 0/0 = subtitles centered (the default)
+    "x_offset": 0,               # px nudge from the style's own anchor, which
+    "y_offset": 0,               # is already solved: +right / +down. 0/0 is
+                                 # the anchor itself, not necessarily centre.
     "signature_offset": 0,       # px, vertical only: + lower / - higher.
                                  # The signature is ALWAYS horizontally
                                  # centered; there is no x knob on purpose.
 
-    # default style only ------------------------------------------------
-    "orientation": "auto",       # auto (from source aspect) | vertical | horizontal
-    "detect_subject": True,      # face detection drives the 9:16 re-crop
-    "background_image": None,    # still photo background; input may be audio
-    "frame_size": [1080, 1920],  # output frame when background_image is set
-    "arabic_font": "uthmanic_hafs",   # uthmanic_hafs | thuluth
-    "english_font": "albertus",
-    "arabic_scale": 1.1375,      # x base size of height * 0.09
-    "english_scale": 1.0,        # x the locked 0.72 English:Arabic ratio
-    "line_gap": 0.0,             # Arabic->English gap, frac of height
-    "dim": 0.30,                 # video brightness under captions (0-1)
-    "text_width": 0.88,          # frac of frame width captions may occupy
-    "english_max_chars": 60,     # English wrap cap
-
-    # bars + hz -----------------------------------------------------------
+    # every style ---------------------------------------------------------
     "crop": None,                # {x,y,w,h} source-px window -> the 16:9 band
-                                 # (bars) / the 1920x1080 frame (hz)
+                                 # (bars) or the whole canvas (vertical,
+                                 # horizontal). pipeline/crop.py solves it.
+
+    # vertical + horizontal -----------------------------------------------
+    "arabic_font": "uthmanic_hafs",   # uthmanic_hafs | thuluth
+    "english_font": "albertus",       # albertus | gentium
+    "arabic_scale": 1.0,         # x the house nominal 72pt
+    "english_scale": 1.0,        # x the house 29pt caps
+    "english_caps": True,        # ALL-CAPS English (the reference reels' own
+                                 # setting); false sets it as authored
+    "vignette": True,            # the grade plate's soft edge darkening
+    "dim": 0.118,                # flat black over the footage, 0 (untouched)
+                                 # to 1 (black). 0.118 = the measured 30/255.
+    "face_bottom": None,         # vertical only: fraction of the canvas
+                                 # height at which the reciter's head box
+                                 # ends, measured by crop.py. The caption
+                                 # block hangs just below it; omit and the
+                                 # block is centred on the frame instead.
 
     # bars style only ----------------------------------------------------
     "bar_color": None,           # "#RRGGBB"; default: derived from the footage
@@ -119,11 +123,13 @@ DEFAULTS = {
 
 def config_schema():
     return """Per-reel config YAML, kept in the source's own folder.
-`signature` is the only required key; with the standard layout everything
-else has a working default.
+Every key has a working default with the standard layout; an unknown key is
+an error rather than a silent no-op.
 
-    style: bars                     # bars | default | hz
-    signature: "TilawatQuraniyyah"  # REQUIRED. Burned bottom-center; null = none
+    style: vertical                 # vertical | horizontal | bars
+    signature: "TilawatQuraniyyah"  # handle, burned bottom-centre. Omit or
+                                    # null for none. `bars` NEVER burns one,
+                                    # whatever this says.
 
     surah: 33                       # verse span. Omit all three to auto-detect
     ayah_start: 56                  # from whisper.json (short clips only)
@@ -143,28 +149,35 @@ else has a working default.
       - n_words: 6                  # n_words must sum EXACTLY over the verse
         english: "Indeed, Allah..." # range's word count -- a mis-split fails
       - n_words: 5                  # loudly instead of shifting every caption.
-        english: "..."              # english: `default` and `hz` styles only.
-        line_split: 3               # bars: words on line 1 (omit = auto)
-                                    # Omit groups for draft auto-grouping.
+        english: "..."              # english: vertical + horizontal only;
+        line_split: 3               # bars is Arabic-only. bars: words on
+                                    # line 1 (omit = auto). Omit groups
+                                    # entirely for draft auto-grouping.
 
-    x_offset: 0                     # subtitle offset in px from centered
-    y_offset: 0                     # (+x right, +y down). Default centered.
+    crop: {x: 78, y: 30, w: 1280, h: 720}   # the reframing window, in SOURCE
+    x_offset: -365                  # pixels, and the caption anchor. BOTH are
+    face_bottom: 0.38               # solved by `pipeline/crop.py --write`;
+                                    # see Framing below for which style uses
+                                    # which key.
+    y_offset: 0                     # px nudges on the solved anchor, both
+                                    # styles (+x right, +y down)
     signature_offset: 0             # px: + lower / - higher. The signature is
                                     # ALWAYS horizontally centered.
 
-    verse_numbers: true             # ayah ornament (default: on for `default`
-                                    # and `hz`, off for bars)
+    verse_numbers: true             # ayah ornament (default: on for vertical
+                                    # and horizontal, off for bars)
     suppress: [[33, 58]]            # leave these second-windows uncaptioned
     nudge:                          # per-caption timing fix, applied LAST
       - {group: 3, start: -1.8}
 
-    # default style: orientation (auto|vertical|horizontal), detect_subject,
-    # background_image + frame_size, arabic_font, english_font, arabic_scale,
-    # english_scale, line_gap, dim, text_width, english_max_chars
+    # vertical + horizontal: arabic_font (uthmanic_hafs | thuluth),
+    #   english_font (albertus | gentium), arabic_scale, english_scale
+    #   (multipliers on the house 72pt Arabic / 29pt English caps),
+    #   english_caps (true = ALL-CAPS, the reference reels' setting),
+    #   vignette (true | false), dim (0 untouched .. 1 black; 0.118 house)
     # bars style: bar_color ("#RRGGBB" | omit for auto),
     #   fx: {heat: false, ...} to switch stages off (grade scrim glow
     #   barglow textglow scan snow heat; heat is ~half the render time)
-    # bars + hz: crop {x,y,w,h}, the source-pixel reframing window
 
     input / whisper / output        # only to override the standard layout
 
@@ -174,10 +187,24 @@ International and Mufti Taqi Usmani). Check every card against both before
 accepting a render -- where the two editions agree on clause order, a card
 whose English contradicts them is mis-split.
 
-Output resolution (`default` style): the caption canvas is never smaller
-than 720 on its short side -- a low-quality source is upscaled to 720p
-minimum -- and never larger than 1080 (a high-quality source caps at
-1080p). `bars` output is always 1080x1920, `hz` always 1920x1080.
+FRAMING. `crop` is the window of SOURCE pixels that becomes the canvas, so a
+render never consults a detector and reproduces anywhere. It is REQUIRED
+whenever the source is on the wrong side of square for the style (a landscape
+source for a `vertical` reel, or the reverse); a source already the right way
+round is cover-scaled and needs none. The caption anchor is solved with it and
+differs per style:
+
+    horizontal   block centred vertically, its column OPPOSITE the reciter,
+                 via `x_offset` (crop.py's equal-gap solve)
+    vertical     block centred horizontally, its top just BELOW his chin,
+                 via `face_bottom`
+    bars         the pill column, via `x_offset`
+
+With neither key the block is centred on both axes -- which is also the right
+answer for a shot with no reciter in it.
+
+Output is 1080x1920 for `vertical`, 1920x1080 for `horizontal` and `bars`,
+30fps, always: a low-quality source is upscaled rather than delivered small.
 """
 
 
@@ -188,9 +215,9 @@ def run(cmd, **kw):
 # ---------- media ----------------------------------------------------------
 
 def get_video_info(path):
-    """Frame size + duration. An AUDIO-ONLY input (a recitation .m4a paired
-    with a background_image) has no video stream, so width/height come back 0
-    and the caller supplies the target frame size."""
+    """Frame size + duration. An audio-only input has no video stream, so
+    width/height come back 0 and run_config refuses it: every style renders
+    over footage."""
     out = run([FFPROBE, "-v", "error", "-select_streams", "v:0",
                "-show_entries", "stream=width,height",
                "-show_entries", "format=duration", "-of", "json", path]).stdout
@@ -201,7 +228,7 @@ def get_video_info(path):
             "duration": float(data.get("format", {}).get("duration", 0))}
 
 
-def trim_media(path, out_path, start, end, has_video):
+def trim_media(path, out_path, start, end):
     """Cut [start, end) out of the source and re-encode. Re-encoding rather
     than stream-copying is deliberate: a copy cuts only at the nearest
     keyframe, which shifts the real start by up to a GOP and would offset
@@ -223,12 +250,8 @@ def trim_media(path, out_path, start, end, has_video):
     cmd = [FFMPEG, "-y", "-v", "error", "-ss", "%.3f" % start]
     if end is not None:
         cmd += ["-to", "%.3f" % end]
-    cmd += ["-i", path]
-    if has_video:
-        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "10",
-                "-pix_fmt", "yuv420p"]
-    else:
-        cmd += ["-vn"]
+    cmd += ["-i", path, "-c:v", "libx264", "-preset", "veryfast", "-crf", "10",
+            "-pix_fmt", "yuv420p"]
     run(cmd + ["-c:a", "aac", "-b:a", "192k", out_path])
     return out_path
 
@@ -757,21 +780,23 @@ def load_config(path):
     raw = yaml.safe_load(open(path, encoding="utf-8"))
     if not isinstance(raw, dict):
         raise SystemExit("config %s is not a YAML mapping" % path)
-    if "signature" not in raw:
-        raise SystemExit(
-            "config %s has no `signature:` key. It is required on every reel: "
-            "a string to burn into the frame, or null for none." % path)
-    unknown = sorted(set(raw) - set(DEFAULTS) - {"signature"})
+    unknown = sorted(set(raw) - set(DEFAULTS))
     if unknown:
         raise SystemExit("unknown config key(s) in %s: %s -- a typo'd key "
                          "would be silently ignored otherwise"
                          % (path, ", ".join(unknown)))
     cfg = {**DEFAULTS, **raw}
-    if cfg["style"] not in ("default", "bars", "hz"):
-        raise SystemExit("style must be `default`, `bars` or `hz`, not %r"
+    if cfg["style"] not in ("vertical", "horizontal", "bars"):
+        raise SystemExit(
+            "style must be `vertical` (1080x1920), `horizontal` (1920x1080) or "
+            "`bars` (1920x1080), not %r." % cfg["style"])
+    if cfg["face_bottom"] is not None and cfg["style"] != "vertical":
+        raise SystemExit("`face_bottom` places the block below the reciter's "
+                         "chin and is a `vertical` key; this config is `%s`, "
+                         "where the column is placed with `x_offset`."
                          % cfg["style"])
     if cfg["verse_numbers"] is None:
-        cfg["verse_numbers"] = cfg["style"] in ("default", "hz")
+        cfg["verse_numbers"] = cfg["style"] != "bars"
     return cfg
 
 
@@ -802,8 +827,6 @@ def resolve_paths(cfg, config_path, output_override=None):
         or os.path.join(ROOT, "reels", stem + ".mp4"))
     cfg["tmp_dir"] = cfg["tmp_dir"] or os.path.join(
         "/tmp", "quran-pipeline", stem)
-    if cfg["background_image"] and not os.path.isabs(cfg["background_image"]):
-        cfg["background_image"] = os.path.join(src_dir, cfg["background_image"])
     return cfg
 
 
@@ -817,24 +840,19 @@ def run_config(config_path, output_override=None):
     print("[1/6] Reading source...")
     source = cfg["input"]
     info = get_video_info(source)
+    if not info["width"]:
+        raise SystemExit("%s has no video stream -- every style renders over "
+                         "footage" % os.path.basename(cfg["input"]))
     t0w = 0.0
     if cfg.get("trim"):
         t0, t1 = (list(cfg["trim"]) + [None])[:2]
         t0w = float(t0)
-        trimmed = os.path.join(tmp, "trimmed.m4a" if not info["width"]
-                               else "trimmed.mp4")
+        trimmed = os.path.join(tmp, "trimmed.mp4")
         print("      trimming to %s-%ss" % (t0, t1 if t1 is not None else "end"))
         source = trim_media(source, trimmed, float(t0),
-                            None if t1 is None else float(t1),
-                            bool(info["width"]))
+                            None if t1 is None else float(t1))
         info = get_video_info(source)
-    still = cfg.get("background_image")
-    if still and not os.path.exists(still):
-        raise SystemExit("background_image not found: %s" % still)
-    if not info["width"] and not still:
-        raise SystemExit("input has no video stream; set background_image to "
-                         "render over a still photo")
-    print("      %sx%s, %.1fs" % (info["width"] or "-", info["height"] or "-",
+    print("      %sx%s, %.1fs" % (info["width"], info["height"],
                                   info["duration"]))
 
     align_path = align_path_for(config_path)
@@ -918,12 +936,9 @@ def run_config(config_path, output_override=None):
     if cfg["style"] == "bars":
         import render_bars
         render_bars.render(plan)
-    elif cfg["style"] == "hz":
-        import render_hz
-        render_hz.render(plan)
     else:
-        import render_default
-        render_default.render(plan)
+        import render_text
+        render_text.render(plan)
     tag_output(cfg["output"], int(surah), a0, a1, cfg["reciter"])
     print("Done: %s" % cfg["output"])
     return {"surah": int(surah), "ayah_start": a0, "ayah_end": a1,

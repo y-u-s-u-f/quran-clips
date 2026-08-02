@@ -2,40 +2,52 @@
 
 Read the rejected list before proposing anything. Numbers:
 `sources/gt9y-QGgMsA/hadid-16-16-bars.yaml` (27.5s, 8 cards, 4P+4E) unless
-noted; also `sources/wawassayna/ahqaf-15-bars.yaml` (23.3s, 4 cards).
+noted; also `sources/hajri-23-taraweeh/hujurat-4-5-*.yaml` (26.2s, 5 cards,
+1920x1080 source) for the current per-style comparison.
 
-## Current cost (bars, full fx)
+## Current cost
 
-| | wall | CPU | peak RSS |
-|---|---|---|---|
-| full fx | **~96s** | **~460s** | **~2.2 GB** |
-| `fx: {heat: false}` | ~87s | ~377s | ~2.3 GB |
+| | wall | CPU |
+|---|---|---|
+| `bars`, full fx, heat maps cached | **~75s** | ~560s |
+| `bars`, first run on a machine (heat bake) | ~460s | ~1200s |
+| `horizontal` | ~11s | ~107s |
+| `vertical` | ~12s | ~121s |
 
-~96s split: floor ~35s (37%), screen FX ~30s (31%), heat ~31s (32%).
-`trim_media` ~3.1s, snow bake ~2.8s (cached) — neither worth chasing.
-Heat is the preview drop (`fx: {heat: false}`); never judge LOOK without
-the full stack. Lighter bars (ahqaf-15, heat cached): ~33s / ~229s CPU.
-`hz` over same source: ~8s / ~72s CPU.
+`bars` is 3.16x the pixels of the other two styles per frame and carries the
+whole FX stack, which is where the gap comes from. The perlin heat maps bake
+once per (size, duration bucket) and are cached outside the reel's tmp, so
+only the first bars render at a given size pays the ~6 minutes; pin
+`fx: {heat: false}` for timing previews (~27% cheaper, and never judge LOOK
+without the full stack).
 
 ## Techniques in place
 
 Changing these needs PSNR; bars graph edits also need
 `tests/graph_parity.py --bless`.
 
-- **Ink-cropped + `enable`-gated overlays** (bars + hz captions/signature).
-  Bit-identical vs full canvas. hz isolated: 4.08→1.64s wall, 1618→633 MB.
-  Signature: 13.1→10.1s CPU, 371→220 MB.
+- **Ink-cropped + `enable`-gated overlays** (bars + text captions/signature).
+  Bit-identical vs full canvas. Text style isolated: 4.08→1.64s wall,
+  1618→633 MB. Signature: 13.1→10.1s CPU, 371→220 MB.
 - **Wipe mask stays full-canvas**, then cropped to the bar box (sweep in
   canvas columns; feather is part of the look).
 - **`derive_bar_color`: `fps=1` first** — 8.57→1.89s CPU. Pin `bar_color:`
   to skip (vignette dither can move one LSB).
-- **`trim_media` / default 9:16 intermediate: `veryfast`/crf 10** — 50.39 dB
-  vs lossless. crf 14 is *worse* (49.46); size ≠ fidelity across presets.
+- **`trim_media`: `veryfast`/crf 10** — 50.39 dB vs lossless. crf 14 is
+  *worse* (49.46); size ≠ fidelity across presets.
 - **`heat` perlin maps pre-baked** (`heat_layers`, 30s buckets) — 47.1 dB.
 - **`fx.blur` half/quarter-res** (`HALF_RES_SIGMA` 10, `QUARTER_RES_SIGMA`
   40). Bar glow band-sliced (+3σ). Scan/textglow via `blur`: −58% CPU at
   55.6/54.9 dB. Heat supersample = 2 (48.8 dB). Glow plates band-sized
   (bit-identical). Snow bake atomic + shared cache.
+- **bars carries no letterbox plumbing** — with the picture filling the
+  canvas there is no `pad`, no crop back to a band, and no full-frame
+  overlay putting it back; the FX chain runs on the captioned frame.
+- **One text renderer, no render-time detection** — `vertical` from a
+  landscape source composites its `crop` inside the single graph instead of
+  writing a re-encoded 9:16 intermediate first, so that whole decode+encode
+  pass is gone. No OpenCV/ONNX at render time either: the framing is a
+  committed number.
 
     tools/render-venv/bin/python tests/graph_parity.py
 
@@ -56,3 +68,7 @@ Changing these needs PSNR; bars graph edits also need
 ## Open
 
 **`heat` supersample 2→1** — look decision; no cheap refactor left.
+**bars at 1920x1080** — the FX stack now covers 3.16x the pixels per frame.
+Nothing here is wrong, but the band-era sigmas were tuned when a blur covered
+608 rows; whether any of them can drop a resolution tier at this size is
+unmeasured.

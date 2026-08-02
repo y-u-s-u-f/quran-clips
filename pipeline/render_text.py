@@ -1,27 +1,33 @@
-"""pipeline/render_hz.py -- the `hz` style renderer.
+"""pipeline/render_text.py -- the `vertical` and `horizontal` styles.
 
-Native landscape 1920x1080, the account's original look: the footage reframed
-by the config's `crop` and pushed down under ONE black alpha plate (flat dim +
-soft vignette + a backing gradient behind the caption column), warm-white
-Uthmanic Hafs on a single line with the ayah medallion inline, tracked ALL-CAPS
-Albertus centred beneath it, one shared soft drop shadow for both scripts, and
-0.45s dissolves between cards.
+Arabic + English over graded footage, at one of two canvases:
 
-Ported from legacy/scripts/render_text.py + legacy/scripts/build_render.py,
-with the style numbers from legacy/templates/style.yaml (pixel forensics of the
-account's three landscape reference reels). The reference render this was
-verified against is reels/BADR-AL-TURKI-AHZAB-56-56.mp4.
+    vertical    1080x1920   the reel shape; type sits BELOW the reciter
+    horizontal  1920x1080   the account's landscape look; type sits BESIDE him
 
-Two things this style does NOT do, deliberately:
-  * no face detection -- the reframe is the config's `crop` (source pixels),
-    solved once at authoring time, so a render is reproducible;
-  * no per-phrase type size -- one shrink-to-fit point size for the whole reel,
-    so a caption swap never changes the Arabic's weight.
+ONE look on two canvases, verified against
+reels/BADR-AL-TURKI-AHZAB-56-56.mp4: the footage reframed by the config's
+`crop` and pushed down under ONE black alpha plate (flat dim + optional soft
+vignette + a backing gradient behind the caption block), warm-white Uthmanic
+Hafs on a single line with the ayah medallion inline, tracked ALL-CAPS Albertus
+beneath it, one shared soft drop shadow for both scripts, and 0.45s dissolves
+between cards. The two shapes share every one of those: they differ only in
+canvas and in where the block sits.
 
-The caption COLUMN is off-centre (the type sits opposite the reciter), which is
-expressed with the generic `x_offset` px knob, exactly as the bars style does
-it: `cx = W // 2 + x_offset`. Vertically the block is auto-centred on the frame
-and `y_offset` nudges it (style.yaml's per-clip "vertical_nudge +/- 0.04 H").
+WHERE THE TYPE GOES is the one thing the two shapes do not share, and neither
+half of it is decided here at render time -- pipeline/crop.py measures the
+reciter at AUTHORING time and writes numbers into the config (invariant 4: a
+reel re-renders identically on a machine with no vision model at all):
+
+  * horizontal -- the block is centred vertically and its COLUMN sits opposite
+    the reciter, via the generic `x_offset` px knob (`cx = W // 2 + x_offset`),
+    which crop.py solves with the equal-gap rule. No reciter -> no x_offset ->
+    dead centre.
+  * vertical -- the block is centred horizontally and its TOP sits just below
+    his chin, via `face_bottom` (the fraction of the canvas height at which
+    crop.py measured his head box to end). No face_bottom -> dead centre.
+
+`x_offset` / `y_offset` are px nudges on top of both, as in the bars style.
 
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
@@ -47,21 +53,38 @@ if not features.check("raqm"):
 
 # ---------------------------------------------------------------------------
 # Style constants -- legacy/templates/style.yaml, derived from pixel
-# measurements of the three landscape reference reels. Native landscape: this
-# style never letterboxes and never re-crops to 9:16.
+# measurements of the three landscape reference reels. A constant that cannot
+# hold on both canvases is keyed by orientation and carries its reason.
 # ---------------------------------------------------------------------------
-CANVAS_W, CANVAS_H = 1920, 1080
+CANVAS = {"vertical": (1080, 1920), "horizontal": (1920, 1080)}
 FPS = 30
 
-AR_FONT = os.path.join(FONT_DIR, "uthmanic_hafs_v22.ttf")
-EN_FONT = os.path.join(FONT_DIR, "Albertus MT Lt Regular.ttf")
+ARABIC_FONTS = {
+    "uthmanic_hafs": os.path.join(FONT_DIR, "uthmanic_hafs_v22.ttf"),
+    "thuluth": os.path.join(FONT_DIR, "AM_Thulth_Regular_0.1.ttf"),
+}
+# `stroke_macron` -- this font has no U+0100 and renders it as .notdef, so
+# ALLAH -> ALLĀH needs its bar stroked as a rectangle over a plain A. Measured
+# per font against a private-use codepoint: Albertus true, Gentium false.
+ENGLISH_FONTS = {
+    "albertus": {"path": os.path.join(FONT_DIR, "Albertus MT Lt Regular.ttf"),
+                 "stroke_macron": True},
+    "gentium": {"path": os.path.join(FONT_DIR, "GentiumPlus-Regular.ttf"),
+                "stroke_macron": False},
+}
 
 ARABIC = {"color": (247, 245, 239),      # #F7F5EF, warm white
           "nominal_pt": 72,              # design target, not a fill target
-          "min_pt": 40,
-          # of frame WIDTH; single line, never wrapped. The refs never bring
-          # text within ~0.05 W of the frame edge.
-          "max_line_width_frac": 0.51}
+          "min_pt": 40}
+
+# Of frame WIDTH; the Arabic is a single line and is never wrapped. Landscape
+# 0.51 is the reference reels' own margin (they never bring text within ~0.05 W
+# of the edge) and it also has to leave the reciter his half of the frame.
+# Portrait's block is centred with nothing beside it, so it may use the frame.
+# The two land within a few px of each other in absolute ink -- 0.86 x 1080 =
+# 929, 0.51 x 1920 = 979 -- which is why ONE nominal point size serves both.
+AR_WIDTH_FRAC = {"horizontal": 0.51, "vertical": 0.86}
+EN_WIDTH_FRAC = {"horizontal": 0.55, "vertical": 0.82}
 
 ENGLISH = {"color": (245, 243, 237),     # #F5F3ED
            "alpha": 240,                 # a hair behind the Arabic
@@ -69,8 +92,10 @@ ENGLISH = {"color": (245, 243, 237),     # #F5F3ED
            # (style.yaml `smallcaps: false`).
            "cap_pt": 29,
            "tracking_pct": 3,            # of the point size, per character
-           "max_line_width_frac": 0.55,
-           "line_height_px": int(29 * 1.62),
+           "line_height_mult": 1.62,
+           # Of the frame's SHORT side, not its height: the pair's spacing
+           # belongs to the TYPE, which is one size on both canvases, so a
+           # height fraction would loosen it by 78% in portrait.
            "gap_below_arabic_frac": 0.02}
 
 # ONE drop shadow, composited from the MERGED ink alpha of both scripts (they
@@ -81,16 +106,28 @@ SHADOW = {"color": (0, 0, 0), "alpha": 153,     # style.yaml opacity 0.60
           "offset_px": 2, "blur_px": 3.0}
 
 # The grade: a single black RGBA plate whose alpha is dim + vignette + a
-# backing gradient under the caption column, clamped so the darkest pixel
-# still reads as footage rather than a box.
-GRADE = {"base": 30, "cap": 190,
+# backing gradient under the caption block, clamped so the darkest pixel still
+# reads as footage rather than a box.
+GRADE = {"cap": 190,
          "vignette": {"rx_frac": 0.62, "ry_frac": 0.62,
-                      "a_center": 0, "a_edge": 126, "ease": 2.2},
-         "backing": {"dy_frac": 0.04, "rx_frac": 0.32, "ry_frac": 0.26,
-                     "a_center": 130, "a_edge": 0, "ease": 1.45}}
+                      "a_center": 0, "a_edge": 126, "ease": 2.2}}
+# The backing follows the block, so it is shaped like the block: a column in
+# landscape, a band in portrait.
+BACKING = {"horizontal": {"dy_frac": 0.04, "rx_frac": 0.32, "ry_frac": 0.26,
+                          "a_center": 130, "a_edge": 0, "ease": 1.45},
+           "vertical": {"dy_frac": 0.06, "rx_frac": 0.60, "ry_frac": 0.15,
+                        "a_center": 130, "a_edge": 0, "ease": 1.45}}
 
-# The caption block is centred on the frame; per-clip nudges are `y_offset`.
+# With no measured reciter the block is centred on the frame; `y_offset` (and
+# `x_offset`) are the per-clip nudges.
 BLOCK_CENTER_Y_FRAC = 0.50
+# Portrait: air between his chin and the Arabic's ink top, as a fraction of the
+# short side. The brief is "a few pixels below his face"; below ~0.03 the
+# tashkeel of a tall phrase starts touching the underside of his jaw.
+FACE_GAP_FRAC = 0.035
+# ...and the block's ink may not run past this fraction of the height, which is
+# where the signature's own band begins (SIGNATURE_Y_FRAC 0.945).
+BLOCK_BOTTOM_FRAC = 0.90
 
 # Cards dissolve in fixed position: the incoming fade-in straddles the
 # outgoing fade-out. No slide, no scale, no per-word reveal.
@@ -105,17 +142,19 @@ ENCODE = {"crf": 18, "preset": "slow", "audio_bitrate": "192k"}
 # (one looped PNG per card, plus the grade plate and the signature).
 THREAD_QUEUE_SIZE = 4096
 
-# Signature: house geometry, shared with the other two styles.
+# Signature: the SIZE is of the short side (28px on either canvas); the
+# POSITION is of the height.
 SIGNATURE_SIZE_FRAC = 0.026
 SIGNATURE_Y_FRAC = 0.945
 SIGNATURE_ALPHA = 0.87
 
 # Tajweed ANNOTATION marks (reading aids, neither letters nor harakat) that
-# this font cannot mark-attach -- U+06DF SMALL HIGH ROUNDED ZERO comes out as a
-# stray U+25CC dotted ring, U+06ED SMALL LOW MEEM as a floating symbol -- plus
-# U+0640 TATWEEL, which breaks dagger-alif anchoring in PIL/Raqm (the tiny alif
-# detaches and lands at the far end of the word). Display only; the aligner
-# never sees display text and no letter or pronunciation diacritic is lost.
+# these fonts cannot mark-attach -- U+06DF SMALL HIGH ROUNDED ZERO comes out as
+# a stray U+25CC dotted ring, U+06ED SMALL LOW MEEM as a floating symbol --
+# plus U+0640 TATWEEL, which breaks dagger-alif anchoring in PIL/Raqm (the tiny
+# alif detaches and lands at the far end of the word). Display only; the
+# aligner never sees display text and no letter or pronunciation diacritic is
+# lost. Escapes, not literals -- invariant 1: no Arabic is retyped in source.
 DISPLAY_STRIP_CHARS = {"\u06DF", "\u06ED", "\u0640"}
 
 
@@ -149,14 +188,17 @@ def fit_pt(nominal_pt, min_pt, max_width, widest):
 # ---------------------------------------------------------------------------
 # the English engine: ALL-CAPS, tracked, hand-stroked macron
 # ---------------------------------------------------------------------------
-# Albertus has no U+0100 (LATIN CAPITAL A WITH MACRON) and renders tofu for it,
-# so ALLAH -> ALLĀH is drawn as a plain "A" with the bar stroked as a rectangle.
 _NON_LETTER = re.compile("[^A-Za-z\\u0100-\\u017F]")
 
 
-def en_tokens(text):
-    """-> [(char, macron?)] for one line, upper-cased, spacing and punctuation
-    passed through. `macron` marks the second A of ALLAH (letter index 3)."""
+def en_tokens(text, stroke_macron=True, caps=True):
+    """-> [(char, stroke?)] for one line, spacing and punctuation passed
+    through, upper-cased unless `caps` is off (config `english_caps`).
+
+    `stroke` marks the second a of Allah (letter index 3) on a font that cannot
+    draw the macron -- Albertus has neither U+0100 nor U+0101 and renders both
+    as .notdef. A font that HAS the glyph gets the real character instead, in
+    the case the line is being set in, and nothing is stroked."""
     toks = []
     for w in re.split(r"(\s+)", text):
         if not w or w.isspace():
@@ -167,8 +209,12 @@ def en_tokens(text):
         li = 0
         for ch in w:
             if ch.isalpha():
-                up = ch.upper()
-                toks.append((up, macron and li == 3 and up == "A"))
+                out = ch.upper() if caps else ch
+                mark = macron and li == 3 and out.lower() == "a"
+                if mark and not stroke_macron:
+                    out = "\u0100" if out.isupper() else "\u0101"
+                    mark = False
+                toks.append((out, mark))
                 li += 1
             else:
                 toks.append((ch, False))
@@ -179,7 +225,8 @@ def en_width(toks, font, tracking_px):
     return sum(font.getlength(ch) + tracking_px for ch, _ in toks)
 
 
-def wrap_english(text, font, tracking_px, max_w):
+def wrap_english(text, font, tracking_px, max_w, stroke_macron=True,
+                 caps=True):
     """Wrap into the FEWEST lines that fit max_w, then BALANCE the split
     (min-raggedness): among all splits with that line count whose every line
     fits, pick the one minimising the widest line (tie-break: min spread).
@@ -189,7 +236,8 @@ def wrap_english(text, font, tracking_px, max_w):
     words = text.split(" ")
 
     def width_of(ws):
-        return en_width(en_tokens(" ".join(ws)), font, tracking_px)
+        return en_width(en_tokens(" ".join(ws), stroke_macron, caps), font,
+                        tracking_px)
 
     greedy, cur = [], []                 # greedy = the minimal feasible count
     for wd in words:
@@ -228,7 +276,9 @@ def draw_en_line(layer, x0, baseline, toks, font, tracking_px, fill):
         d.text((x, baseline), ch, font=font, fill=fill, anchor="ls")
         adv = font.getlength(ch)
         if mac:
-            cb = font.getbbox("A")
+            # the glyph actually being set, not a hardcoded "A": with
+            # `english_caps: false` the bar has to sit on an x-height "a".
+            cb = font.getbbox(ch)
             cap_h = cb[3] - cb[1]
             bar_w = adv * 0.55           # centred, ~55% of the glyph, above cap
             bx = x + (adv - bar_w) / 2.0
@@ -242,38 +292,52 @@ def draw_en_line(layer, x0, baseline, toks, font, tracking_px, fill):
 # layout -- pure numbers; draw_layers() consumes exactly these
 # ---------------------------------------------------------------------------
 
-def layout(phrases, english, x_offset, y_offset):
+def layout(orientation, phrases, english, cfg, face_bottom):
     """WHERE the Arabic anchor and every English baseline goes.
 
-    The vertical anchor is SOLVED, not configured: `AR_CY` anchors the ARABIC
+    The vertical anchor is SOLVED, not configured: `ar_cy` anchors the ARABIC
     line, but the block extends below it by an amount that depends on the ink
     height, the fitted point size and -- most of all -- how many lines the
-    English wraps to, so a fixed anchor does not centre the block. The anchor
-    is a pure translation of the whole block, so one measurement solves it
-    exactly. Phrase blocks differ in height (a two-line English hangs ~0.02 H
-    lower than a one-line one), so no anchor centres them all: the MEDIAN
-    phrase is centred, exactly as the legacy solver did.
+    English wraps to, so no fixed anchor puts the block where it is wanted.
+    The anchor is a pure translation of the whole block, so ONE measurement at
+    a trial anchor solves it exactly. Phrase blocks differ in height (a
+    two-line English hangs ~0.02 H lower than a one-line one), so the MEDIAN
+    phrase is the one placed, as the legacy solver does.
+
+    What it is solved AGAINST is the difference between the two shapes:
+    landscape centres the block's MIDDLE on the frame; portrait puts its TOP
+    below the reciter's chin, which is the number `face_bottom` carries.
     """
-    W, H = CANVAS_W, CANVAS_H
-    cx = W // 2 + int(x_offset)
+    W, H = CANVAS[orientation]
+    short = min(W, H)
+    cx = W // 2 + int(cfg["x_offset"])
+
+    ar_path = ARABIC_FONTS[cfg["arabic_font"]]
+    en_spec = ENGLISH_FONTS[cfg["english_font"]]
+    stroke = en_spec["stroke_macron"]
 
     texts = [norm_ar(p["text"]) for p in phrases]
-    max_ar_w = ARABIC["max_line_width_frac"] * W
-    probe = truetype(AR_FONT, ARABIC["nominal_pt"])
+    max_ar_w = AR_WIDTH_FRAC[orientation] * W
+    nominal = ARABIC["nominal_pt"] * cfg["arabic_scale"]
+    probe = truetype(ar_path, max(1, int(nominal)))
     raw = [ar_bbox(t, probe) for t in texts]
     widest = max([1.0] + [b[2] - b[0] for b in raw])
-    pt = fit_pt(ARABIC["nominal_pt"], ARABIC["min_pt"], max_ar_w, widest)
-    ar_font = truetype(AR_FONT, pt)
+    pt = fit_pt(nominal, ARABIC["min_pt"] * cfg["arabic_scale"], max_ar_w,
+                widest)
+    ar_font = truetype(ar_path, pt)
 
-    en_font = truetype(EN_FONT, ENGLISH["cap_pt"])
-    tracking = ENGLISH["tracking_pct"] / 100.0 * ENGLISH["cap_pt"]
-    max_en_w = ENGLISH["max_line_width_frac"] * W
-    en_lines = [wrap_english(e["text"], en_font, tracking, max_en_w)
+    cap_pt = max(12, int(round(ENGLISH["cap_pt"] * cfg["english_scale"])))
+    en_font = truetype(en_spec["path"], cap_pt)
+    tracking = ENGLISH["tracking_pct"] / 100.0 * cap_pt
+    max_en_w = EN_WIDTH_FRAC[orientation] * W
+    caps = cfg["english_caps"]
+    en_lines = [wrap_english(e["text"], en_font, tracking, max_en_w, stroke,
+                             caps)
                 for e in english]
     cap_bb = en_font.getbbox("H")
     cap_h = cap_bb[3] - cap_bb[1]
-    gap = int(ENGLISH["gap_below_arabic_frac"] * H)
-    line_h = ENGLISH["line_height_px"]
+    gap = int(ENGLISH["gap_below_arabic_frac"] * short)
+    line_h = int(cap_pt * ENGLISH["line_height_mult"])
 
     def rows(text, lines, ar_cy):
         """(arabic bbox, [(line, baseline_y)]) for one phrase at one anchor."""
@@ -293,15 +357,38 @@ def layout(phrases, english, x_offset, y_offset):
         return bb[1], bot
 
     trial = 0.5 * H
-    mids = sorted(sum(bounds(*rows(text, lines, trial))) / 2.0
-                  for text, lines in zip(texts, en_lines))
-    # anchor -> block-centre offset, measured on the median phrase
-    drop = mids[len(mids) // 2] - trial
-    ar_cy = int(round(BLOCK_CENTER_Y_FRAC * H - drop)) + int(y_offset)
+    spans = [bounds(*rows(text, lines, trial))
+             for text, lines in zip(texts, en_lines)]
+    if orientation == "vertical" and face_bottom is not None:
+        # anchor -> block-TOP offset (near-constant across phrases: they share
+        # a point size, and only the English line count moves the bottom)
+        rise = trial - sorted(t for t, _ in spans)[len(spans) // 2]
+        want = float(face_bottom) * H + FACE_GAP_FRAC * short
+        placed_on = "chin %.3f H + %dpx" % (face_bottom, int(FACE_GAP_FRAC * short))
+        ar_cy = want + rise
+    else:
+        # anchor -> block-CENTRE offset, measured on the median phrase
+        drop = sorted((t + b) / 2.0 for t, b in spans)[len(spans) // 2] - trial
+        want = BLOCK_CENTER_Y_FRAC * H
+        placed_on = "frame centre %.2f H" % BLOCK_CENTER_Y_FRAC
+        ar_cy = want - drop
 
-    out = {"pt": pt, "ar_font": ar_font, "en_font": en_font, "cx": cx,
-           "ar_cy": ar_cy, "tracking": tracking, "widest": widest,
-           "max_ar_w": max_ar_w, "phrases": []}
+    # The deepest phrase decides whether the block clears the signature: a
+    # two-line English under a low chin is the case that runs off the frame,
+    # and silently drawing type into the signature's band is worse than saying
+    # so and lifting the whole block.
+    deepest = max(b for _, b in spans) + (ar_cy - trial)
+    overrun = deepest - BLOCK_BOTTOM_FRAC * H
+    if overrun > 0:
+        ar_cy -= overrun
+        placed_on += ", lifted %dpx to clear %.2f H" % (overrun,
+                                                        BLOCK_BOTTOM_FRAC)
+    ar_cy = int(round(ar_cy)) + int(cfg["y_offset"])
+
+    out = {"pt": pt, "cap_pt": cap_pt, "ar_font": ar_font, "en_font": en_font,
+           "cx": cx, "ar_cy": ar_cy, "tracking": tracking, "widest": widest,
+           "max_ar_w": max_ar_w, "stroke_macron": stroke, "caps": caps,
+           "placed_on": placed_on, "overrun": max(0.0, overrun), "phrases": []}
     for i, (text, lines) in enumerate(zip(texts, en_lines), start=1):
         bb, base = rows(text, lines, ar_cy)
         top, bot = bounds(bb, base)
@@ -314,11 +401,10 @@ def layout(phrases, english, x_offset, y_offset):
 # drawing
 # ---------------------------------------------------------------------------
 
-def with_shadow(ink):
+def with_shadow(ink, W, H):
     """The ink plus ONE soft drop shadow struck from its merged alpha: a solid
     black layer through that alpha, pushed down-right and blurred, ink over it
     -- a lift off the footage, not an outline ring."""
-    W, H = CANVAS_W, CANVAS_H
     off = SHADOW["offset_px"]
     solid = Image.new("RGBA", (W, H), SHADOW["color"] + (SHADOW["alpha"],))
     sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -331,16 +417,17 @@ def with_shadow(ink):
 def trim_to_ink(card):
     """A full-canvas card cropped to its non-transparent pixels -> (img, x, y).
 
-    Ported from render_default.trim_to_ink including the outward even-
-    coordinate snap: `overlay` blends in yuv420 by default, so on an odd edge
+    The compositor pays for the whole overlay every frame a card is up, and a
+    card's ink -- one Arabic line plus one or two English lines -- runs 6-7% of
+    the canvas on real cards; what is cropped away is (0,0,0,0), which
+    `overlay` composites to nothing. The box is snapped OUTWARD to even
+    coordinates because `overlay` blends in yuv420 by default: on an odd edge
     the overlay's 2x2 chroma/alpha blocks would straddle a different grid than
     the full-canvas card's and the result would shift.
 
-    An hz card's ink -- one Arabic line plus one or two English lines -- runs
-    6-7% of the 1920x1080 canvas on real cards, and what is cropped away is
-    (0,0,0,0), which `overlay` composites to nothing. Isolated on a 6-card
-    1080p reel at 11%, with the gates build_graph adds: 33.8s -> 10.5s CPU and
-    1618 -> 633 MB peak RSS for the caption stage."""
+    Worth 33.8s -> 10.5s CPU and 1618 -> 633 MB peak RSS on the caption stage
+    of a 6-card 1080p reel at 11%, measured against full-canvas overlays with
+    the same gates build_graph adds."""
     box = card.getbbox()
     if box is None:                       # an empty card composites to nothing
         return card, 0, 0
@@ -350,7 +437,7 @@ def trim_to_ink(card):
     return card.crop((x0, y0, x1, y1)), x0, y0
 
 
-def draw_layers(lay, out_dir):
+def draw_layers(lay, W, H, out_dir):
     """One RGBA card per phrase: Arabic + English + the shared shadow, drawn at
     full canvas and saved cropped to its own ink. The box it came from travels
     with it, since the compositor now has to place it.
@@ -358,18 +445,18 @@ def draw_layers(lay, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     report = []
     for p in lay["phrases"]:
-        ink = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+        ink = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         ImageDraw.Draw(ink).text(
             (lay["cx"], lay["ar_cy"]), p["text"], font=lay["ar_font"],
             fill=ARABIC["color"] + (255,), anchor="mm",
             direction="rtl", language="ar")
         for ln, y in p["english"]:
-            toks = en_tokens(ln)
+            toks = en_tokens(ln, lay["stroke_macron"], lay["caps"])
             w = en_width(toks, lay["en_font"], lay["tracking"])
             draw_en_line(ink, lay["cx"] - w / 2.0, y, toks, lay["en_font"],
                          lay["tracking"], ENGLISH["color"] + (ENGLISH["alpha"],))
         path = os.path.join(out_dir, "phrase%d.png" % p["i"])
-        card, x0, y0 = trim_to_ink(with_shadow(ink))
+        card, x0, y0 = trim_to_ink(with_shadow(ink, W, H))
         card.save(path)
         bb = p["ar_bbox"]
         report.append({"path": path, "box": (x0, y0),
@@ -399,18 +486,18 @@ def radial_alpha(w, h, cx, cy, rx, ry, a_center, a_edge, ease, lo=48, hi=27):
     return small.resize((w, h), Image.BILINEAR)
 
 
-def grade_plate(lay, tmp):
-    """The single black plate that seats the type: flat dim, plus a vignette,
-    plus a backing gradient centred just below the Arabic anchor (live footage
-    runs brighter than the account's moody grade, and warm-white type over a
-    sunlit thobe needs the backing to read at all). Capped so the darkest
-    pixel is still footage."""
-    W, H = CANVAS_W, CANVAS_H
-    v, t = GRADE["vignette"], GRADE["backing"]
-    combo = Image.new("L", (W, H), GRADE["base"])
-    combo = ImageChops.add(combo, radial_alpha(
-        W, H, W / 2.0, H / 2.0, W * v["rx_frac"], H * v["ry_frac"],
-        v["a_center"], v["a_edge"], v["ease"]))
+def grade_plate(lay, orientation, W, H, vignette, dim, tmp):
+    """The single black plate that seats the type: flat dim, optionally a
+    vignette, plus a backing gradient centred just below the Arabic anchor
+    (live footage runs brighter than the account's moody grade, and warm-white
+    type over a sunlit thobe needs the backing to read at all). Capped so the
+    darkest pixel is still footage."""
+    v, t = GRADE["vignette"], BACKING[orientation]
+    combo = Image.new("L", (W, H), max(0, min(255, int(round(dim * 255)))))
+    if vignette:
+        combo = ImageChops.add(combo, radial_alpha(
+            W, H, W / 2.0, H / 2.0, W * v["rx_frac"], H * v["ry_frac"],
+            v["a_center"], v["a_edge"], v["ease"]))
     combo = ImageChops.add(combo, radial_alpha(
         W, H, lay["cx"], lay["ar_cy"] + t["dy_frac"] * H,
         W * t["rx_frac"], H * t["ry_frac"],
@@ -422,16 +509,16 @@ def grade_plate(lay, tmp):
     return path
 
 
-def signature_card(text, tmp, offset=0):
+def signature_card(text, font_path, W, H, tmp, offset=0):
     """`offset` moves the line vertically only (+ lower / - higher); the
     signature is ALWAYS horizontally centered -- no x knob on purpose.
 
     -> (path, x, y), cropped to its own ink like the caption cards. It is the
     one overlay up for the WHOLE reel, so a full-canvas plate for ~200x27px of
-    type costs the most of any of them (13.1s -> 10.1s CPU and 371 -> 220 MB
-    peak RSS on a 23s reel)."""
-    W, H = CANVAS_W, CANVAS_H
-    font = ImageFont.truetype(EN_FONT, max(12, int(H * SIGNATURE_SIZE_FRAC)))
+    type would cost the most of any of them: 13.1s -> 10.1s CPU and 371 -> 220
+    MB peak RSS on a 23s reel."""
+    font = ImageFont.truetype(font_path,
+                              max(12, int(min(W, H) * SIGNATURE_SIZE_FRAC)))
     bbox = _PROBE.textbbox((0, 0), text, font=font)
     ink = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(ink).text(
@@ -439,7 +526,7 @@ def signature_card(text, tmp, offset=0):
          int(H * SIGNATURE_Y_FRAC) - (bbox[3] - bbox[1]) // 2 - bbox[1]
          + int(offset)),
         text, font=font, fill=(255, 255, 255, 255))
-    card = with_shadow(ink)
+    card = with_shadow(ink, W, H)
     card.putalpha(card.getchannel("A").point(
         lambda a: int(round(a * SIGNATURE_ALPHA))))
     card, x0, y0 = trim_to_ink(card)
@@ -508,19 +595,47 @@ def loudnorm_filter(st):
 # the filtergraph
 # ---------------------------------------------------------------------------
 
-def source_chain(crop):
-    """[0:v] -> exactly 1920x1080 of footage. `crop` is the authored window in
-    SOURCE pixels (pipeline/crop.py solves it); without one the footage is
+def reframe(orientation, info, crop):
+    """The source -> canvas decision, made once and printed. -> (crop, note)
+
+    A source already on the target's side of square is cover-scaled -- written
+    on directly, nothing to solve. One on the WRONG side needs a reviewed
+    window, not a blind centre crop that would saw the reciter in half, so it
+    is refused and sent to pipeline/crop.py, which is where the caption anchor
+    has to come from anyway.
+    """
+    if crop:
+        if not all(k in crop for k in ("x", "y", "w", "h")):
+            raise SystemExit("crop must carry x, y, w, h")
+        return crop, "crop %dx%d+%d+%d" % (crop["w"], crop["h"],
+                                           crop["x"], crop["y"])
+    portrait = info["height"] >= info["width"]
+    if (orientation == "vertical") != portrait:
+        raise SystemExit(
+            "this source is %dx%d and the reel is %s, so it needs a reviewed "
+            "`crop:` -- a blind centre crop would cut the reciter. Solve it "
+            "with\n    tools/render-venv/bin/python pipeline/crop.py "
+            "<config> --write --annotate /tmp/crop.png\nwhich writes `crop:` "
+            "and `%s:` together."
+            % (info["width"], info["height"], orientation,
+               "face_bottom" if orientation == "vertical" else "x_offset"))
+    return None, "cover-scaled (source already %s)" % (
+        "portrait" if portrait else "landscape")
+
+
+def source_chain(crop, W, H):
+    """[0:v] -> exactly WxH of footage. `crop` is the authored window in SOURCE
+    pixels (pipeline/crop.py solves it); without one the footage is
     cover-scaled, never distorted."""
     if crop:
         return ("crop=%d:%d:%d:%d,scale=%d:%d:flags=lanczos"
-                % (crop["w"], crop["h"], crop["x"], crop["y"],
-                   CANVAS_W, CANVAS_H))
+                % (crop["w"], crop["h"], crop["x"], crop["y"], W, H))
     return ("scale=%d:%d:flags=lanczos:force_original_aspect_ratio=increase,"
-            "crop=%d:%d" % (CANVAS_W, CANVAS_H, CANVAS_W, CANVAS_H))
+            "crop=%d:%d" % (W, H, W, H))
 
 
-def build_graph(src, dur, crop, grade_png, cards, sched, ln, afade, sig=None):
+def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
+                sig=None):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1]=grade plate,
     [2..]=one card per phrase, then the signature (last, so dropping it cannot
     shift any other index).
@@ -543,7 +658,7 @@ def build_graph(src, dur, crop, grade_png, cards, sched, ln, afade, sig=None):
 
     parts = ["[0:v]%s,setsar=1,fps=%d,format=rgba[bg];"
              "[1:v]format=rgba[grd];[bg][grd]overlay=0:0:format=auto[b0]"
-             % (source_chain(crop), FPS)]
+             % (source_chain(crop, W, H), FPS)]
     base = "b0"
     for i, ((t_in, d_in, t_out, d_out), c) in enumerate(zip(sched, cards)):
         parts.append(";[%d:v]format=rgba,"
@@ -578,28 +693,48 @@ def render(plan):
     cfg, info = plan["cfg"], plan["info"]
     src, tmp = plan["src"], plan["tmp"]
     phrases, english = plan["arabic"], plan["english"]
+    orientation = cfg["style"]
+    W, H = CANVAS[orientation]
     dur = info["duration"]
     if not info["width"]:
-        raise SystemExit("hz style needs footage; it has no still-photo mode")
+        raise SystemExit("this style needs footage: the input has no video "
+                         "stream and there is no still-photo mode")
 
-    crop = cfg.get("crop")
-    if crop and not all(k in crop for k in ("x", "y", "w", "h")):
-        raise SystemExit("crop must carry x, y, w, h")
+    crop, note = reframe(orientation, info, cfg.get("crop"))
+    face_bottom = cfg.get("face_bottom")
+    lay = layout(orientation, phrases, english, cfg, face_bottom)
 
-    lay = layout(phrases, english, cfg["x_offset"], cfg["y_offset"])
-    print("      Arabic pt=%d (nominal %d, widest raw %dpx, cap %dpx)"
-          % (lay["pt"], ARABIC["nominal_pt"], lay["widest"], lay["max_ar_w"]))
-    print("      caption column x=%d (%.3f W), Arabic anchor y=%d (%.3f H)"
-          % (lay["cx"], lay["cx"] / float(CANVAS_W),
-             lay["ar_cy"], lay["ar_cy"] / float(CANVAS_H)))
-    rep = draw_layers(lay, os.path.join(tmp, "overlays"))
+    print("      %dx%d | %s" % (W, H, note))
+    print("      arabic: %s @ %dpt (nominal %d, widest raw %dpx, cap %dpx) | "
+          "english: %s @ %dpt"
+          % (cfg["arabic_font"], lay["pt"],
+             int(ARABIC["nominal_pt"] * cfg["arabic_scale"]), lay["widest"],
+             lay["max_ar_w"], cfg["english_font"], lay["cap_pt"]))
+    print("      block x=%d (%.3f W), Arabic anchor y=%d (%.3f H) -- on %s"
+          % (lay["cx"], lay["cx"] / float(W), lay["ar_cy"],
+             lay["ar_cy"] / float(H), lay["placed_on"]))
+    if orientation == "vertical" and face_bottom is None:
+        print("      no `face_bottom:` -- the block is centred on the frame "
+              "and may land on the reciter. crop.py --write measures it.")
+    if lay["overrun"] > 0:
+        print("! the caption block ran %dpx past %.2f H and the whole block "
+              "was lifted to clear the signature. His chin is low in this "
+              "window, or a card's English wraps to more lines than the rest "
+              "-- check the render before accepting it."
+              % (lay["overrun"], BLOCK_BOTTOM_FRAC), file=sys.stderr)
+
+    rep = draw_layers(lay, W, H, os.path.join(tmp, "overlays"))
     for r, p in zip(rep, lay["phrases"]):
-        print("      phrase%d: ar_w=%dpx en_lines=%d block %d..%d (centre %.3f H)"
+        print("      phrase%d: ar_w=%dpx en_lines=%d block %d..%d "
+              "(%.3f..%.3f H)"
               % (p["i"], r["ar_w"], r["en_lines"], p["top"], p["bottom"],
-                 (p["top"] + p["bottom"]) / 2.0 / CANVAS_H))
+                 p["top"] / float(H), p["bottom"] / float(H)))
 
-    grade_png = grade_plate(lay, tmp)
-    sig = (signature_card(cfg["signature"], tmp, cfg["signature_offset"])
+    grade_png = grade_plate(lay, orientation, W, H, cfg["vignette"],
+                            cfg["dim"], tmp)
+    sig = (signature_card(cfg["signature"],
+                          ENGLISH_FONTS[cfg["english_font"]]["path"], W, H,
+                          tmp, cfg["signature_offset"])
            if cfg["signature"] else None)
     sched = schedule(phrases, dur)
 
@@ -609,7 +744,7 @@ def render(plan):
              % (AUDIO["fade_in_s"], dur - AUDIO["fade_out_s"],
                 AUDIO["fade_out_s"]))
 
-    fc, in_argv = build_graph(src, dur, crop, grade_png, rep, sched, ln,
+    fc, in_argv = build_graph(src, dur, crop, W, H, grade_png, rep, sched, ln,
                               afade, sig)
 
     out = plan["out"]
@@ -625,7 +760,4 @@ def render(plan):
         for i, (ti, _, to, _) in enumerate(sched)))
     if subprocess.run(cmd).returncode != 0:
         raise SystemExit("ffmpeg render failed")
-    print("      %s | %dx%d | crop %s"
-          % (os.path.relpath(out, ROOT), CANVAS_W, CANVAS_H,
-             ("%dx%d+%d+%d" % (crop["w"], crop["h"], crop["x"], crop["y"]))
-             if crop else "cover-scaled"))
+    print("      %s | %dx%d | %s" % (os.path.relpath(out, ROOT), W, H, note))

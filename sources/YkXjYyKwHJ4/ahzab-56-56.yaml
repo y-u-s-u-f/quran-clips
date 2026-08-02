@@ -1,8 +1,8 @@
 # Surah al-Ahzab 56 -- Badr al-Turki, al-Masjid al-Haram, rak'ah 3 of the
 # Thursday taraweeh (abs ~15:27-15:57 of the source). Ported from
-# legacy/clips/al-ahzab-56-56/clip.yaml, which produced the `hz` style's
+# legacy/clips/al-ahzab-56-56/clip.yaml, which produced the `horizontal` style's
 # reference render, reels/BADR-AL-TURKI-AHZAB-56-56.mp4.
-style: hz
+style: horizontal
 signature: null                 # the reference reel carries no handle or mark
 
 surah: 33

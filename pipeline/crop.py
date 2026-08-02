@@ -1,27 +1,40 @@
-"""pipeline/crop.py -- solve a reel's 16:9 framing at authoring time.
+"""pipeline/crop.py -- solve a reel's framing at authoring time.
 
     tools/render-venv/bin/python pipeline/crop.py sources/<id>/<reel>.yaml
         [--frames 4] [--annotate out.png] [--write] [--force]
         [--dry-run] [--measurements FILE]
 
-Samples frames, asks a vision model where the reciter is, computes the crop
-with arithmetic, prints; `--write` edits `crop:` + `x_offset:` into the
-config. `bars`/`hz` only (`default` uses YuNet at render).
+Samples frames, asks a vision model where the reciter is, computes the window
+with arithmetic, prints; `--write` edits it into the config. Every style:
+
+    bars        16:9 band inside 1080x1920   -> crop: + x_offset:
+    horizontal  1920x1080                    -> crop: + x_offset:
+    vertical    1080x1920                    -> crop: + face_bottom:
 
 Authoring only (invariant 4): model never consulted at render. Model returns
 head/crown/shoulders; never a crop. Bad answer = wrong box on `--annotate`.
 
-Horizontal (`targets()`, legacy equal-gap): caption = fixed-width column
-(centre ~0.302); reciter = HEAD box including headwear, not body. Body is
-containment only (clamped to BODY_FROM_FACE face widths of head centre);
-`outer` is air beyond the HEAD — overhang is printed. Caption yields if
-holding him puts text on his face.
+The CAPTION goes somewhere different in each shape, so the solve does too.
 
-Vertical: face at FACE_Y_FRAC; FACE_Y_BAND is printed scatter, not a refusal;
+Column styles (bars, horizontal) -- `targets()`, the legacy equal-gap rule:
+caption = fixed-width column (centre ~0.302) BESIDE him; reciter = HEAD box
+including headwear, not body. Body is containment only (clamped to
+BODY_FROM_FACE face widths of head centre); `outer` is air beyond the HEAD --
+overhang is printed. Caption yields if holding him puts text on his face. The
+answer is `x_offset`, the column's px offset from canvas centre.
+
+Vertical -- the caption is a centred full-width band BELOW him, so nothing
+competes with him for x and he is simply centred (`fx_target` 0.5). The answer
+is `face_bottom`: where his head box ends as a fraction of the output canvas
+height, which is what render_text.py hangs the block under.
+
+Both: face at FACE_Y_FRAC; FACE_Y_BAND is printed scatter, not a refusal;
 crown/MAX_HEADROOM wins when they conflict. `_reconcile()` ties crown_y /
 face_cy to the head box before vertical().
 
-Refuses: no face, off-frame caption. `--annotate` is the primary check —
+Refuses: no face, off-frame caption. An EMPTY shot (no reciter in a majority
+of frames) is not a refusal -- it is a centred window and no anchor key, which
+is what centres the caption on both axes. `--annotate` is the primary check;
 geometry guards only check the model's numbers against each other.
 """
 import argparse
@@ -81,9 +94,16 @@ def envvar(name, default=None):
 
 # --- the owner's numbers ---------------------------------------------------
 
-CAPTION_W = {"bars": 0.45,     # render_bars.TEXT["max_line_width_frac"]
-             "hz": 0.504}      # 2 x render_hz CAPTION_HALF_W
-CANVAS_W = {"bars": 1080, "hz": 1920}
+ASPECT = {"bars": (16, 9),        # the band inside the 1080x1920 canvas
+          "horizontal": (16, 9),  # the canvas itself
+          "vertical": (9, 16)}
+# Width of the caption COLUMN as a fraction of the window, for the styles that
+# put one beside the reciter. None = the caption is a centred band below him
+# (vertical), so it never competes with him for horizontal space.
+CAPTION_W = {"bars": 0.45,          # render_bars.TEXT["max_line_width_frac"]
+             "horizontal": 0.504,   # 2 x render_text AR_WIDTH_FRAC/EN margin
+             "vertical": None}
+CANVAS_W = {"bars": 1920, "horizontal": 1920, "vertical": 1080}
 MIN_GAP = 0.02
 FACE_Y_FRAC = 0.275            # measured face centre in shipped windows
 FACE_Y_BAND = (0.24, 0.34)     # shipped scatter; printed, never a refusal
@@ -433,6 +453,15 @@ def median(frames):
     are not correlated between frames the way a systematic bias would be."""
     keep = [f for f in frames if usable(f)]
     if not keep:
+        # "He is not in this shot" is an ANSWER, not a failed read -- a mihrab,
+        # a ceiling, the congregation from behind. It is separated from a
+        # low-confidence read because only one of the two has anything to
+        # frame around.
+        absent = sum(1 for f in frames if isinstance(f, dict)
+                     and f.get("reciter_present") is False)
+        if absent * 2 > len(frames):
+            return {"no_reciter": True, "n": 0, "n_frames": len(frames),
+                    "obstructions": []}
         raise SystemExit(
             "no usable frame: the model saw no reciter (or was under %.2f "
             "confident) in all %d. Check the sampled frames, or the trim window."
@@ -515,8 +544,11 @@ def _union(a, b):
 
 def targets(style, side, block):
     """Equal-gap centres (fractions of the output window). `block` = head
-    width / window. Same rule for bars and hz."""
+    width / window. Same rule for bars and horizontal; vertical has no column
+    to place, so he is simply centred and the caption band inherits that."""
     cap_w = CAPTION_W[style]
+    if cap_w is None:
+        return 0.5, 0.5, 0.0, 0.0
     gaps = 1.0 - block - cap_w
     outer = gaps / 3.0
     if outer < MIN_GAP:
@@ -568,12 +600,17 @@ def body_edges(W, m):
 
 def horizontal(W, w, m, side, cap_cx, cap_w):
     """-> (lo, hi, c_lo, c_hi, contained). Caption clearance first, then
-    contain the body (yields when holding him puts text on his face)."""
+    contain the body (yields when holding him puts text on his face).
+
+    `cap_w` None is the vertical style: its caption sits BELOW him, so there is
+    no clearance to keep and the band is the frame, containment aside."""
     bl, br, _ = body_edges(W, m)
     lo, hi = 0.0, float(W - w)
     head_l = (m["head_cx"] - m["head_w"] / 2.0) * W
     head_r = (m["head_cx"] + m["head_w"] / 2.0) * W
-    if side == "left":                # caption LEFT: his head must stay right
+    if cap_w is None:
+        pass
+    elif side == "left":              # caption LEFT: his head must stay right
         hi = min(hi, head_l - (cap_cx + cap_w / 2.0) * w)
     else:                             # caption RIGHT: his head must stay left
         lo = max(lo, head_r - (cap_cx - cap_w / 2.0) * w)
@@ -587,9 +624,10 @@ def horizontal(W, w, m, side, cap_cx, cap_w):
 
 def place(W, H, m, style, side, scale):
     """The window at one zoom level, before obstruction avoidance."""
-    base_w = min(float(W), H * 16.0 / 9.0)
+    ar_w, ar_h = ASPECT[style]
+    base_w = min(float(W), H * ar_w / float(ar_h))
     w = int(round(base_w * scale / 2.0)) * 2
-    h = int(round(w * 9.0 / 16.0 / 2.0)) * 2
+    h = int(round(w * ar_h / float(ar_w) / 2.0)) * 2
     if w > W or h > H or w < 160:
         return None
     head_w = m["head_w"] * W
@@ -637,9 +675,32 @@ def shift(sol, W, H, m, dx, dy):
     return s
 
 
-def cost(s):
-    return (3.0 * abs(s["fx"] - s["fx_target"])
-            + 2.0 * abs(s["fy"] - FACE_Y_FRAC) + 0.5 * (1.0 - s["scale"]))
+# What the search trades off, per style, and how far off his mark the gap rule
+# may be dragged (`gate`).
+#
+# For the column styles fx is a hard COMPOSITION rule -- his head has to sit in
+# its own third of the frame, opposite the caption column -- so it outranks
+# resolution by 6x and the gate is tight.
+#
+# Vertical has no column. Nothing shares the frame with him, the caption is a
+# band underneath, so his x is a preference rather than a rule -- while
+# RESOLUTION is the scarce thing, because a 9:16 window out of a 16:9 source
+# has already thrown away two thirds of the pixels and every further step of
+# zoom is upscale piled on that. sources/hajri-23-taraweeh is the case that
+# fixes these numbers: two burned-in corner logos push the search to zoom out
+# of them, and at the column weights it buys "dead centre" with a 426x758
+# window -- 2.5x upscale to canvas, both shoulders cut -- over the 608x1080 one
+# that clears both logos just as well with him at 0.66. These pick the second.
+COST_W = {"bars":       {"fx": 3.0, "fy": 2.0, "zoom": 0.5, "gate": 0.16},
+          "horizontal": {"fx": 3.0, "fy": 2.0, "zoom": 0.5, "gate": 0.16},
+          "vertical":   {"fx": 1.0, "fy": 2.0, "zoom": 1.5, "gate": 0.25}}
+
+
+def cost(s, style):
+    w = COST_W[style]
+    return (w["fx"] * abs(s["fx"] - s["fx_target"])
+            + w["fy"] * abs(s["fy"] - FACE_Y_FRAC)
+            + w["zoom"] * (1.0 - s["scale"]))
 
 
 def hits(s, boxes, W, H, pad=6):
@@ -654,10 +715,12 @@ def hits(s, boxes, W, H, pad=6):
 
 
 def solve(W, H, m, style, side):
-    """Largest 16:9 window that frames him and clears graphics. Zoom is last
-    resort. Containment is inside horizontal()'s band per zoom -- never a
-    term between zoom levels (tier/cost both break a shipped reel)."""
+    """Largest window of the style's aspect that frames him and clears
+    graphics. Zoom is last resort. Containment is inside horizontal()'s band
+    per zoom -- never a term between zoom levels (tier/cost both break a
+    shipped reel)."""
     boxes = m["obstructions"]
+    gate = COST_W[style]["gate"]
     best, best_forced = None, None
     for i in range(26):
         s = place(W, H, m, style, side, 1.0 - 0.02 * i)
@@ -667,13 +730,13 @@ def solve(W, H, m, style, side):
         for dx in _offsets(int(0.16 * s["w"]), step):
             for dy in _offsets(int(0.05 * s["h"]), step):
                 c = shift(s, W, H, m, dx, dy)
-                c["cost"] = cost(c)
+                c["cost"] = cost(c, style)
                 c["blocked_by"] = hits(c, boxes, W, H)
                 c["rank"] = (0 if c["blocked_by"] is None else 1, c["cost"])
-                # 0.16 gate on the gap rule; containment can pin past it.
+                # gate on the gap rule; containment can pin past it.
                 if best_forced is None or c["rank"] < best_forced["rank"]:
                     best_forced = c
-                if abs(c["fx"] - c["fx_target"]) > 0.16:
+                if abs(c["fx"] - c["fx_target"]) > gate:
                     continue
                 if best is None or c["rank"] < best["rank"]:
                     best = c
@@ -684,8 +747,31 @@ def solve(W, H, m, style, side):
     if best is None:
         best = best_forced
     if best is None:
-        raise SystemExit("no 16:9 window fits inside %dx%d" % (W, H))
+        raise SystemExit("no %d:%d window fits inside %dx%d"
+                         % (ASPECT[style][0], ASPECT[style][1], W, H))
     return best
+
+
+def centred(W, H, style):
+    """The largest centred window of the style's aspect: the answer for a shot
+    with NO reciter in it. Nothing is measured, so no anchor key is written
+    with it, and generate.py's missing-anchor default centres the caption on
+    both axes -- which is where text belongs on an empty frame."""
+    ar_w, ar_h = ASPECT[style]
+    w = int(min(float(W), H * ar_w / float(ar_h)) / 2.0) * 2
+    h = int(min(float(H), w * ar_h / float(ar_w)) / 2.0) * 2
+    return {"x": (W - w) // 2 // 2 * 2, "y": (H - h) // 2 // 2 * 2,
+            "w": w, "h": h}
+
+
+def face_bottom_frac(sol, H, m):
+    """Where his head box ends, as a fraction of the OUTPUT canvas height.
+
+    This is the whole vertical answer: render_text.py hangs the caption block
+    just under it. Taken from the head BOX, not `face_cy`, because the block
+    has to clear his chin and his headwear, not the midpoint of his features
+    -- and the box is the number `_reconcile` has already tied the others to."""
+    return ((m["crown_y"] + m["head_h"]) * H - sol["y"]) / float(sol["h"])
 
 
 def _offsets(limit, step):
@@ -702,7 +788,7 @@ def x_offset_px(sol, style):
     """The caption anchor as generate.py's generic `x_offset`, in canvas px.
 
     Not a new config key: bars already draws its pills at BAND_W/2 + x_offset,
-    so the anchor IS this number. The bars golden uses -216 on a 1080 canvas,
+    so the anchor IS this number. The bars golden uses -384 on its 1920 canvas,
     which is 0.30 W."""
     return int(round((sol["caption_cx"] - 0.5) * CANVAS_W[style]))
 
@@ -755,9 +841,10 @@ def report(m, sol, style, W, H):
     print("head    : x %.3f of window (target %.3f), y %.3f  [block %.3f W, "
           "body %.3f W]" % (sol["fx"], sol["fx_target"], sol["fy"],
                             sol["block"], sol["body_frac"]))
-    print("gaps    : outer %.3f | caption %.3f | inner %.3f | block %.3f | "
-          "outer %.3f" % (sol["outer"], CAPTION_W[style], sol["inner"],
-                          sol["block"], sol["outer"]))
+    if CAPTION_W[style] is not None:
+        print("gaps    : outer %.3f | caption %.3f | inner %.3f | block %.3f | "
+              "outer %.3f" % (sol["outer"], CAPTION_W[style], sol["inner"],
+                              sol["block"], sol["outer"]))
     print("face    : %.3f of window height (rule %.3f, band %.2f-%.2f); "
           "headroom %.3f (model asked %.3f)"
           % (sol["fy"], FACE_Y_FRAC, FACE_Y_BAND[0], FACE_Y_BAND[1],
@@ -780,9 +867,10 @@ def report(m, sol, style, W, H):
               "it and do not re-run for a better answer. HAND-SOLVE the crop: "
               "measure his crown, his body edges, where the congregation and "
               "any burned-in graphics start over several frames, put his head "
-              "centre at %.3f of the window, and write crop:/x_offset: "
+              "centre at %.3f of the window, and write crop:/%s "
               "yourself with the reasoning in a comment."
-              % (m["n"] - m.get("face_seen", 0), m["n"], sol["fx_target"]),
+              % (m["n"] - m.get("face_seen", 0), m["n"], sol["fx_target"],
+                 "face_bottom:" if CAPTION_W[style] is None else "x_offset:"),
               file=sys.stderr)
     if not sol["y_ok"]:
         # FACE_Y_BAND miss: printed only; config still written.
@@ -828,14 +916,29 @@ def report(m, sol, style, W, H):
               "there at the cost of resolution."
               % (sol["fx_target"], sol["fx"]), file=sys.stderr)
 
-    cap = sol["caption_cx"]
-    print("caption : centre %.3f of window -> x_offset %d px on the %d-wide %s "
-          "canvas" % (cap, x_offset_px(sol, style), CANVAS_W[style], style))
-    if not 0.0 < cap < 1.0:
-        bad.append("caption centre %.3f is off the frame" % cap)
-        print("! caption centre %.3f is OFF THE FRAME. This is the -0.105 "
-              "failure in sources/9Yci0oWB2fE/meta.yaml -- the block width is "
-              "wrong, not the formula." % cap, file=sys.stderr)
+    if CAPTION_W[style] is None:
+        fb = face_bottom_frac(sol, H, m)
+        print("caption : band below his head box, which ends at %.3f of the "
+              "window height -> face_bottom %.3f" % (fb, fb))
+        if not 0.0 < fb < 0.75:
+            bad.append("head box ends at %.3f of the window, leaving no room "
+                       "below it for the caption" % fb)
+            print("! his head box ends at %.3f of the window height. The "
+                  "caption block hangs UNDER that and would be off the frame "
+                  "(or over his face). Either the box is wrong -- check "
+                  "--annotate -- or this shot frames him too low to caption "
+                  "beneath, and wants a tighter window or a hand-solve."
+                  % fb, file=sys.stderr)
+    else:
+        cap = sol["caption_cx"]
+        print("caption : centre %.3f of window -> x_offset %d px on the "
+              "%d-wide %s canvas"
+              % (cap, x_offset_px(sol, style), CANVAS_W[style], style))
+        if not 0.0 < cap < 1.0:
+            bad.append("caption centre %.3f is off the frame" % cap)
+            print("! caption centre %.3f is OFF THE FRAME. This is the -0.105 "
+                  "failure in sources/9Yci0oWB2fE/meta.yaml -- the block width "
+                  "is wrong, not the formula." % cap, file=sys.stderr)
     if m["obstructions"]:
         print("graphics: %d burned-in box(es) seen in most frames:"
               % len(m["obstructions"]))
@@ -892,33 +995,46 @@ def annotate(frame_path, sol, m, style, out_path):
     d.rectangle([x, y, x + w, y + h], outline=(0, 255, 0), width=3)
     d.line([x, y + FACE_Y_FRAC * h, x + w, y + FACE_Y_FRAC * h],
            fill=(0, 255, 0), width=1)
-    cw = CAPTION_W[style]                             # blue: caption column
-    c0 = x + (sol["caption_cx"] - cw / 2.0) * w
-    d.rectangle([c0, y + 0.30 * h, c0 + cw * w, y + 0.70 * h],
-                outline=(80, 160, 255), width=2)
-
-    # The three gaps, labelled, along the top of the window -- the whole point
-    # of the rule is that they are equal, and that is checkable by eye only if
-    # they are drawn.
-    if sol["caption_cx"] < 0.5:
-        edges = [(0.0, sol["outer"], "outer %.3f" % sol["outer"]),
-                 (sol["outer"] + cw, sol["outer"] + cw + sol["inner"],
-                  "inner %.3f" % sol["inner"]),
-                 (1.0 - sol["outer"], 1.0, "outer %.3f" % sol["outer"])]
-    else:
-        edges = [(0.0, sol["outer"], "outer %.3f" % sol["outer"]),
-                 (sol["outer"] + sol["block"],
-                  sol["outer"] + sol["block"] + sol["inner"],
-                  "inner %.3f" % sol["inner"]),
-                 (1.0 - sol["outer"], 1.0, "outer %.3f" % sol["outer"])]
-    for a, b, label in edges:
-        d.line([x + a * w, y + 0.08 * h, x + b * w, y + 0.08 * h],
-               fill=(255, 0, 255), width=3)
-        d.text((x + a * w + 3, y + 0.09 * h), label, fill=(255, 0, 255),
+    cw = CAPTION_W[style]
+    if cw is None:
+        # blue: the band the caption may use -- everything under his head box.
+        # The check by eye is simply "is there room in it, and is his chin
+        # above it", which is the whole vertical rule.
+        fb = face_bottom_frac(sol, m["_H"], m)
+        d.rectangle([x + 0.07 * w, y + fb * h, x + 0.93 * w, y + 0.90 * h],
+                    outline=(80, 160, 255), width=2)
+        d.text((x + 0.07 * w + 3, y + fb * h + 3),
+               "caption band, face_bottom %.3f" % fb, fill=(80, 160, 255),
                font=font)
-    d.text((x + 6, y + 6), "crop %d,%d %dx%d   face %.3f H   caption %.3f W"
-           % (sol["x"], sol["y"], sol["w"], sol["h"], sol["fy"],
-              sol["caption_cx"]), fill=(0, 255, 0), font=font)
+        label = "crop %d,%d %dx%d   face %.3f H   face_bottom %.3f" % (
+            sol["x"], sol["y"], sol["w"], sol["h"], sol["fy"], fb)
+    else:
+        c0 = x + (sol["caption_cx"] - cw / 2.0) * w   # blue: caption column
+        d.rectangle([c0, y + 0.30 * h, c0 + cw * w, y + 0.70 * h],
+                    outline=(80, 160, 255), width=2)
+        # The three gaps, labelled, along the top of the window -- the whole
+        # point of the rule is that they are equal, and that is checkable by
+        # eye only if they are drawn.
+        if sol["caption_cx"] < 0.5:
+            edges = [(0.0, sol["outer"], "outer %.3f" % sol["outer"]),
+                     (sol["outer"] + cw, sol["outer"] + cw + sol["inner"],
+                      "inner %.3f" % sol["inner"]),
+                     (1.0 - sol["outer"], 1.0, "outer %.3f" % sol["outer"])]
+        else:
+            edges = [(0.0, sol["outer"], "outer %.3f" % sol["outer"]),
+                     (sol["outer"] + sol["block"],
+                      sol["outer"] + sol["block"] + sol["inner"],
+                      "inner %.3f" % sol["inner"]),
+                     (1.0 - sol["outer"], 1.0, "outer %.3f" % sol["outer"])]
+        for a, b, lbl in edges:
+            d.line([x + a * w, y + 0.08 * h, x + b * w, y + 0.08 * h],
+                   fill=(255, 0, 255), width=3)
+            d.text((x + a * w + 3, y + 0.09 * h), lbl, fill=(255, 0, 255),
+                   font=font)
+        label = "crop %d,%d %dx%d   face %.3f H   caption %.3f W" % (
+            sol["x"], sol["y"], sol["w"], sol["h"], sol["fy"],
+            sol["caption_cx"])
+    d.text((x + 6, y + 6), label, fill=(0, 255, 0), font=font)
     im.save(out_path)
     return out_path
 
@@ -963,30 +1079,49 @@ def cache_write(path, key, entry):
 MARK = "# framing solved by pipeline/crop.py"
 
 
-def block_lines(sol, style, source, when, m):
-    """The provenance comment plus the two keys, as YAML lines.
+def block_lines(sol, style, source, when, m, H):
+    """The provenance comment plus the keys, as YAML lines.
 
     The comment names the model and the date because that is the only record
     of WHERE these numbers came from once they are four integers in a config
     -- and because a re-solve six months from now will be a different model."""
-    return [
-        "%s on %s,\n" % (MARK, when),
-        "# %s, median of %d/%d sampled frames.\n"
-        % (source, m["n"], m["n_frames"]),
-        "# Head box %.3f of the window, %s caption column %.3f -> equal %.3f\n"
-        % (sol["block"], style, CAPTION_W[style], sol["outer"]),
-        "# gaps; face centre at %.3f of the window height. Re-solve with\n"
-        % sol["fy"],
-        "# `pipeline/crop.py <this-file> --force`; edit these two by hand and\n",
-        "# they stay edited (crop.py then refuses without --force).\n",
+    head = ["%s on %s,\n" % (MARK, when)]
+    if m.get("no_reciter"):
+        head += ["# %s: NO RECITER in %d/%d sampled frames, so this is simply\n"
+                 % (source, m["n_frames"], m["n_frames"]),
+                 "# the centred %d:%d window and the caption stays centred on\n"
+                 % ASPECT[style],
+                 "# both axes -- there is nothing in the shot to place it\n"
+                 "# against.\n"]
+        anchor = []
+    else:
+        head += ["# %s, median of %d/%d sampled frames.\n"
+                 % (source, m["n"], m["n_frames"])]
+        if CAPTION_W[style] is None:
+            head += ["# Head centred (%.3f of the window), face centre at "
+                     "%.3f of its\n" % (sol["fx"], sol["fy"]),
+                     "# height; the caption band hangs under his head box.\n"]
+            anchor = ["face_bottom: %.3f\n" % face_bottom_frac(sol, H, m)]
+        else:
+            head += ["# Head box %.3f of the window, %s caption column %.3f -> "
+                     "equal %.3f\n"
+                     % (sol["block"], style, CAPTION_W[style], sol["outer"]),
+                     "# gaps; face centre at %.3f of the window height.\n"
+                     % sol["fy"]]
+            anchor = ["x_offset: %d\n" % x_offset_px(sol, style)]
+    return head + [
+        "# Re-solve with `pipeline/crop.py <this-file> --force`; edit these\n",
+        "# by hand and they stay edited (crop.py then refuses without --force).\n",
         "crop: {x: %d, y: %d, w: %d, h: %d}\n"
         % (sol["x"], sol["y"], sol["w"], sol["h"]),
-        "x_offset: %d\n" % x_offset_px(sol, style),
-    ]
+    ] + anchor
+
+
+KEYS = r"^(crop|x_offset|face_bottom)\s*:"
 
 
 def write_config(path, lines_to_write, force):
-    """Put `crop:` and `x_offset:` into the config as a LINE EDIT.
+    """Put `crop:` and its anchor key into the config as a LINE EDIT.
 
     yaml.safe_dump would round-trip the file and eat every hand-written comment
     in it, and those comments are where each reel's reasoning lives -- the same
@@ -1002,12 +1137,11 @@ def write_config(path, lines_to_write, force):
         end = at
         while end < len(lines) and (
                 lines[end].lstrip().startswith("#")
-                or re.match(r"^(crop|x_offset)\s*:", lines[end])):
+                or re.match(KEYS, lines[end])):
             end += 1
         del lines[at:end]
 
-    stray = [i for i, l in enumerate(lines)
-             if re.match(r"^(crop|x_offset)\s*:", l)]
+    stray = [i for i, l in enumerate(lines) if re.match(KEYS, l)]
     if stray and not force:
         raise SystemExit(
             "%s already has a hand-written %s (line %d). It was put there by a "
@@ -1033,12 +1167,10 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
         dry_run=False, measurements=None):
     cfg = generate.load_config(config_path)
     style = cfg["style"]
-    if style not in CAPTION_W:
-        raise SystemExit(
-            "crop.py solves `bars` and `hz` only; this config is `%s`.\n"
-            "The default style re-crops at RENDER time from its own YuNet pass "
-            "(render_default.py detect_subject/vertical_crop_filter) and must "
-            "not be given a crop here." % style)
+    if style not in ASPECT:
+        raise SystemExit("crop.py solves %s; this config is `%s`."
+                         % (", ".join("`%s`" % s for s in sorted(ASPECT)),
+                            style))
     cfg = generate.resolve_paths(cfg, config_path)
     src = cfg["input"]
     info = generate.get_video_info(src)
@@ -1112,17 +1244,32 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
 
     m = median(entry["parsed"]["frames"])
     m["_W"], m["_H"] = W, H
-    side = caption_side(m)
-    sol = solve(W, H, m, style, side)
-    print("caption : side %s (he faces %s)" % (side, m["facing"]))
-    bad = report(m, sol, style, W, H)
+    anchor = "face_bottom" if CAPTION_W[style] is None else "x_offset"
+    if m.get("no_reciter"):
+        sol, bad = centred(W, H, style), []
+        print("head    : NO RECITER in %d/%d frames. Nothing to frame around, "
+              "so this is the centred\n          %d:%d window and no `%s:` is "
+              "written -- which is what leaves the\n          caption centred "
+              "on both axes."
+              % (m["n_frames"], m["n_frames"], ASPECT[style][0],
+                 ASPECT[style][1], anchor))
+        print("crop    : {x: %d, y: %d, w: %d, h: %d}   (%.2fx zoom of %dx%d)"
+              % (sol["x"], sol["y"], sol["w"], sol["h"], W / float(sol["w"]),
+                 W, H))
+    else:
+        side = caption_side(m)
+        sol = solve(W, H, m, style, side)
+        if CAPTION_W[style] is not None:
+            print("caption : side %s (he faces %s)" % (side, m["facing"]))
+        bad = report(m, sol, style, W, H)
 
-    if annotate_path:
+    if annotate_path and not m.get("no_reciter"):
         print("annotate: %s" % annotate(paths[len(paths) // 2], sol, m, style,
                                         annotate_path))
     if not write:
-        print("(dry run -- pass --write to put crop: and x_offset: in %s)"
-              % os.path.basename(config_path))
+        print("(dry run -- pass --write to put crop:%s in %s)"
+              % ("" if m.get("no_reciter") else " and %s:" % anchor,
+                 os.path.basename(config_path)))
         return sol
     if bad:
         raise SystemExit("NOT written: %s. Fix it or hand-solve; a wrong crop "
@@ -1132,21 +1279,23 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
               if measurements
               else "%s via claude code CLI" % entry.get("model", MODEL))
     when = entry.get("when") or datetime.date.today().isoformat()
-    write_config(config_path, block_lines(sol, style, source, when, m), force)
+    write_config(config_path, block_lines(sol, style, source, when, m, H),
+                 force)
     print("wrote   : %s" % os.path.relpath(config_path, ROOT))
     return sol
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(
-        description="Solve a bars/hz reel's 16:9 crop with a vision model.")
+        description="Solve a reel's crop and caption anchor with a vision "
+                    "model (bars, horizontal, vertical).")
     p.add_argument("config", help="sources/<id>/<reel>.yaml")
     p.add_argument("--frames", type=int, default=4,
                    help="frames to sample and show the model (default 4)")
     p.add_argument("--annotate", metavar="PNG",
                    help="write a labelled debug frame")
     p.add_argument("--write", action="store_true",
-                   help="edit crop: and x_offset: into the config")
+                   help="edit crop: and the style's anchor key into the config")
     p.add_argument("--force", action="store_true",
                    help="re-query the model, and overwrite a hand-written crop")
     p.add_argument("--dry-run", action="store_true",

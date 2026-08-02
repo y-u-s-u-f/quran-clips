@@ -4,7 +4,7 @@ description: >-
   Make a Quran recitation clip/reel from a YouTube URL or local video.
   Trigger on "make a post from <url>", "make a clip from this recitation",
   "turn this into a reel". Drives pipeline/: fetch -> (transcribe) -> config
-  -> align -> crop -> generate. Styles: bars | hz | default.
+  -> align -> crop -> generate. Styles: vertical | horizontal | bars.
 ---
 
 # make-post — Quran reel pipeline
@@ -22,7 +22,7 @@ python3 pipeline/transcribe.py sources/<id>
 python3 pipeline/quran.py --search "<arabic>" ; python3 pipeline/quran.py s:a-b
 # write sources/<id>/<reel>.yaml
 tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml
-tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write  # bars/hz
+tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml
 ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate
 python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
@@ -39,9 +39,12 @@ Know the verses → skip transcribe. Name `surah`/`ayah_start`/`ayah_end`.
 - **quran.py** — only Arabic/translations. `--search` / `s:a-b` / `--words`.
 - **align** — CTC of known mushaf → `<reel>.align.json`. Omit `trim:` only
   when source ≈ reel (long sources misfire quietly — see Trim).
-- **crop** (bars/hz) — equal-gap solve → `crop:`/`x_offset:`. Estimate;
-  refuses only on no face / off-frame caption. **Always `--annotate` and
-  look** (see below). Local `claude -p`; cached.
+- **crop** (every style) — → `crop:` plus `x_offset:` (bars, horizontal) or
+  `face_bottom:` (vertical). Column styles use the equal-gap rule; vertical
+  centres him and reports where his head box ENDS. Estimate; refuses on no
+  face / off-frame caption / no room under his chin, and treats an empty shot
+  as a centred window with no anchor key. **Always `--annotate` and look**
+  (see below). Local `claude -p`; cached in `crop.json`.
 - **generate** — validates, renders. Read timing line, verification block,
   bars bar-widths.
 
@@ -57,8 +60,8 @@ means a mis-split — fix `groups`/`english:`, re-run. Do not accept unverified.
 `generate.py --print-schema` is authoritative.
 
 ```yaml
-style: bars                       # or default | hz
-signature: null                   # REQUIRED; null = no watermark
+style: vertical                   # or horizontal | bars
+signature: null                   # omit/null = none; bars NEVER burns one
 surah: 78
 ayah_start: 31
 ayah_end: 34
@@ -66,7 +69,7 @@ reciter: "..."                    # Arabic, COPIED from title/earlier hashtag
 trim: [16.4, 48.0]                # see Trim
 groups:
   - n_words: 3                    # MUST sum to span word count
-    english: "..."                # default + hz
+    english: "..."                # vertical + horizontal
     line_split: 2                 # bars; omit = auto
 ```
 
@@ -114,11 +117,12 @@ exists. A draped/hooded/turned head can box a shoulder and look clean
 different failure. Hand-solve: measure crown/body/congregation/graphics over
 several frames; head centre at **0.771 of the window**; keep crown in frame.
 `x_offset`: match outer margins, or centre in free space if he runs off the
-edge — `(f-0.5)*1080` bars, `(f-0.5)*1920` hz.
+edge — `(f-0.5)*1920` for bars and horizontal. For vertical, hand-set
+`face_bottom` to where his head box ends as a fraction of the canvas height.
 
 ## Caption line balance (bars)
 
-Budget: 120pt, 486px ink cap → **2–3 words/line**. If reported pt < nominal,
+Budget: 213pt, 864px ink cap → **2–3 words/line**. If reported pt < nominal,
 one line is dragging the reel down.
 
 1. Lines within ~30px width; >60px visible. Auto-balance first.
@@ -131,13 +135,21 @@ one line is dragging the reel down.
 
 ## Styles
 
-- **bars** — 1080×1920 pills + FX. `fx: {heat: false}` for timing (~27%
-  cheaper); never judge LOOK without full stack. Optional `bar_color:`.
-- **hz** — 1920×1080; authored `crop`; type opposite reciter (`x_offset`).
-- **default** — Arabic+English; canvas short side [720, 1080].
+All 30fps, fixed size; a weak source is upscaled, never delivered small.
+
+- **vertical** — 1080×1920; block centred horizontally, hung under his chin
+  (`face_bottom`). A landscape source NEEDS a `crop:` — generate refuses
+  without one rather than centre-cropping him blind.
+- **horizontal** — 1920×1080; block centred vertically, column opposite him
+  (`x_offset`). Same renderer and look as vertical.
+- **bars** — 1920×1080 pills + FX, no letterbox, no signature ever.
+  `fx: {heat: false}` for timing (~27% cheaper); never judge LOOK without the
+  full stack. Optional `bar_color:`.
 - `english:` from Saheeh, cut at clauses, verify vs both editions.
-- Centered by default; `x_offset`/`y_offset` only. Signature always
-  centered (`signature_offset` vertical only).
+- Look knobs (vertical + horizontal only): `arabic_font`, `english_font`,
+  `arabic_scale`, `english_scale`, `english_caps`, `vignette`, `dim`.
+- `x_offset`/`y_offset` nudge the solved anchor. Signature always centred
+  horizontally (`signature_offset` is vertical only).
 
 ## Egress (cloud)
 
@@ -148,7 +160,7 @@ full download + `trim` over `--timestamps` through an authenticated proxy.
 ## Hard rules
 
 - No model-typed Arabic — from `quran.py` only.
-- `signature` required (`null` ok).
+- `signature` optional (omit = none); bars ignores it.
 - Never pip-install into the render venv — `./install.sh` only.
 - Trust fetch's stub gate; don't bypass.
 - Decode-check before calling a render done.

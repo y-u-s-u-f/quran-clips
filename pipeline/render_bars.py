@@ -1,10 +1,13 @@
 """pipeline/render_bars.py -- the `bars` style renderer.
 
-Vertical 1080x1920: graded footage in a centred 16:9 band, white Thuluth on
-colour pills, wipe then sequential crossfades, band-confined FX (fx.py).
+Landscape 1920x1080: graded footage, white Thuluth on colour pills, wipe then
+sequential crossfades, full-frame FX (fx.py). The 16:9 picture IS the canvas --
+this style does not letterbox, because black padding is not content.
 
-Constants from reference reels (legacy/templates/bars.yaml); size 120pt /
-54px pill / 0.45 W ink (DDAVDmsMQr3). Golden: tests/graph_parity.py.
+Constants from reference reels (legacy/templates/bars.yaml); size 213pt /
+96px pill / 0.45 W ink. The refs were measured on 720- and 1080-wide pictures
+and every constant here carries to this canvas's 1920 by the matching factor;
+each one names its own. Golden: tests/graph_parity.py.
 Cost: OPTIMIZATIONS.md. `fx: {heat: false}` for timing previews.
 
 Called by generate.py; not a standalone CLI.
@@ -35,46 +38,53 @@ if not features.check("raqm"):
 # Style constants -- legacy/templates/bars.yaml, derived from pixel
 # measurements of the two reference reels (720x1280 refs x1.5 -> 1080).
 # ---------------------------------------------------------------------------
-CANVAS_W, CANVAS_H = 1080, 1920
+CANVAS_W, CANVAS_H = 1920, 1080
 FPS = 30
 
-# 16:9 footage band, centred vertically, pure #000000 above and below.
-BAND_W, BAND_H, BAND_Y = 1080, 608, 656
+# The picture is the whole canvas. BAND_* exist because fx.py's Ctx is a
+# ported contract that names them, and every effect sizes itself off BW/BH, so
+# they must equal the canvas for the FX to cover the frame.
+BAND_W, BAND_H, BAND_Y = CANVAS_W, CANVAS_H, 0
 
 # Step 0 of the look: bring the band to mean luma 0.15-0.32 before any glow.
 GRADE_EQ = "brightness=-0.30:contrast=1.30:saturation=0.75:gamma=0.72"
 GRADE_CB = "rm=0.08:gm=0.02:bm=-0.10"
 GRADE_VIGNETTE = "a=PI/8"       # refs are NOT radially vignetted; the
                                 # directional darkening is the scrim below
-# The edge scrim: a LEFT ramp plus a soft top/bottom feather where the
-# picture meets the letterbox -- and nothing on the right. Not a radial
-# shape, so it is a generated multiply plate.
-SCRIM = {"left_min": 0.20, "left_to_px": 180,
-         "edge_min": 0.15, "edge_to_px": 190}
+# The edge scrim: a LEFT ramp plus a soft top/bottom feather at the picture's
+# edges -- and nothing on the right. Not a radial shape, so it is a generated
+# multiply plate. The two distances are the refs' 180px across and 190px down
+# on a 1080x608 picture, at this canvas's width and height.
+SCRIM = {"left_min": 0.20, "left_to_px": 320,
+         "edge_min": 0.15, "edge_to_px": 338}
 
 TEXT = {
     "font": os.path.join(FONT_DIR, "AM_Thulth_Regular_0.1.ttf"),
     "color": (255, 255, 255),
-    # ~122pt solves DDAVDmsMQr3's ink; 120 is the round number inside.
-    "nominal_pt": 120,
-    "min_pt": 75,
-    # Frame fraction (refs' pills 0.36-0.45 W); size comes from word count.
+    # DDAVDmsMQr3's ink solves to ~122pt on a 1080-wide picture; 120 is the
+    # round number inside that, and these are the pair at 1920 wide.
+    "nominal_pt": 213,
+    "min_pt": 133,
+    # Frame fraction (refs' pills 0.36-0.45 W); the size comes from the word
+    # count, so this caps ink at 864px rather than setting it.
     "max_line_width_frac": 0.45,
-    # Measured rows; ~27px between lines on the tightest 120pt card.
-    "line1_center_y_frac": 0.4637,
-    "line2_center_y_frac": 0.5670,
-    "single_center_y_frac": 0.5111,
+    # Measured rows, as fractions of the picture's height.
+    "line1_center_y_frac": 0.38537,
+    "line2_center_y_frac": 0.71158,
+    "single_center_y_frac": 0.53505,
 }
 # ONE drop shadow on the glyphs -- a solid offset copy of the silhouette,
 # pure black, fully opaque, ZERO blur, pushed straight DOWN. It rides OVER
 # the pill, darkening the bar where a glyph overhangs it (as measured).
 TEXT_SHADOW = {"color": (0, 0, 0), "opacity": 1.0,
-               "dx_frac": 0.0, "dy_frac": 0.003, "blur_px": 0}
+               # 11px down at this height; the refs measure 6px at 608.
+               "dx_frac": 0.0, "dy_frac": 0.0102, "blur_px": 0}
 
-# Pill through the glyph bodies: 54px @1080 (= 36.1px @720 on DDAVDmsMQr3).
-BAR = {"height_px": 54, "pad_x_px": 34,
+# Pill through the glyph bodies: 96px, the 36.1px DDAVDmsMQr3 measures at 720
+# carried to this canvas.
+BAR = {"height_px": 96, "pad_x_px": 60,
        # Tashkeel overshoot ~0.23em; ink bbox cannot place the bar.
-       "baseline_below_center_px": 8,
+       "baseline_below_center_px": 14,
        # Drawn darker so FX screen-lift lands on the finished-frame colour.
        "fx_screen_lift": 0.179, "fx_sat_retain": 0.88}
 # Auto-derivation of the pill colour from the clip's own GRADED band.
@@ -118,12 +128,9 @@ AUDIO = {"lufs": -14.0, "tp": -1.0, "lra": 11.0,
          "fade_in_s": 0.3, "fade_out_s": 0.5}
 ENCODE = {"crf": 18, "preset": "slow", "audio_bitrate": "192k"}
 
-# Signature: same house geometry as the default style, landing in the bottom
-# letterbox (0.945 H = 1814px, well below the band's end at 1264).
-SIGNATURE_FONT = os.path.join(FONT_DIR, "Albertus MT Lt Regular.ttf")
-SIGNATURE_SIZE_FRAC = 0.026
-SIGNATURE_Y_FRAC = 0.945
-SIGNATURE_ALPHA = 0.87
+# NO SIGNATURE. This style never burns one, whatever the config says: the only
+# place for a handle here is over the picture, and that is not this look.
+# render() says so rather than dropping the key silently.
 
 # House normalisation of the caption text (see legacy/qc/arabic.py):
 # U+06DF renders ZERO WIDTH in AM_Thulth (silent width corruption) and
@@ -193,7 +200,7 @@ def fit_pt(nominal_pt, min_pt, max_width, widest):
 # ---------------------------------------------------------------------------
 
 def band_source_chain(crop, grade_on=True):
-    """[0:v] -> the graded 1080x608 footage band (no pad, no captions).
+    """[0:v] -> the graded 1920x1080 picture (no captions).
     The grade also feeds the bar-colour derivation, so turning it off moves
     the pill hue as well as the picture."""
     if crop:
@@ -386,14 +393,14 @@ def with_shadow(ink, cfg, W, H):
 def trim_to_ink(card):
     """A full-canvas card cropped to its non-transparent pixels -> (img, x, y).
 
-    The same idea as render_default.trim_to_ink, and ported from it including
-    the outward even-coordinate snap: `overlay` blends in yuv420 by default,
+    The same idea and the same outward even-coordinate snap as
+    render_text.trim_to_ink: `overlay` blends in yuv420 by default,
     so on an odd edge the overlay's 2x2 chroma/alpha blocks would straddle a
     different grid than the full-canvas card's and the result would shift.
 
     Worth it here because bars pays for a caption card THREE times -- the
     composite, the barglow accumulator and the textglow accumulator -- and
-    the ink is ~680x270 against a 1080x1920 canvas, 11x smaller. Measured by
+    the ink is ~1210x480 against a 1920x1080 canvas, 3.6x smaller. Measured by
     differencing a 1-card against a 4-card render: 7.7s CPU and ~280 MB RSS
     per card, linear in card count, spent compositing (0,0,0,0)."""
     box = card.getbbox()
@@ -657,12 +664,11 @@ def loudnorm_filter(st):
 # ---------------------------------------------------------------------------
 
 def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
-                ln, afade, sig=None, heat_paths=None):
+                ln, afade, heat_paths=None):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1..2n]=bar,text
     per phrase, then snow, then scrim (last of the legacy set, so dropping it
-    cannot shift any other index), then the signature, then the two heat
-    maps. The heat pair goes LAST so optional maps never renumber earlier
-    inputs."""
+    cannot shift any other index), then the two heat maps. The heat pair goes
+    LAST so optional maps never renumber earlier inputs."""
     W, H = CANVAS_W, CANVAS_H
     tr = TRANSITIONS
     nphrases = len(rep)
@@ -678,7 +684,6 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     snow_in = g_.input(snow_path, stream_loop=-1) if snow_path else None
     scrim_in = (g_.input(scrim_path, framerate=FPS, loop=1)
                 if on["scrim"] else None)
-    sig_in = (g_.input(sig[0], framerate=FPS, loop=1) if sig else None)
     # stream_loop so a reel longer than its cached bucket still runs out to
     # the end; the bucket is sized so this normally never wraps.
     heat_in = [g_.input(p, stream_loop=-1) for p in (heat_paths or [])]
@@ -705,11 +710,9 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     if on["scrim"]:
         g_.chain(scrim_in, "format=gbrp", "scr")
         g_.chain(["bnd", "scr"],
-                 ["blend=all_mode=multiply:shortest=1", "format=rgba",
-                  "pad=%d:%d:0:%d:color=black" % (W, H, BAND_Y)], "bg")
+                 ["blend=all_mode=multiply:shortest=1", "format=rgba"], "bg")
     else:
-        g_.chain("bnd", ["format=rgba",
-                         "pad=%d:%d:0:%d:color=black" % (W, H, BAND_Y)], "bg")
+        g_.chain("bnd", "format=rgba", "bg")
     # The caption layers are accumulated a second time onto black plates, to
     # key the barglow / textglow passes off; `d=` keeps those branches finite.
     for eff in FX.plates(chain):
@@ -781,29 +784,18 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
                      f":enable='{gates[i]}'", nxt)
             base = nxt
 
-    # FX: applied to the captioned flat but cropped to the band and pasted
-    # back, so nothing can bleed into the letterbox. Every branch off the
-    # band is a tap, so the split's degree is whatever the enabled consumers
-    # add up to.
-    full, pre = g_.chain(base, "split=2", ["full", "pre"])
-    g_.chain(pre, ["format=gbrp", "crop=%d:%d:0:%d" % (BAND_W, BAND_H, BAND_Y)],
-             "band")
+    # FX: applied to the captioned frame directly -- the picture is the whole
+    # canvas, so there is nothing to mask the effects off. Every branch off it
+    # is a tap, so the split degree is whatever the enabled consumers add up
+    # to.
+    g_.chain(base, "format=gbrp", "band")
     band_lbl = g_.tap("band", "fxbase")
     for eff in chain:
         band_lbl = eff.apply(g_, band_lbl, ctx)
     fades = [f"fade=t=in:st=0:d={VIDEO_FADE_IN_S}",
              f"fade=t=out:st={dur - VIDEO_FADE_OUT_S:.3f}:"
              f"d={VIDEO_FADE_OUT_S}", "format=yuv420p"]
-    if sig_in is None:
-        # one chain, exactly as the legacy build emits it
-        g_.chain([full, band_lbl],
-                 [f"overlay=0:{BAND_Y}:shortest=1"] + fades, "vout")
-    else:
-        g_.chain([full, band_lbl], f"overlay=0:{BAND_Y}:shortest=1", "flat")
-        g_.chain(sig_in, "format=rgba", "sg")
-        g_.chain(["flat", "sg"],
-                 f"overlay={sig[1]}:{sig[2]}:format=auto:shortest=1", "flats")
-        g_.chain("flats", fades, "vout")
+    g_.chain(band_lbl, fades, "vout")
     g_.chain(vin.a, [f for f in (ln, afade) if f], "aout")
     return g_.render()
 
@@ -848,8 +840,9 @@ def render(plan):
     snow_path = snow_layer(tmp, target_rgb) if on["snow"] else None
     heat_paths = heat_layers(tmp, dur) if on["heat"] else None
     scrim = scrim_plate(tmp) if on["scrim"] else None
-    sig = (signature_card(cfg["signature"], tmp, cfg["signature_offset"])
-           if cfg["signature"] else None)
+    if cfg["signature"]:
+        print("      signature %r IGNORED -- the bars style never burns one "
+              "(see the note at the top of this file)." % cfg["signature"])
 
     sched, cuts = schedule(phrases, dur)
     if cuts:
@@ -863,7 +856,7 @@ def render(plan):
                 AUDIO["fade_out_s"]))
 
     fc, in_argv = build_graph(src, dur, crop, rep, sched, tint, on,
-                              snow_path, scrim, ln, afade, sig, heat_paths)
+                              snow_path, scrim, ln, afade, heat_paths)
 
     out = plan["out"]
     cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv
@@ -880,30 +873,6 @@ def render(plan):
         for i, (k, ti, di, to, do) in enumerate(sched)))
     if subprocess.run(cmd).returncode != 0:
         raise SystemExit("ffmpeg render failed")
-    print("      %s | band %dx%d@y%d | bar #%02X%02X%02X (drawn #%02X%02X%02X)"
-          % ((os.path.relpath(out, ROOT), BAND_W, BAND_H, BAND_Y)
+    print("      %s | %dx%d | bar #%02X%02X%02X (drawn #%02X%02X%02X)"
+          % ((os.path.relpath(out, ROOT), CANVAS_W, CANVAS_H)
              + target_rgb + drawn_rgb))
-
-
-def signature_card(text, tmp, offset=0):
-    """`offset` moves the line vertically only (+ lower / - higher); the
-    signature is ALWAYS horizontally centered -- no x knob on purpose.
-
-    -> (path, x, y), cropped to its own ink like the caption layers. It is the
-    one overlay that is up for the WHOLE reel, so a full-canvas plate for
-    ~200x27px of type costs the most of any of them: measured 13.1s -> 10.1s
-    CPU and 371 -> 220 MB peak RSS on a 23s reel."""
-    sig_size = max(12, int(CANVAS_H * SIGNATURE_SIZE_FRAC))
-    font = ImageFont.truetype(SIGNATURE_FONT, sig_size)
-    bbox = _PROBE.textbbox((0, 0), text, font=font)
-    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    card = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
-    ImageDraw.Draw(card).text(
-        (CANVAS_W // 2 - w // 2 - bbox[0],
-         int(CANVAS_H * SIGNATURE_Y_FRAC) - h // 2 - bbox[1] + int(offset)),
-        text, font=font,
-        fill=(255, 255, 255, int(255 * SIGNATURE_ALPHA)))
-    card, x0, y0 = trim_to_ink(card)
-    path = os.path.join(tmp, "signature.png")
-    card.save(path)
-    return path, x0, y0

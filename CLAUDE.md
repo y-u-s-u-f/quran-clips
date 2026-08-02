@@ -28,10 +28,18 @@ carry their own `.env` reader so every script stays independently runnable.
   verse discovery and ibtidāʾ repeats (`find_repeats` needs Whisper to have
   split the two utterances). Auto-trim is only sound when the source is
   roughly the reel.
-- **`crop.py`** — authoring-time `crop:` + `x_offset:` for `bars`/`hz`
-  (`default` uses YuNet at render). Shells out to `claude -p` (local auth);
-  arithmetic decides the window (`targets()` equal-gap rule). Defensive
-  parse, no silent defaults. Refuses only on no face / off-frame caption;
+- **`crop.py`** — authoring-time framing for EVERY style: `crop:` plus
+  `x_offset:` (bars, horizontal) or `face_bottom:` (vertical). Shells out to
+  `claude -p` (local auth); arithmetic decides the window. Column styles use
+  `targets()`'s equal-gap rule; `vertical` has no column beside him, so he is
+  centred (`fx_target` 0.5) and the answer is where his head box ENDS, which
+  is what the caption hangs under. `COST_W` weights the trade per style —
+  vertical weights resolution over centring, because a 9:16 window out of a
+  16:9 source has already thrown away two thirds of the pixels (measured on
+  hajri-23-taraweeh: the column weights bought dead-centre with a 2.5x
+  upscale). Defensive parse, no silent defaults. Refuses on no face /
+  off-frame caption / no room under the chin; an EMPTY shot (no reciter in
+  most frames) is a centred window and no anchor key, not a refusal.
   `FACE_Y_BAND` is a printed note. `--annotate` is the primary check
   (invariant 4: model never consulted at render time).
 - **`generate.py`** — YAML -> render. `load_config` / `align_words` /
@@ -42,14 +50,20 @@ carry their own `.env` reader so every script stays independently runnable.
   (`--surah/--ayat/--reciter` if missing). Caption from `tafsir()` + ayat +
   hashtags. Cover at `COVER_MS` 1550. Credentials in `.env`; no pixels
   touched.
-- **`render_default.py`** — Arabic + English over dimmed footage (Pillow;
-  no libass). Canvas short side in [720, 1080].
-- **`render_bars.py`** — vertical pills. `layout` / `draw_layers` /
-  `schedule` / `build_graph`. Constants measured from refs (120pt / 54px
-  pill / 0.45 W ink cap). Provenance in `legacy/templates/bars.yaml`.
-- **`render_hz.py`** — 1920x1080; config `crop` only at render.
-  `layout()` centres the median phrase block. Grade gradients at 48x27
-  (that resolution IS the softness).
+- **`render_text.py`** — the `vertical` (1080x1920) and `horizontal`
+  (1920x1080) styles: ONE look on two canvases, Pillow only (no libass).
+  `layout()` SOLVES the anchor — landscape centres the median phrase's block,
+  portrait puts its TOP under `face_bottom` — then lifts the whole block if
+  the deepest card would reach the signature's band. Grade gradients at 48x27
+  (that resolution IS the softness). `english_caps`, `vignette`, `dim`,
+  fonts and scales are the only look knobs; the rest are constants here.
+  A constant that cannot hold on both canvases is keyed by style.
+- **`render_bars.py`** — 1920x1080 pills; the 16:9 picture IS the canvas, no
+  letterbox. `layout` / `draw_layers` / `schedule` / `build_graph`.
+  Constants measured from refs and carried to a 1920-wide picture (213pt /
+  96px pill / 0.45 W ink cap); provenance in `legacy/templates/bars.yaml`.
+  NEVER burns a signature — the only place for one is over the picture, which
+  is not this look.
 - **`fx.py`** — bars effects. Ported from `legacy/qc/`; do not re-derive.
 - **`docs/asr-and-alignment.md`** — measured ASR comparison; read before a
   model swap. Whisper kept only because it is autoregressive (ibtidāʾ).
@@ -78,7 +92,7 @@ carry their own `.env` reader so every script stays independently runnable.
 4. **Nothing outside committed files may affect a rendered pixel.** Style
    constants in renderers; `.env` is machine config only.
 5. **Loud validation at config time**: unknown key = error; group sums
-   partition the span; `signature` required. Extend `DEFAULTS` +
+   partition the span; `face_bottom` only on `vertical`. Extend `DEFAULTS` +
    `config_schema()` together.
 
 ## How to write changes

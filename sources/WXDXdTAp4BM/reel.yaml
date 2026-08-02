@@ -1,0 +1,16 @@
+style: horizontal
+signature: "ghaylan.tilawah"
+surah: 3
+ayah_start: 102
+ayah_end: 102
+
+trim: [0.64, 21.16]
+reciter: "عبدالله غيلان"
+y_offset: 50
+groups:
+  - n_words: 3
+    english: "O you who have believed"
+  - n_words: 4
+    english: "fear Allah as He should be feared"
+  - n_words: 5
+    english: "and do not die except as Muslims"

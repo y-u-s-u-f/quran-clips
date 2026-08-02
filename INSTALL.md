@@ -90,13 +90,14 @@ Escalation is fixed — static residential, then datacentre, then fail — and
 one exit is used per fetch, because a signed googlevideo URL embeds the exit
 IP that resolved it and a rotating proxy cannot download at all.
 
-## 4. Optional: OpenCV for the face-centred crop
+## 4. Optional: the Claude Code CLI for framing
 
-The `default` style can re-crop a horizontal source to 9:16 centred on the
-reciter's face. That needs `opencv-python-headless` importable by the render
-interpreter and the YuNet model (`install.sh` fetches the model; the
-renderer also fetches it on first use). Without OpenCV the crop falls back
-to geometric centering and everything else works.
+`pipeline/crop.py` solves each reel's crop and caption anchor by asking a
+vision model where the reciter is. It shells out to the local `claude` binary
+over your own auth -- no API key -- and caches every answer in the source's
+`crop.json`. Without it you hand-write `crop:` and `x_offset:`/`face_bottom:`;
+nothing else needs it, and rendering never calls it (invariant 4), so a reel
+re-renders identically on a machine that has no `claude` at all.
 
 ## 5. Verify
 

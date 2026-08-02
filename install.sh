@@ -12,7 +12,6 @@
 #   3. builds tools/asr-venv    -- mlx-whisper on Apple silicon,
 #      faster-whisper everywhere else (override with QC_ASR_BACKEND in .env)
 #   3b. builds tools/align-venv -- ctc-forced-aligner (torch) for align.py
-#   4. fetches the YuNet face model (used by the default style's 9:16 crop)
 #   5. copies .env.example -> .env when absent
 #   6. prints a doctor-style summary of what resolved and what is missing
 #
@@ -148,19 +147,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. face model (default style's subject-centred 9:16 crop; optional)
+# 4. framing model (pipeline/crop.py; optional, authoring only)
 # ---------------------------------------------------------------------------
-MODEL="$ROOT/tools/models/face_detection_yunet_2023mar.onnx"
-MODEL_URL="https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
-if [ ! -f "$MODEL" ] && [ "$CHECK_ONLY" = 0 ] && have curl; then
-    say "== face model"
-    mkdir -p "$ROOT/tools/models"
-    curl -sL -o "$MODEL" "$MODEL_URL" || rm -f "$MODEL"
-fi
-if [ -f "$MODEL" ]; then
-    ok+=("face model   tools/models/$(basename "$MODEL")")
+# No download: crop.py rides the user's own `claude` CLI auth. Nothing at
+# RENDER time consults a model, so this being absent cannot change a pixel.
+if have "${QC_CLAUDE:-claude}"; then
+    ok+=("framing      $(command -v "${QC_CLAUDE:-claude}") (crop.py)")
 else
-    ok+=("face model   absent (optional; render_default fetches it on first use)")
+    ok+=("framing      claude CLI absent (optional; hand-write crop:/x_offset:)")
 fi
 
 # ---------------------------------------------------------------------------

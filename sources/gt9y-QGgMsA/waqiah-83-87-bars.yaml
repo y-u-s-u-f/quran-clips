@@ -50,7 +50,7 @@ crop: {x: 0, y: 0, w: 1328, h: 747}
 # column is 0..0.583 and its centre is 0.291 -> (0.291-0.5)*1080 = -226. The
 # usual "match his outer margin" rule cannot be used here: his body runs off
 # the right edge of the window, so that margin is zero.
-x_offset: -226
+x_offset: -402
 
 # Regrouped for the 2026-08-01 resize (96 -> 120pt). The 486px ink cap did
 # not move with the type, so every line had to lose words: what used to fit

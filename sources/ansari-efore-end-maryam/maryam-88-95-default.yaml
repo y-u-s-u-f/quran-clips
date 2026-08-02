@@ -1,6 +1,6 @@
-# Maryam 19:88-95, Hamzah Ansari -- default style reel.
+# Maryam 19:88-95, Hamzah Ansari -- horizontal style reel.
 # No trim: pipeline/align.py derives it from the forced alignment.
-style: default
+style: horizontal
 signature: "TilawatQuraniyyah"
 
 surah: 19

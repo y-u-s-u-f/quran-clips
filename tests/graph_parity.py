@@ -20,10 +20,10 @@ paths, which differ per machine.
     runs any of its code.
 
 The recipe (from OPTIMIZATIONS.md, recovered from the golden):
-x_offset -216, dur 23.720, crop 48,30,1280x720, tint (191,140,54) recovered
-from the golden's glow scalars via rr/0.35*255, every switch on, no
-signature, and the golden's own loudnorm chain so the audio leg is fixed
-rather than measured.
+x_offset -384 (0.30 W of the 1920 canvas), dur 23.720, crop 48,30,1280x720,
+tint (191,140,54) recovered from the golden's glow scalars via rr/0.35*255,
+every switch on, and the golden's own loudnorm chain so the audio leg is fixed
+rather than measured. The style burns no signature, so there is none to set.
 """
 import argparse
 import difflib
@@ -58,7 +58,7 @@ CLIP = os.path.join(ROOT, "legacy", "clips", "at-tawbah-128-128", "clip.yaml")
 FIXTURE = os.path.join(HERE, "golden", "bars-filtergraph.txt")
 
 DUR = 23.720
-X_OFFSET = -216
+X_OFFSET = -384
 CROP = {"x": 48, "y": 30, "w": 1280, "h": 720}
 TINT_RGB = (191, 140, 54)
 
@@ -104,7 +104,7 @@ def build():
     sched, _cuts = RB.schedule(phrases, DUR)
     fc, _argv = RB.build_graph(
         "SOURCE", DUR, CROP, rep, sched, [c / 255.0 for c in TINT_RGB], on,
-        "SNOW", "SCRIM", LOUDNORM, AFADE, None, ["HEATX", "HEATY"])
+        "SNOW", "SCRIM", LOUDNORM, AFADE, ["HEATX", "HEATY"])
     return fc
 
 

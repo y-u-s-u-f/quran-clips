@@ -1,8 +1,8 @@
 # al-Waqi'ah 56:83-87 -- Abdullah al-Qarafi, tahajjud of laylat 27 Ramadan
-# 1446, al-Masjid al-Haram. The `hz` cut of the same span as
+# 1446, al-Masjid al-Haram. The `horizontal` cut of the same span as
 # waqiah-83-87-bars.yaml; the timing and the framing solve are shared with it,
 # only the style and the English differ.
-style: hz
+style: horizontal
 signature: null                 # no watermark
 
 surah: 56

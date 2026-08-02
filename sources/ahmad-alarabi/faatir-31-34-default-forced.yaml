@@ -1,8 +1,8 @@
-# Faatir 35:31-34, Ahmad al-Arabi -- default style reel, timed by
+# Faatir 35:31-34, Ahmad al-Arabi -- horizontal style reel, timed by
 # pipeline/align.py (CTC forced alignment against the known mushaf text)
 # instead of Whisper + Needleman-Wunsch. Spike/comparison reel against
 # faatir-31-34-default.yaml.
-style: default
+style: horizontal
 signature: "TilawatQuraniyyah"
 
 surah: 35

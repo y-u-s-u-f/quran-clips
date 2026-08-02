@@ -1,7 +1,7 @@
-# Faatir 35:31-34, Ahmad al-Arabi -- default style reel. Times come from
+# Faatir 35:31-34, Ahmad al-Arabi -- horizontal style reel. Times come from
 # pipeline/align.py, whose automatic ibtida'-restart handling covers the
 # twice-recited card 8. No `nudge`: the fix is derived, not hand-measured.
-style: default
+style: horizontal
 signature: "TilawatQuraniyyah"
 
 surah: 35
