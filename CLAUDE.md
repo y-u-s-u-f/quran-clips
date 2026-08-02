@@ -110,7 +110,7 @@ script stays independently runnable; do not "deduplicate" that.
   (nudge applied LAST so nothing can undo a hand fix),
   `print_verification` (dual-translation block). Dispatches on `style:` to
   a renderer's `render(plan)`; the `plan` dict
-  (`cfg/src/info/wav/arabic/english/verses/tmp/out`) is the whole
+  (`cfg/src/info/arabic/english/verses/tmp/out`) is the whole
   interface between generate and the renderers.
 - **`pipeline/publish.py`** — finished reel -> an Instagram Reel and a
   Facebook Page Reel, same caption on both. Reads the verse span and the

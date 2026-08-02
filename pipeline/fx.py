@@ -195,11 +195,17 @@ class Effect(object):
 # costs 1/n^2 of the pixels for a difference below the 8-bit quantiser. The
 # same trade is already made in render_hz, whose two grade gradients are built
 # at 48x27 and bilinearly upscaled -- "that low resolution IS the softness of
-# the look". The thresholds are where the blur's own radius stops being large
-# against the grid it is sampled on: at 1/n the kernel still spans sigma/n
-# samples, and the cut-offs below keep that at 10+ either way (sigma 20 -> 10
-# at half, sigma 40 -> 10 at quarter).
-HALF_RES_SIGMA = 20.0
+# the look".
+#
+# The quarter threshold is where the blur's radius stops being large against
+# the grid it is sampled on: at 1/n the kernel still spans sigma/n samples, and
+# sigma 40 keeps that at 10. The half threshold was 20 by that same rule until
+# 2026-08-01; it is now 10, which is a MEASUREMENT rather than the rule. It is
+# what brings in scan (sigma 10.09) and textglow (sigma 14), the last two band
+# blurs that still ran at full size: 7.2s -> 3.0s CPU each per 10s of 1080x608
+# (-58%), at 55.6 dB and 54.9 dB measured against real footage -- a harsher
+# input than the sparse plates these two actually blur.
+HALF_RES_SIGMA = 10.0
 QUARTER_RES_SIGMA = 40.0
 
 
@@ -344,9 +350,8 @@ class TextGlow(Effect):
         tgr, tgg, tgb = [round(v / 255.0 * float(c["gain"]), 4)
                          for v in ctx.hexrgb(c["tint"])]
         g.chain(f"tg{ctx.nphrases}",
-                ["format=gbrp", LUMA,
-                 f"gblur=sigma={tgsig}:steps=3",
-                 f"colorchannelmixer=rr={tgr}:gg={tgg}:bb={tgb}"], "tglow")
+                ["format=gbrp", LUMA] + blur(tgsig, ctx.BW, ctx.BH) +
+                [f"colorchannelmixer=rr={tgr}:gg={tgg}:bb={tgb}"], "tglow")
         return g.chain([band, "tglow"],
                        "blend=all_mode=screen:shortest=1", "s1b")
 
@@ -366,10 +371,10 @@ class Scan(Effect):
                  f"g='clip((val-{sth})*{sknee},0,255)':"
                  f"b='clip((val-{sth})*{sknee},0,255)'")
         sc0 = g.tap(ctx.band_src, "sc0")
-        g.chain(sc0, [LUMA, SKNEE, f"gblur=sigma={ssig}:steps=3",
-                      "lutrgb=r='clip(val*3,0,255)':g='clip(val*3,0,255)':"
-                      "b='clip(val*3,0,255)'",
-                      f"colorchannelmixer=rr={sr}:gg={sg}:bb={sb}"], "scan")
+        g.chain(sc0, [LUMA, SKNEE] + blur(ssig, ctx.BW, ctx.BH) +
+                ["lutrgb=r='clip(val*3,0,255)':g='clip(val*3,0,255)':"
+                 "b='clip(val*3,0,255)'",
+                 f"colorchannelmixer=rr={sr}:gg={sg}:bb={sb}"], "scan")
         return g.chain([band, "scan"],
                        "blend=all_mode=screen:shortest=1", "s2")
 

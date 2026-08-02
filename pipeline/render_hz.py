@@ -329,9 +329,33 @@ def with_shadow(ink):
     return Image.alpha_composite(sh, ink)
 
 
+def trim_to_ink(card):
+    """A full-canvas card cropped to its non-transparent pixels -> (img, x, y).
+
+    Ported from render_default.trim_to_ink including the outward even-
+    coordinate snap: `overlay` blends in yuv420 by default, so on an odd edge
+    the overlay's 2x2 chroma/alpha blocks would straddle a different grid than
+    the full-canvas card's and the result would shift.
+
+    An hz card's ink -- one Arabic line plus one or two English lines -- runs
+    6-7% of the 1920x1080 canvas on real cards, and what is cropped away is
+    (0,0,0,0), which `overlay` composites to nothing. Isolated on a 6-card
+    1080p reel at 11%, with the gates build_graph adds: 33.8s -> 10.5s CPU and
+    1618 -> 633 MB peak RSS for the caption stage."""
+    box = card.getbbox()
+    if box is None:                       # an empty card composites to nothing
+        return card, 0, 0
+    x0, y0 = box[0] - box[0] % 2, box[1] - box[1] % 2
+    x1 = min(card.width, box[2] + box[2] % 2)
+    y1 = min(card.height, box[3] + box[3] % 2)
+    return card.crop((x0, y0, x1, y1)), x0, y0
+
+
 def draw_layers(lay, out_dir):
-    """One full-canvas RGBA card per phrase: Arabic + English + the shared
-    shadow. -> [{"path", "ar_w", "en_lines"}]."""
+    """One RGBA card per phrase: Arabic + English + the shared shadow, drawn at
+    full canvas and saved cropped to its own ink. The box it came from travels
+    with it, since the compositor now has to place it.
+    -> [{"path", "box", "ar_w", "en_lines"}]."""
     os.makedirs(out_dir, exist_ok=True)
     report = []
     for p in lay["phrases"]:
@@ -346,9 +370,11 @@ def draw_layers(lay, out_dir):
             draw_en_line(ink, lay["cx"] - w / 2.0, y, toks, lay["en_font"],
                          lay["tracking"], ENGLISH["color"] + (ENGLISH["alpha"],))
         path = os.path.join(out_dir, "phrase%d.png" % p["i"])
-        with_shadow(ink).save(path)
+        card, x0, y0 = trim_to_ink(with_shadow(ink))
+        card.save(path)
         bb = p["ar_bbox"]
-        report.append({"path": path, "ar_w": bb[2] - bb[0],
+        report.append({"path": path, "box": (x0, y0),
+                       "ar_w": bb[2] - bb[0],
                        "en_lines": len(p["english"])})
     return report
 
@@ -399,7 +425,12 @@ def grade_plate(lay, tmp):
 
 def signature_card(text, tmp, offset=0):
     """`offset` moves the line vertically only (+ lower / - higher); the
-    signature is ALWAYS horizontally centered -- no x knob on purpose."""
+    signature is ALWAYS horizontally centered -- no x knob on purpose.
+
+    -> (path, x, y), cropped to its own ink like the caption cards. It is the
+    one overlay up for the WHOLE reel, so a full-canvas plate for ~200x27px of
+    type costs the most of any of them (13.1s -> 10.1s CPU and 371 -> 220 MB
+    peak RSS on a 23s reel)."""
     W, H = CANVAS_W, CANVAS_H
     font = ImageFont.truetype(EN_FONT, max(12, int(H * SIGNATURE_SIZE_FRAC)))
     bbox = _PROBE.textbbox((0, 0), text, font=font)
@@ -412,9 +443,10 @@ def signature_card(text, tmp, offset=0):
     card = with_shadow(ink)
     card.putalpha(card.getchannel("A").point(
         lambda a: int(round(a * SIGNATURE_ALPHA))))
+    card, x0, y0 = trim_to_ink(card)
     path = os.path.join(tmp, "signature.png")
     card.save(path)
-    return path
+    return path, x0, y0
 
 
 # ---------------------------------------------------------------------------
@@ -489,11 +521,16 @@ def source_chain(crop):
             "crop=%d:%d" % (CANVAS_W, CANVAS_H, CANVAS_W, CANVAS_H))
 
 
-def build_graph(src, dur, crop, grade_png, card_pngs, sched, ln, afade,
-                sig_png=None):
+def build_graph(src, dur, crop, grade_png, cards, sched, ln, afade, sig=None):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1]=grade plate,
     [2..]=one card per phrase, then the signature (last, so dropping it cannot
     shift any other index).
+
+    The grade plate is genuinely full-canvas; every other overlay arrives
+    cropped to its own ink and is PLACED at the box it came from. Each card is
+    also gated to its own alpha window widened by a frame either side, so the
+    enable can only ever switch on frames the card was already fully
+    transparent for.
 
     Every looped PNG input is bounded by the output's `-t`: a `-loop 1` input
     never EOFs, and overlay's default eof_action would leave the graph with no
@@ -501,25 +538,29 @@ def build_graph(src, dur, crop, grade_png, card_pngs, sched, ln, afade,
     """
     tqs = ["-thread_queue_size", str(THREAD_QUEUE_SIZE)]
     argv = ["-ss", "0.000", "-t", "%.3f" % dur] + tqs + ["-i", src]
-    for png in [grade_png] + list(card_pngs) + ([sig_png] if sig_png else []):
+    for png in ([grade_png] + [c["path"] for c in cards]
+                + ([sig[0]] if sig else [])):
         argv += ["-framerate", str(FPS), "-loop", "1"] + tqs + ["-i", png]
 
     parts = ["[0:v]%s,setsar=1,fps=%d,format=rgba[bg];"
              "[1:v]format=rgba[grd];[bg][grd]overlay=0:0:format=auto[b0]"
              % (source_chain(crop), FPS)]
     base = "b0"
-    for i, (t_in, d_in, t_out, d_out) in enumerate(sched):
+    for i, ((t_in, d_in, t_out, d_out), c) in enumerate(zip(sched, cards)):
         parts.append(";[%d:v]format=rgba,"
                      "fade=t=in:st=%.3f:d=%s:alpha=1,"
                      "fade=t=out:st=%.3f:d=%s:alpha=1[c%d]"
                      % (i + 2, t_in, d_in, t_out, d_out, i + 1))
-        parts.append(";[%s][c%d]overlay=0:0:format=auto[b%d]"
-                     % (base, i + 1, i + 1))
+        parts.append(";[%s][c%d]overlay=%d:%d:format=auto"
+                     ":enable='between(t,%.3f,%.3f)'[b%d]"
+                     % (base, i + 1, c["box"][0], c["box"][1],
+                        max(0.0, t_in - 1.0 / FPS), t_out + d_out + 1.0 / FPS,
+                        i + 1))
         base = "b%d" % (i + 1)
-    if sig_png:
-        sidx = 2 + len(card_pngs)
-        parts.append(";[%d:v]format=rgba[sg];[%s][sg]overlay=0:0:format=auto[sig]"
-                     % (sidx, base))
+    if sig:
+        sidx = 2 + len(cards)
+        parts.append(";[%d:v]format=rgba[sg];[%s][sg]overlay=%d:%d:"
+                     "format=auto[sig]" % (sidx, base, sig[1], sig[2]))
         base = "sig"
     # whole-frame fade from/to black, mirroring the audio fades (all 3 refs)
     parts.append(";[%s]fade=t=in:st=0:d=%s,fade=t=out:st=%.3f:d=%s,"
@@ -559,8 +600,8 @@ def render(plan):
                  (p["top"] + p["bottom"]) / 2.0 / CANVAS_H))
 
     grade_png = grade_plate(lay, tmp)
-    sig_png = (signature_card(cfg["signature"], tmp, cfg["signature_offset"])
-               if cfg["signature"] else None)
+    sig = (signature_card(cfg["signature"], tmp, cfg["signature_offset"])
+           if cfg["signature"] else None)
     sched = schedule(phrases, dur)
 
     print("      loudnorm pass 1...")
@@ -569,9 +610,8 @@ def render(plan):
              % (AUDIO["fade_in_s"], dur - AUDIO["fade_out_s"],
                 AUDIO["fade_out_s"]))
 
-    fc, in_argv = build_graph(src, dur, crop, grade_png,
-                              [r["path"] for r in rep], sched, ln, afade,
-                              sig_png)
+    fc, in_argv = build_graph(src, dur, crop, grade_png, rep, sched, ln,
+                              afade, sig)
 
     out = plan["out"]
     cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv

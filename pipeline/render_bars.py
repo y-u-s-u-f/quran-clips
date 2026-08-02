@@ -12,13 +12,15 @@ legacy/qc/timeline.py, with the style numbers from legacy/templates/bars.yaml
 (pixel forensics of the account's two reference reels). The effects
 themselves live in pipeline/fx.py.
 
-THE GOLDEN BYTE-IDENTITY CONTRACT IS SUSPENDED as of the 2026-08-01 speed
-work: the emitted filtergraph is deliberately no longer byte-identical to
-legacy/tests/golden/at-tawbah-128-128/filtergraph.txt. Five changes did it,
-all owner-approved, none of them a look decision:
+THE GOLDEN BYTE-IDENTITY CONTRACT NOW RUNS AGAINST
+tests/golden/bars-filtergraph.txt, not the frozen legacy fixture: the
+2026-08-01 speed work deliberately broke byte-identity with
+legacy/tests/golden/at-tawbah-128-128/filtergraph.txt, and the replacement
+lives in this repo (tests/graph_parity.py). Five changes broke it, all
+owner-approved, none of them a look decision:
   * heat's two perlin maps are pre-baked and fed in as inputs (heat_layers);
-  * wide gaussians run at reduced linear size -- half from sigma 20, quarter
-    from sigma 40 (fx.blur);
+  * wide gaussians run at reduced linear size -- half from sigma 20 (10 as of
+    the second pass below), quarter from sigma 40 (fx.blur);
   * heat's supersample went 3 -> 2;
   * caption layers are cropped to their own ink and placed, instead of being
     full-canvas plates overlaid at 0:0 three times each (trim_to_ink), and
@@ -30,9 +32,15 @@ Measured on sources/gt9y-QGgMsA, each against the render before it: 47.1dB
 for the bake, 53.1dB for the half-res work, 48.8dB for the supersample,
 53.2dB for the quarter-res step; the caption crop and both plate shrinks
 came back bit-identical (PSNR inf). Wall 372s -> 96s on a 4P+4E machine.
-Until a replacement fixture exists, the guarantee that a look change is
-never a refactor side-effect rests on re-measuring PSNR against the
-previous render, NOT on diffing the graph text.
+
+Two more on 2026-08-01, both re-blessed into tests/golden/bars-filtergraph.txt
+after a PSNR re-render:
+  * the signature is cropped to its own ink and placed, like the captions --
+    it is the one overlay up for the WHOLE reel, so a full-canvas plate for
+    ~200x27px of type was the most expensive of them (13.1s -> 10.1s CPU,
+    371 -> 220 MB peak RSS on a 23s reel); bit-identical;
+  * scan and textglow blur at half linear size (fx.HALF_RES_SIGMA 20 -> 10),
+    the last two band blurs that still ran at full size.
 
 THE CAPTIONS WERE RESIZED ON 2026-08-01 and the fixture re-blessed again.
 The account's newer reels set the Arabic far larger than the two 720p refs
@@ -592,18 +600,35 @@ def heat_layers(tmp, dur):
 
 
 def snow_layer(tmp, tint_rgb):
-    """The seamlessly-looping snow mp4, cached in tmp by parameter tag.
+    """The seamlessly-looping snow mp4, cached by parameter tag.
     Expensive to evaluate (one shader pass per frame), so it is only built
-    when the effect is on."""
+    when the effect is on.
+
+    Cached beside the heat maps rather than inside the reel's own tmp: the tag
+    already pins everything that decides the bytes (band size, the tint, every
+    snow parameter), so two reels that agree on those agree on the file --
+    which is any two sharing a pinned `bar_color:`. Same part-file rename as
+    heat_layers, and for the same reason: the cache is keyed by name alone, so
+    a bake killed from outside (^C, a timeout, the OOM killer) must not leave a
+    truncated mp4 behind for every later render to load as a valid short
+    input."""
     c = dict(FX_CFG["snow"])
     tag = "%dx%d_%02X%02X%02X_%s" % (
         BAND_W, BAND_H, *tint_rgb,
         "_".join(str(c[k]) for k in sorted(c)))
-    path = os.path.join(tmp, "snow_%s.mp4" % tag)
+    cache = os.path.dirname(os.path.normpath(tmp)) or tmp
+    os.makedirs(cache, exist_ok=True)
+    path = os.path.join(cache, "snow_%s.mp4" % tag)
     if not os.path.exists(path):
-        fld, nf = FX.render_snow(path, BAND_W, BAND_H, FPS, c, tint_rgb)
-        print("      snow layer: shader pass, texel %.1fpx expo %.1f "
-              "gain %.1f, %d frames" % (fld.texel, fld.expo, fld.gain, nf))
+        part = "%s.%d.part.mp4" % (os.path.splitext(path)[0], os.getpid())
+        try:
+            fld, nf = FX.render_snow(part, BAND_W, BAND_H, FPS, c, tint_rgb)
+            os.replace(part, path)
+            print("      snow layer: shader pass, texel %.1fpx expo %.1f "
+                  "gain %.1f, %d frames" % (fld.texel, fld.expo, fld.gain, nf))
+        finally:
+            if os.path.exists(part):
+                os.remove(part)
     return path
 
 
@@ -711,7 +736,7 @@ def loudnorm_filter(st):
 # ---------------------------------------------------------------------------
 
 def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
-                ln, afade, sig_path=None, heat_paths=None):
+                ln, afade, sig=None, heat_paths=None):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1..2n]=bar,text
     per phrase, then snow, then scrim (last of the legacy set, so dropping it
     cannot shift any other index), then the signature, then the two heat
@@ -732,7 +757,7 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     snow_in = g_.input(snow_path, stream_loop=-1) if snow_path else None
     scrim_in = (g_.input(scrim_path, framerate=FPS, loop=1)
                 if on["scrim"] else None)
-    sig_in = (g_.input(sig_path, framerate=FPS, loop=1) if sig_path else None)
+    sig_in = (g_.input(sig[0], framerate=FPS, loop=1) if sig else None)
     # stream_loop so a reel longer than its cached bucket still runs out to
     # the end; the bucket is sized so this normally never wraps.
     heat_in = [g_.input(p, stream_loop=-1) for p in (heat_paths or [])]
@@ -855,7 +880,8 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     else:
         g_.chain([full, band_lbl], f"overlay=0:{BAND_Y}:shortest=1", "flat")
         g_.chain(sig_in, "format=rgba", "sg")
-        g_.chain(["flat", "sg"], "overlay=0:0:format=auto:shortest=1", "flats")
+        g_.chain(["flat", "sg"],
+                 f"overlay={sig[1]}:{sig[2]}:format=auto:shortest=1", "flats")
         g_.chain("flats", fades, "vout")
     g_.chain(vin.a, [f for f in (ln, afade) if f], "aout")
     return g_.render()
@@ -901,8 +927,8 @@ def render(plan):
     snow_path = snow_layer(tmp, target_rgb) if on["snow"] else None
     heat_paths = heat_layers(tmp, dur) if on["heat"] else None
     scrim = scrim_plate(tmp) if on["scrim"] else None
-    sig_path = (signature_card(cfg["signature"], tmp, cfg["signature_offset"])
-                if cfg["signature"] else None)
+    sig = (signature_card(cfg["signature"], tmp, cfg["signature_offset"])
+           if cfg["signature"] else None)
 
     sched, cuts = schedule(phrases, dur)
     if cuts:
@@ -916,8 +942,7 @@ def render(plan):
                 AUDIO["fade_out_s"]))
 
     fc, in_argv = build_graph(src, dur, crop, rep, sched, tint, on,
-                              snow_path, scrim, ln, afade, sig_path,
-                              heat_paths)
+                              snow_path, scrim, ln, afade, sig, heat_paths)
 
     out = plan["out"]
     cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv
@@ -941,7 +966,12 @@ def render(plan):
 
 def signature_card(text, tmp, offset=0):
     """`offset` moves the line vertically only (+ lower / - higher); the
-    signature is ALWAYS horizontally centered -- no x knob on purpose."""
+    signature is ALWAYS horizontally centered -- no x knob on purpose.
+
+    -> (path, x, y), cropped to its own ink like the caption layers. It is the
+    one overlay that is up for the WHOLE reel, so a full-canvas plate for
+    ~200x27px of type costs the most of any of them: measured 13.1s -> 10.1s
+    CPU and 371 -> 220 MB peak RSS on a 23s reel."""
     sig_size = max(12, int(CANVAS_H * SIGNATURE_SIZE_FRAC))
     font = ImageFont.truetype(SIGNATURE_FONT, sig_size)
     bbox = _PROBE.textbbox((0, 0), text, font=font)
@@ -952,6 +982,7 @@ def signature_card(text, tmp, offset=0):
          int(CANVAS_H * SIGNATURE_Y_FRAC) - h // 2 - bbox[1] + int(offset)),
         text, font=font,
         fill=(255, 255, 255, int(255 * SIGNATURE_ALPHA)))
+    card, x0, y0 = trim_to_ink(card)
     path = os.path.join(tmp, "signature.png")
     card.save(path)
-    return path
+    return path, x0, y0

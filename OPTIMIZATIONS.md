@@ -1,8 +1,13 @@
 # Deferred pipeline optimizations
 
 All three items in the first edition of this file are **DONE** as of
-2026-08-01, together with three further wins that were not in it. What
-remains open is at the bottom.
+2026-08-01, together with three further wins that were not in it, and then a
+second pass the same day that carried the `bars` work over to `hz` and took
+the last two full-size blurs. What remains open is at the bottom.
+
+Read the "checked and deliberately not proposed" list before proposing
+anything: most of the obvious ideas are in it with the number that killed
+them, and one of them was measured WRONG the first time (item 3).
 
 Numbers below are from `sources/wawassayna/ahqaf-15-bars.yaml` (23.3s reel,
 4 cards, 1080p/25fps source, 699 output frames) on a 14-core Apple silicon
@@ -140,6 +145,98 @@ the first render of a reel). Neither is worth chasing — see below.
 
 ---
 
+## Done — second pass, same day
+
+Measured on `sources/wawassayna/ahqaf-15-bars.yaml` and a scratch `hz` config
+over the same source (23.3s, 1080p/25fps; bars 4 cards, hz 3 cards plus a
+signature), heat maps already cached so the bake is not in the numbers:
+
+| | wall | CPU | peak RSS | PSNR vs before |
+|---|---|---|---|---|
+| bars before | 36.4s | 249.5s | 2583 MB | |
+| bars after | **33.3s** | **229.3s** | **2469 MB** | 51.89 dB (min 49.59) |
+| hz before | 9.1s | 85.6s | 2916 MB | |
+| hz after | **7.9s** | **72.2s** | **2233 MB** | **inf** |
+
+### 4. `hz` captions were still full-canvas and ungated — DONE, bit-identical
+
+Item 1 was never carried over: `render_hz.draw_layers` emitted a full
+1920x1080 RGBA PNG per card and `build_graph` overlaid it at `0:0` for the
+whole clip with no `enable`. An hz card's ink — one Arabic line plus one or
+two English lines — measures 6-7% of the canvas on real cards.
+
+`render_hz.trim_to_ink` (the same port, same outward even-coordinate snap) now
+crops each card, `build_graph` places it at its box and gates it to its own
+alpha window widened a frame either side. Isolated on a synthetic 6-card
+1080p reel, filter-only:
+
+| | wall | CPU | peak RSS |
+|---|---|---|---|
+| full canvas | 4.08s | 33.75s | 1618 MB |
+| ink-cropped + gated | **1.64s** | **10.54s** | **633 MB** |
+| ink-cropped, no gate | 1.94s | 11.93s | 659 MB |
+
+The crop is nearly all of it; the gate adds ~12%.
+
+### 5. The signature was a full-canvas plate, in bars AND hz — DONE, bit-identical
+
+The one overlay up for the WHOLE reel, and it carried ~200x27px of type on a
+full canvas. Cropped and placed like the captions. Isolated at 1080x1920 over
+23s: **13.13s -> 10.08s CPU, 371 -> 220 MB peak RSS**. Verified alone on a
+bars render (with item 6 reverted): PSNR inf.
+
+### 6. `scan` and `textglow` blurred at full size — DONE, 51.9 dB
+
+Both hardcoded `gblur` instead of going through `fx.blur`, and at sigma 10.09
+and 14 they sat under `HALF_RES_SIGMA` anyway. Both now route through `blur`
+and the threshold is **20 -> 10**. Isolated over 10s of 1080x608 real footage
+against a 6.78s no-blur baseline:
+
+| | full | half | PSNR |
+|---|---|---|---|
+| σ 10.09 (`scan`) | 7.18s CPU | 3.01s | 55.59 dB |
+| σ 14 (`textglow`) | 7.33s CPU | 3.11s | 54.89 dB |
+
+The threshold is now a measurement, not the "kernel spans 10+ samples" rule
+that set 20 and still sets the quarter cut at 40: these two land at 5 and 7
+samples. **This is the whole of the 51.89 dB on the bars reel** — items 4 and
+5 are individually inf — so it is the one change here that is a look decision
+rather than a refactor. Re-blessed into `tests/golden/bars-filtergraph.txt`
+after that PSNR; the diff was exactly the two expected filter lines.
+
+### 7. The snow bake was per-reel and not atomic — DONE
+
+`render_snow` wrote straight to the cache path, and the cache is keyed by name
+alone, so a bake killed from outside (^C, a timeout, the OOM killer) left a
+truncated mp4 that every later render loaded as a valid short input — the
+exact failure `heat_layers` already guards against. Now the same part-file
+rename, and cached beside the heat maps rather than inside the reel's tmp: the
+tag already pins band size, tint and every snow parameter, so any two reels
+sharing a pinned `bar_color:` share the file. Worth 2.8s when it hits; taken
+for the atomicity.
+
+### 8. Two carry-overs
+
+* `render_default`'s 9:16 re-crop intermediate still used `slow`/crf 16, the
+  setting item 3 measured off (-65% CPU, and better). Now `veryfast`/crf 10.
+  Latent only: every tracked config resolves to horizontal, so no reel
+  currently takes that path.
+* `plan["wav"]` was dead — no renderer ever read it. The wav itself is still
+  what `detect_silences` runs on.
+
+### The parity gate is no longer open
+
+`tests/graph_parity.py` + `tests/golden/bars-filtergraph.txt` exist and are
+committed, so CLAUDE.md invariant 2 is live again: after any edit to
+`render_bars.py` or `fx.py`, run
+
+    tools/render-venv/bin/python tests/graph_parity.py
+
+and a diff is a look change needing a PSNR re-render and an owner `--bless`,
+not a shrug.
+
+---
+
 ## Checked and deliberately not proposed
 
 - **`-thread_queue_size 4096`** (`pipeline/fx.py`). Looked like the memory
@@ -149,6 +246,22 @@ the first render of a reel). Neither is worth chasing — see below.
 - **`align_words`' Needleman-Wunsch** (`generate.py`) recomputes
   `quran.skeleton` inside the O(n*m) inner loop. Milliseconds at real reel
   sizes (~50x60 cells); worth precomputing only if reels get much longer.
+- **The final encode's `slow` preset.** 23s at 1080x1920, crf 18:
+  slow 27.6s CPU / 5.61 MB, medium 21.3s / 5.76 MB, fast 19.4s / 5.87 MB.
+  Medium buys 1.4% of the render's CPU for a change to the shipped artifact.
+  Not worth touching the deliverable for.
+- **`heat`: moving `lutrgb` ahead of the 2x upscale.** The affine map never
+  clips over the reachable range, so it looked free. Measured **worse**:
+  28.4 -> 29.2s CPU. A gbrp bicubic upscale on three full planes costs more
+  than the LUT on the big frame saves.
+- **`generate.py`'s audio analysis.** The wav extract plus `volumedetect` plus
+  `silencedetect` are 0.10s together on a 23s source. Leave the three passes.
+- **`render_hz.wrap_english`'s combinatorial balance search.** 3.4ms at 9
+  words, 126ms at 25, 201ms at 30. Under a second for a whole reel.
+- **`align.py` memory.** `generate_emissions` windows at 30s with batch 4, so
+  peak activation is bounded no matter how long the source is; only CPU scales
+  with it. Auto-trim over a long source is already a correctness hazard, which
+  is the stronger reason to set `trim:` by hand.
 
 ---
 
@@ -164,20 +277,12 @@ crf 10 is a higher bitrate than the source at that point). Deleting it buys
 ~4s for a five-call change that needs A/V sync verified at every seek. Left
 undone deliberately; revisit only if the trim's cost grows.
 
-### A golden parity gate that lives in this repo
+### Where the bars render's remaining time goes
 
-CLAUDE.md invariant #2 is **suspended**: the graph is deliberately no longer
-byte-identical to `legacy/tests/golden/at-tawbah-128-128/filtergraph.txt`,
-and the golden lives under read-only `legacy/`, so there is nothing to
-re-bless. Until a fixture exists outside `legacy/`, the rule is enforced by
-re-rendering a known reel after any `render_bars.py`/`fx.py` edit and PSNR-ing
-it against the previous render (below ~45 dB is a look change and needs a
-decision).
-
-The script that verified the original byte-identical pass was written and
-used but never committed. It rebuilds the at-tawbah-128-128 graph (phrases
-from `legacy/clips/at-tawbah-128-128/clip.yaml`, `x_offset=-216`,
-`dur=23.720`, crop `48,30,1280x720`, tint `(191,140,54)` recovered from the
-golden's glow scalars via `rr/0.35*255`, all switches on, `sig_path=None`)
-and diffs it against the fixture. Committing a version of it that records a
-*current* graph as the fixture is what restores the invariant.
+The 95.9s breakdown above predates the second pass but its shape holds: a
+~35% floor (trim, audio, caption PNGs, source decode, final encode), and the
+rest split between the five screen-blended effects and `heat`. `heat` is the
+largest single stage and the one with no cheap idea left — the maps are baked,
+the supersample is already 3 -> 2, and reordering its LUT measured worse. The
+next real win there would be a look decision (supersample 2 -> 1), not a
+refactor.

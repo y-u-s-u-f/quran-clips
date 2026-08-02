@@ -910,7 +910,7 @@ def run_config(config_path, output_override=None):
     print("      %d captions, %d pause gap(s) left clean" % (len(arabic), gaps))
     print_verification(arabic, english, verses)
 
-    plan = {"cfg": cfg, "src": source, "info": info, "wav": wav,
+    plan = {"cfg": cfg, "src": source, "info": info,
             "arabic": arabic, "english": english, "verses": verses,
             "tmp": tmp, "out": cfg["output"]}
 
