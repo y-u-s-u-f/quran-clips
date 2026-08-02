@@ -156,7 +156,13 @@ def caption(surah, a0, a1, reciter, with_ayat=True):
              " \u0627\u0644\u0645\u064a\u0633\u0631: "]  # al-Muyassar
     for t, verses in groups:
         if with_ayat:
-            lines += ["%s (%d)" % (v["ar"], v["ayah"]) for v in verses]
+            # U+FD3E/U+FD3F ORNATE PARENTHESIS, the pair a mushaf sets an
+            # ayah in. FD3F (the "right" one) is written FIRST on purpose:
+            # FD3E is drawn "(" and neither is Bidi_Mirrored, so the glyph
+            # is fixed while the RTL run puts the first character on the
+            # right -- FD3E-first bows both ornaments away from the ayah.
+            lines += ["\ufd3f %s \ufd3e (%d)" % (v["ar"], v["ayah"])
+                      for v in verses]
         lines.append(t)
     tags = "#%s | #%s" % (reciter.strip().replace(" ", "_"),
                           quran.surah_name_ar(surah, plain=True).replace(" ", "_"))
