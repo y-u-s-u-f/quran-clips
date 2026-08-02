@@ -10,6 +10,7 @@ tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml
 tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml
 # -> reels/<reel>.mp4
+python3 pipeline/publish.py reels/<reel>.mp4     # -> Instagram + Facebook
 ```
 
 The timing comes from `align.py`: CTC forced alignment (Meta's MMS) of the
@@ -25,6 +26,12 @@ Every step is a script with an assertion behind it: caption Arabic is
 *sliced from the committed Uthmani text by word index* — no model ever
 retypes an Arabic word — and a config whose card splits don't cover the
 verse range exactly fails loudly before a frame is drawn.
+
+`publish.py` posts the finished reel to both platforms and builds its
+caption the same way: al-Tafsir al-Muyassar over the verse span, the ayat
+above it, `#<reciter> | #<surah>` at the bottom. It reads the span and the
+reciter out of the mp4's own tags, which `generate.py` writes on every
+render, so a reel is publishable from the file alone.
 
 ## Three styles
 
@@ -62,17 +69,18 @@ Demo clips of `bars` and `default` are in `docs/`.
 ## Layout
 
 ```
-pipeline/       six workflow scripts + three style renderers
+pipeline/       seven workflow scripts + three style renderers
                 (see pipeline/README.md):
                 fetch.py  transcribe.py  quran.py  align.py  crop.py
-                generate.py  render_default.py  render_bars.py
-                render_hz.py  (+ fx.py, the bars FX)
+                generate.py  publish.py  render_default.py
+                render_bars.py  render_hz.py  (+ fx.py, the bars FX)
 sources/<id>/   one folder per source: source.mp4, captions.srt (if any),
                 whisper.json / whisper.srt, and the per-reel *.yaml configs
                 plus their *.align.json word timings
 reels/          generated reels, flat — output only
-assets/         fonts + the committed mushaf and BOTH English editions
-                (Saheeh International, Mufti Taqi Usmani) + word glosses
+assets/         fonts + the committed mushaf, BOTH English editions
+                (Saheeh International, Mufti Taqi Usmani), word glosses,
+                and al-Tafsir al-Muyassar (post captions only)
 tests/          graph_parity.py + the bars filtergraph fixture it diffs
 legacy/         the first- and second-generation implementations, archived
                 intact with their specs, tests and golden fixtures
@@ -136,7 +144,8 @@ sanctioned way to build them; never pip-install into the render venv.
 created from `.env.example`): the ASR backend/model, pinned binaries, and
 the proxy pool for cloud hosts where YouTube bot-checks datacentre IPs —
 `fetch.py --proxy` escalates static residential → datacentre → fail, one
-sticky exit per fetch. Nothing in `.env` affects a rendered pixel.
+sticky exit per fetch — and the Facebook Page / Instagram credentials
+`publish.py` posts with. Nothing in `.env` affects a rendered pixel.
 
 ## Driving it from Claude Code
 

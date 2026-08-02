@@ -5,9 +5,9 @@ To *produce a reel* rather than change code, invoke the `make-post` skill
 
 ## Codebase map
 
-Qur'an recitation video -> subtitled reel. Nine standalone scripts under
-`pipeline/`; each is runnable on its own, reads and writes plain files, and
-owns one stage. There is deliberately NO shared util module — `fetch.py`
+Qur'an recitation video -> subtitled reel -> posted. Ten standalone scripts
+under `pipeline/`; each is runnable on its own, reads and writes plain files,
+and owns one stage. There is deliberately NO shared util module — `fetch.py`
 and `transcribe.py` each carry their own ~15-line `.env` reader so every
 script stays independently runnable; do not "deduplicate" that.
 
@@ -26,7 +26,8 @@ script stays independently runnable; do not "deduplicate" that.
   everything downstream consumes only that.
 - **`pipeline/quran.py`** — the offline mushaf and the ONLY source of
   Arabic text and translations (`assets/quran/`: uthmani, en.sahih,
-  en.taqi, en.wbw). `ayah()` returns stored bytes verbatim; `normalize()`/
+  en.taqi, en.wbw, ar.muyassar — the last read only by `tafsir()`, for post
+  descriptions, never for anything on screen). `ayah()` returns stored bytes verbatim; `normalize()`/
   `tokens()`/`skeleton()` produce throwaway matching skeletons; `search()`
   is IDF + contiguity scoring for lossy transcript text. Ported from
   `legacy/qc/quran.py` and verified byte-identical on all 6236 ayat — treat
@@ -111,6 +112,26 @@ script stays independently runnable; do not "deduplicate" that.
   a renderer's `render(plan)`; the `plan` dict
   (`cfg/src/info/wav/arabic/english/verses/tmp/out`) is the whole
   interface between generate and the renderers.
+- **`pipeline/publish.py`** — finished reel -> an Instagram Reel and a
+  Facebook Page Reel, same caption on both. Reads the verse span and the
+  reciter back off the mp4's OWN tags (`generate.py` writes them from
+  `reciter:` at the end of every render, as a stream-copy remux), so a reel
+  publishes with no config beside it and no filename convention to honour;
+  `--surah/--ayat/--reciter` cover a reel rendered before that existed. The
+  caption is built, never typed: `tafsir()` over the span, the Uthmani ayat
+  above it, `#<reciter> | #<surah>` at the bottom — the surah hashtag
+  derived by `surah_name_ar(n, plain=True)`, the reciter's spelling taken
+  from the account's own earlier posts. Consecutive ayat sharing one
+  al-Muyassar paragraph are grouped so it appears once. Both uploads push
+  local bytes over Meta's resumable protocol (no hosting anywhere), and it
+  prints the caption and asks before it posts. The cover is cut at
+  `COVER_MS` (1550): an API upload defaults to frame 0 on BOTH platforms,
+  which on these reels is the black fade-in — Instagram takes the offset as
+  `thumb_offset`, Facebook has no equivalent so the same frame is cut and
+  POSTed to `/{video-id}/thumbnails`. The two posts cannot be LINKED (shared
+  insights): the app's "share to Facebook" tick has no Graph equivalent, and
+  `share_to_feed` is about Instagram's own tabs. `.env` holds the credentials;
+  invariant 4 is intact because publishing touches no pixel.
 - **`pipeline/render_default.py`** — Arabic + English over dimmed footage,
   all Pillow (no libass anywhere — it mis-rasterises Quranic fonts).
   `output_size()` clamps the canvas short side into [720, 1080].

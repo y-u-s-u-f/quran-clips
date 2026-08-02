@@ -7,6 +7,9 @@ signature: null                 # no watermark
 surah: 56
 ayah_start: 83
 ayah_end: 87
+# Never on screen -- the reciter's name goes into the mp4's tags, and
+# pipeline/publish.py builds the post's caption and hashtag from them.
+reciter: "عبدالله القرافي"
 
 # Hand-set: align.py cannot derive the trim here. The source is 33 minutes of
 # continuous recitation, and forcing 23 words onto 1961s of audio has nothing

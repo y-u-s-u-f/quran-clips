@@ -36,6 +36,7 @@ tools/align-venv/bin/python pipeline/align.py sources/<id>/<reel-name>.yaml
 tools/render-venv/bin/python pipeline/crop.py sources/<id>/<reel-name>.yaml --write   # bars + hz
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel-name>.yaml
 ffmpeg -v error -i reels/<reel-name>.mp4 -f null -               # decode gate
+python3 pipeline/publish.py reels/<reel-name>.mp4                # ONLY if asked
 ```
 
 If you already know which verses the clip is, SKIP transcribe.py entirely:
@@ -122,6 +123,12 @@ signature: null                   # REQUIRED key; null = burn nothing
 surah: 78
 ayah_start: 31
 ayah_end: 34
+reciter: "..."                    # his name in ARABIC, COPIED (never
+                                  # transliterated, never retyped) from the
+                                  # source's own title/uploader in
+                                  # sources/<id>/meta.yaml or from an earlier
+                                  # post's hashtag. Goes into the mp4's tags;
+                                  # publish.py captions the reel from them.
 trim: [16.4, 48.0]                # seconds of source; see "Trim" below
 groups:                           # one entry per caption card
   - n_words: 3                    # MUST sum to the span's word count
@@ -392,6 +399,10 @@ full and use `trim` instead.
 - **Decode-check the output** (`ffmpeg -v error -i ... -f null -`) before
   calling a render done: container metadata survives a corrupted bitstream.
 - **Do not `open` produced artefacts.** Build the file, report the path.
+- **Never publish unless asked to.** `publish.py` posts publicly to both
+  accounts and there is no undo in the script. Rendering ends at the decode
+  gate; posting is a separate instruction. `--caption-only` is safe and is
+  how you show the caption for review.
 - **`reels/` is both the output dir and the library.** Rendering the same
   config overwrites its own reel — that is fine. Never delete or overwrite
   a DIFFERENT reel, and never rename one without explicit intent: a posted

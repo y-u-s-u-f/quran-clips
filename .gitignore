@@ -40,6 +40,7 @@ legacy/style/**/*.png
 # .env carries proxy passwords, so it must never be committed; .env.example
 # documents every key and DOES ship.
 .env
+.env.bak*
 qc.toml
 !.env.example
 !legacy/qc.toml.example

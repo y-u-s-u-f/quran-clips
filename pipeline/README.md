@@ -1,9 +1,9 @@
 # pipeline/ — Qur'an reel pipeline
 
-Turn a recitation video (YouTube or local) into a subtitled reel. Six
-workflow scripts plus three style renderers; each step reads and writes plain
-files in the repo tree, so every stage can be run, inspected and re-run on
-its own.
+Turn a recitation video (YouTube or local) into a subtitled reel, and post
+it. Seven workflow scripts plus three style renderers; each step reads and
+writes plain files in the repo tree, so every stage can be run, inspected and
+re-run on its own.
 
 ```
 Source
@@ -65,6 +65,13 @@ generate.py
         ├── render_bars.py      1080x1920 letterbox band, Arabic-only pills
         └── render_hz.py        1920x1080 native landscape, Arabic + English
                                 in an off-centre column over graded footage
+    └── tags the mp4: title, artist (`reciter:`) and "Quran s:a-b"
+
+publish.py (Instagram + Facebook, from the finished mp4 alone)
+    ├── reads that verse span and reciter back off the file's tags
+    ├── builds the caption -- al-Tafsir al-Muyassar over the span from
+    │   quran.py, the ayat above it, #reciter | #surah at the bottom
+    └── uploads the local bytes to both (resumable protocol, no hosting)
 ```
 
 ## Directory layout
@@ -85,7 +92,7 @@ sources/<id>/                one folder per source video
 reels/<reel-name>.mp4        generated output only, flat, no subfolders
 
 pipeline/                    this package
-    fetch.py  transcribe.py  quran.py  crop.py  generate.py
+    fetch.py  transcribe.py  quran.py  crop.py  generate.py  publish.py
     render_default.py  render_bars.py  render_hz.py
 
 assets/                      fonts + the committed mushaf/translation editions
@@ -116,6 +123,9 @@ tools/align-venv/bin/python pipeline/align.py sources/<id>/<reel-name>.yaml
 
 # 6. render                             -> reels/<reel-name>.mp4
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel-name>.yaml
+
+# 7. post it to Instagram + Facebook (prints the caption, then asks)
+python3 pipeline/publish.py reels/<reel-name>.mp4
 ```
 
 Steps 2-3 exist only to answer "which verses is this?". If you already
@@ -136,6 +146,12 @@ signature: null                   # REQUIRED on every reel; null = burn
 surah: 78                         # omit all three to auto-detect from the
 ayah_start: 31                    # transcript (reliable for short spans only)
 ayah_end: 40
+reciter: "..."                    # his name in ARABIC, spelled the way the
+                                  # post's hashtag spells it -- copied off the
+                                  # source's title or an earlier post, never
+                                  # transliterated. Never rendered: it goes
+                                  # into the mp4's `artist` tag, which is
+                                  # where publish.py reads it back from.
 
 trim: [15.0, 55.0]                # seconds of the source this reel covers.
                                   # Omit it and align.py measures it off the
@@ -201,6 +217,53 @@ Rules the pipeline enforces rather than trusts:
   silently ignored.
 * **`signature` must be present** in every config: a string, or an explicit
   `null`.
+
+## Publishing
+
+```sh
+python3 pipeline/publish.py reels/<reel-name>.mp4          # both platforms
+python3 pipeline/publish.py reels/<name>.mp4 --caption-only # print, no network
+python3 pipeline/publish.py reels/<name>.mp4 --draft        # upload, don't post
+```
+
+**The cover** is cut at 1.55s (`COVER_MS`, override with `--cover-ms`). Both
+platforms default an API upload to frame 0 — neither picks a frame the way
+the app's editor suggests one — and frame 0 of these reels is the fade-in,
+which is black. Instagram takes the offset directly (`thumb_offset`, in ms);
+Facebook has no such parameter, so the same frame is cut with ffmpeg and
+POSTed to `/{video-id}/thumbnails` as the preferred one. A Facebook cover
+that fails to set is reported, not fatal — the reel is already up by then.
+
+**Instagram and Facebook posts are independent.** The app's "also share to
+Facebook" tick, which links the two so one insights page covers both, has no
+Graph API equivalent: `share_to_feed` controls the Feed/Reels tabs *within*
+Instagram, and `/video_reels` crossposts only between Facebook Pages. Posting
+each platform its own copy is also what keeps the Facebook one a real Reel;
+the native cross-share is documented to sometimes land as a still image.
+
+The reel argument is resolved against `reels/`, not the shell's cwd: a full
+path, a bare filename and a unique fragment of the name all find the same
+file, and a fragment matching two reels lists them instead of picking one.
+There is a `publish` shell function in `~/.zshrc` (owner's machine only) so
+the usual call is `publish <name-or-dragged-in-file>` from anywhere.
+
+The caption is built, never written: `التفسير الميسر:` then, per ayah of the
+span, the Uthmani text and its al-Muyassar explanation, then
+`#<reciter> | #<surah>` — the reciter from the mp4's `artist` tag, the surah
+name from `quran.surah_name_ar(n, plain=True)`. Consecutive ayat that al-
+Muyassar explains in one paragraph are grouped so the paragraph appears once.
+Instagram's caption cap is 2200 characters; a span that overruns it loses the
+quoted ayat on Instagram only, and Facebook still gets the full text.
+
+The mp4's tags are the only input — `generate.py` writes them on every
+render, and one reel is publishable without its config, its source or the
+machine that made it. A reel rendered before this existed, or one whose
+config has no `reciter:`, needs `--surah/--ayat/--reciter`.
+
+Credentials live in `.env` (`FB_PAGE_ID`, `FB_PAGE_TOKEN`,
+`IG_BUSINESS_ACCOUNT_ID`); see `.env.example`. Both uploads send local bytes
+over Meta's resumable protocol, so nothing has to be hosted anywhere first.
+The Instagram account must be a Business/Creator account linked to the Page.
 
 ## Environments
 

@@ -66,6 +66,12 @@ DEFAULTS = {
     "ayah_start": None,          # from the whisper transcript (reliable only
     "ayah_end": None,            # for short 1-4 ayah windows)
 
+    "reciter": None,             # his name in Arabic, spelled as the post's
+                                 # hashtag spells it. Never on screen: it is
+                                 # written into the mp4's tags so
+                                 # pipeline/publish.py can caption the reel
+                                 # from the file alone.
+
     "groups": None,              # caption splits -- see --print-schema
 
     # signature is REQUIRED (no default): a string to burn into the bottom of
@@ -122,6 +128,12 @@ else has a working default.
     surah: 33                       # verse span. Omit all three to auto-detect
     ayah_start: 56                  # from whisper.json (short clips only)
     ayah_end: 56
+    reciter: "..."                  # his name in ARABIC, spelled the way the
+                                    # post's hashtag spells it. Copied from
+                                    # the source's own title or an earlier
+                                    # post, never transliterated. Goes into
+                                    # the mp4's tags, never on screen;
+                                    # pipeline/publish.py captions from them.
 
     trim: [927.3, 957.3]            # seconds of source this reel covers.
                                     # Omit and pipeline/align.py measures it
@@ -348,6 +360,33 @@ def _enforce_monotonic(stamps):
         st["start"] = max(st["start"], t)
         st["end"] = max(st["end"], st["start"])
         t = st["end"]
+
+
+def tag_output(path, surah, a0, a1, reciter):
+    """Write the reel's identity into the mp4's own tags.
+
+    pipeline/publish.py builds a post's caption from these and nothing else,
+    so a reel stays publishable with no config beside it, no filename
+    convention to honour and no memory of which source it came from.
+
+    A stream-copy remux: ffmpeg cannot rewrite metadata in place, and the
+    alternative -- passing -metadata through three different renderers'
+    output calls -- would put the same four lines in three files. Costs about
+    a second on a 6 MB reel and touches no pixel.
+    """
+    tmp = path + ".tags.mp4"
+    cmd = [FFMPEG, "-y", "-v", "error", "-i", path, "-map", "0", "-c", "copy",
+           "-movflags", "+faststart+use_metadata_tags",
+           "-metadata", "title=%s %d:%d-%d" % (quran.surah_name(surah),
+                                               surah, a0, a1),
+           "-metadata", "comment=Quran %d:%d-%d" % (surah, a0, a1)]
+    if reciter:
+        cmd += ["-metadata", "artist=%s" % reciter]
+    run(cmd + [tmp])
+    os.replace(tmp, path)
+    if not reciter:
+        print("      no `reciter:` in the config -- publish.py will refuse "
+              "this reel until one is set (or passed with --reciter)")
 
 
 def align_path_for(config_path):
@@ -885,6 +924,7 @@ def run_config(config_path, output_override=None):
     else:
         import render_default
         render_default.render(plan)
+    tag_output(cfg["output"], int(surah), a0, a1, cfg["reciter"])
     print("Done: %s" % cfg["output"])
     return {"surah": int(surah), "ayah_start": a0, "ayah_end": a1,
             "captions": len(arabic), "output": cfg["output"],

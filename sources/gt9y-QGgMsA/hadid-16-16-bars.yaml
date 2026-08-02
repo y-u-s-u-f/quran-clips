@@ -7,6 +7,9 @@ signature: null                 # no watermark
 surah: 57
 ayah_start: 16
 ayah_end: 16
+# Never on screen -- the reciter's name goes into the mp4's tags, and
+# pipeline/publish.py builds the post's caption and hashtag from them.
+reciter: "عبدالله القرافي"
 
 # Hand-set off the envelope -- see waqiah-83-87-bars for why align.py cannot
 # derive a trim on a 33-minute continuous source. Onset: a 0.75s waqf at

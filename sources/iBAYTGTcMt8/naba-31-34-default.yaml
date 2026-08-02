@@ -5,6 +5,9 @@ signature: "TilawatQuraniyyah"
 surah: 78
 ayah_start: 31
 ayah_end: 34
+# Never on screen -- the reciter's name goes into the mp4's tags, and
+# pipeline/publish.py builds the post's caption and hashtag from them.
+reciter: "علي صلاح عمر"
 
 trim: [16.4, 48.0]
 

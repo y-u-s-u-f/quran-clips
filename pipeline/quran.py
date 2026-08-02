@@ -1,10 +1,12 @@
 """pipeline/quran.py -- offline mushaf: verse fetch, Arabic search, translation.
 
 The JSON files under `assets/quran/` are committed copies of alquran.cloud's
-`quran-uthmani` and `en.sahih` editions, plus a word-by-word English gloss
-table. They exist so no stage of the pipeline ever hits the network to learn
-what an ayah says, and so anything put on screen can be checked against them
-character for character.
+`quran-uthmani`, `en.sahih` and `ar.muyassar` editions -- the last being the
+King Fahd Complex tafsir, read only by `tafsir()`, for post descriptions and
+never for anything on screen -- plus a word-by-word English gloss table. They
+exist so no stage of the pipeline ever hits the network to learn what an ayah
+says, and so anything put on screen can be checked against them character for
+character.
 
     TEXT INTEGRITY. The Uthmani strings are load-bearing bytes, not prose.
     They carry codepoints (superscript alif U+0670, small high rounded zero
@@ -100,8 +102,31 @@ def surah_name(n):
     return _SURAH_NAMES[int(n)]
 
 
-def surah_name_ar(n):
-    return _load("uthmani")["surahs"][int(n) - 1]["name"]
+def surah_name_ar(n, plain=False):
+    """The surah's Arabic name. `plain` drops the vocalisation, for text that
+    is TYPED rather than recited -- an Instagram hashtag cannot carry harakat.
+
+    NFC first: alquran.cloud stores surah 3's madda alif DECOMPOSED (U+0627
+    U+0653), and stripping marks off that spelling turns Aal-\u02bfImran's
+    name into two words spelled with a bare alif. Precomposed U+0622 is a
+    letter, so it survives the strip.
+    """
+    name = _load("uthmani")["surahs"][int(n) - 1]["name"]
+    if not plain:
+        return name
+    # U+0671 ALEF WASLA -> U+0627 ALEF: no keyboard types the wasla, so a
+    # hashtag written with one matches nothing.
+    return " ".join(_MARKS.sub("", nfc(name))
+                    .replace("\u0671", "\u0627").split())
+
+
+def tafsir(surah, num):
+    """al-Tafsir al-Muyassar for one ayah, verbatim (King Fahd Complex).
+
+    Never goes on screen: this is the ayah EXPLAINED in modern Arabic, for
+    a post's description, where a caption carries the recited text itself.
+    """
+    return _load("ar.muyassar")["ayahs"][flat_index(surah, num)]
 
 
 def basmalah():

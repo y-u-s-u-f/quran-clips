@@ -8,6 +8,9 @@ signature: null                 # no watermark
 surah: 56
 ayah_start: 83
 ayah_end: 87
+# Never on screen -- the reciter's name goes into the mp4's tags, and
+# pipeline/publish.py builds the post's caption and hashtag from them.
+reciter: "عبدالله القرافي"
 
 # Identical to the bars cut -- measured off the envelope, not derived, because
 # align.py cannot bound itself on a 33-minute continuous source. Onset: a 0.9s

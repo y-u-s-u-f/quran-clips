@@ -8,6 +8,9 @@ signature: null                 # the reference reel carries no handle or mark
 surah: 33
 ayah_start: 56
 ayah_end: 56
+# Never on screen -- the reciter's name goes into the mp4's tags, and
+# pipeline/publish.py builds the post's caption and hashtag from them.
+reciter: "بدر التركي"
 
 # Onset (envelope) at abs 927.45; starting 0.13s earlier gives the hook a
 # frame of air. The end sits 0.5s after "tasliman" decays, inside the deep
