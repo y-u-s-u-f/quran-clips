@@ -244,6 +244,11 @@ transcript; whisper.json records which backend wrote it.
   right-to-left wipe on the first card, strictly sequential crossfades
   after it, and the full band FX chain — glow, bar glow, text glow, scan,
   procedural snow, heat shimmer — confined to the band (pipeline/fx.py).
+  The type is 120pt nominal on a 54px pill (both raised 1.25× on
+  2026-08-01 to match the account's newer reels). The 486px per-line ink
+  cap did NOT rise with them, so cards run 2–3 words to a line and
+  `fit_pt` quietly shrinks the whole reel when one line still overflows —
+  see the caption-balance rules in the make-post skill.
   The geometry is the legacy build's; the emitted filtergraph is NO LONGER
   byte-identical to its frozen golden fixture (the 2026-08-01 speed work
   changed it deliberately — see `OPTIMIZATIONS.md` and CLAUDE.md invariant

@@ -49,23 +49,29 @@ crop: {x: 0, y: 0, w: 1328, h: 747}
 # the right edge of the window, so that margin is zero.
 x_offset: -226
 
-# One card per ayah: the span is five short ayat and a card may never straddle
-# an ayah boundary.
+# Regrouped for the 2026-08-01 resize (96 -> 120pt). The 486px ink cap did
+# not move with the type, so every line had to lose words: what used to fit
+# on one line at 96pt needs two at 120pt. Five cards became six. A card still
+# may never straddle an ayah boundary.
 groups:
-  # Left on the auto break (3/1) after trying the alternatives: "idha" is
-  # short and "al-hulqum" long, so 3/1 gives 370 vs 215 and 2/2 gives 215 vs
-  # 392 -- 3/1 is the closer of the two and neither reaches the ~30px ideal.
-  # The card is a whole ayah with a whole ayah either side, so no boundary can
-  # be re-cut, and the one wide pill that an ayah-closing card would normally
-  # get is not reachable: 4 words on one line raster at ~575px against the
-  # 486px cap, so line_split: 4 is re-wrapped straight back to 3/1.
+  # Still the auto 3/1: at 120pt it is 394 vs 229 (370 vs 215 at 96pt) and 2/2
+  # is 208 vs 421, so 3/1 is still the closer of the two and neither reaches
+  # the ~30px ideal. The card is a whole ayah with a whole ayah either side,
+  # so no boundary can be re-cut, and the wide pill an ayah-closing card would
+  # normally get is even further out of reach than it was: 4 words on one line
+  # raster at 636px against the cap.
   - n_words: 4        # 83  fa-lawla idha balaghati l-hulqum
+  # Was a single-line card at 96pt (473px). Three words ink 524px at 120pt, so
+  # it wraps now -- 143/383 auto. Nothing to be done about it: the words are a
+  # whole short ayah, so there is no boundary to re-cut and no word to shed.
   - n_words: 3        # 84  wa-antum hina'idhin tanzurun
-  # 4/3 leaves ~100px between the lines, but it is the clause joint and the
-  # alternatives are worse: splitting the ayah into two cards would open one
-  # on "wa-lakin", and any other line break separates "minkum" from
-  # "aqrabu ilayhi".
-  - n_words: 7        # 85  wa-nahnu aqrabu ilayhi minkum wa-lakin la tubsirun
-    line_split: 4
+  # Was ONE card of 7 split 4/3 across two lines. At 120pt that first line is
+  # 594px, over the cap, and NO 2-line split of the 7 fits (the best, 3/4, is
+  # 441 + 642). So the card is cut at the joint the line break used to sit on:
+  # "wa-lakin la tubsirun" opens a card instead of a line. The old note called
+  # that the lesser evil against separating "minkum" from "aqrabu ilayhi" --
+  # it still is, and 4/3 is the only cut that keeps that phrase whole.
+  - n_words: 4        # 85a wa-nahnu aqrabu ilayhi minkum
+  - n_words: 3        # 85b wa-lakin la tubsirun
   - n_words: 5        # 86  fa-lawla in kuntum ghayra madinin
   - n_words: 4        # 87  tarji'unaha in kuntum sadiqin

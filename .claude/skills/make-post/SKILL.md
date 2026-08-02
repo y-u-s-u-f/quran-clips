@@ -289,6 +289,13 @@ beside him instead. Remember the canvas differs — the same fraction is
 
 The account's standard, in priority order:
 
+**Budget first: the type is 120pt and the ink cap is 486px, so plan on
+2–3 words a line.** The cap is a frame fraction and did not grow with the
+2026-08-01 resize, so a card that fitted at 96pt often will not now — a
+three-word line that inked 420px inks 524px. `generate.py` reports the pt it
+actually used; if it is below the nominal, one line in the reel is over the
+cap and is dragging the whole reel's type down with it.
+
 1. **The two lines of a card should be close in width** — aim within
    ~30px; over ~60px is visible. `generate.py` prints each card's bar
    width; the auto line-break already balances by width, so intervene only
@@ -299,16 +306,25 @@ The account's standard, in priority order:
    stretch.
 3. **Single-line cards: avoid, except where the card closes on a waqf or
    the end of the ayah** — there they are encouraged, and a long held final
-   word is exactly the case for one wide pill.
+   word is exactly the case for one wide pill. At 120pt that pill is much
+   harder to earn: two words usually fit on one line, three rarely do.
+   `hadid-16-16-bars` lost its ayah-closing single line to the resize and
+   the config says so — that is the pattern, not a bug to fix.
 4. **`line_split` cannot beat the width cap.** Asking for one line only
    gets one if the words fit: a `line_split` whose line rasters past the cap
    is re-wrapped, silently, back to the automatic break. `generate.py`
-   prints the cap — `Arabic pt=96 (nominal 96, widest raw NNNpx, cap
+   prints the cap — `Arabic pt=120 (nominal 120, widest raw NNNpx, cap
    486px)`. So the wide single pill an ayah-closing card would like is not
    always available.
-5. **Some cards simply will not balance — take the closer break and move
-   on.** A four-word card whose 2nd word is short and 4th is long gives 370
-   vs 215 at 3/1 and 215 vs 392 at 2/2. When the card is a whole ayah with a
+5. **One over-cap line shrinks the WHOLE reel.** `fit_pt` scales the type
+   so the widest line fits, so a single stubborn card takes every other
+   card's size down with it (hadid-16-16 renders at 117, not 120, for one
+   484px line). Before accepting that, try re-cutting the card boundary — but
+   accept it rather than break a clause: 3pt is invisible, a phrase cut in
+   the wrong place is not.
+6. **Some cards simply will not balance — take the closer break and move
+   on.** A four-word card whose 2nd word is short and 4th is long gives 394
+   vs 229 at 3/1 and 208 vs 421 at 2/2. When the card is a whole ayah with a
    whole ayah either side, no boundary can be re-cut; when the words also
    overflow the cap, one line is out too. Pick the closer of the two, write
    down in the config why the alternatives were rejected, and stop. Do not

@@ -34,6 +34,18 @@ Until a replacement fixture exists, the guarantee that a look change is
 never a refactor side-effect rests on re-measuring PSNR against the
 previous render, NOT on diffing the graph text.
 
+THE CAPTIONS WERE RESIZED ON 2026-08-01 and the fixture re-blessed again.
+The account's newer reels set the Arabic far larger than the two 720p refs
+these constants came from -- measured off instagram.com/reel/DDAVDmsMQr3,
+whose pill is a constant 54px at 1080 against our 44 and whose type solves
+to ~122pt against our 96. Type went 96 -> 120pt, the pill 44 -> 54 with its
+pad 27 -> 34 and its baseline offset 6 -> 8, and line 2 dropped 15px because
+the taller glyphs closed the gap between the lines to 12px. The ink cap did
+NOT move (0.45 W is a frame fraction and the reference's own pills measure
+0.36-0.45 W), so the extra size had to come out of the WORDS: every bars
+config was regrouped to fewer words per line, and hadid-16-16 now renders at
+117pt because one line in it will not fit at 120.
+
 Per-reel switches, via the config's `fx:` map (e.g. `fx: {heat: false}` --
 heat is ~27% of the remaining render time, measured 118s -> 87s on a 27.5s
 8-card reel, and is the one to drop for a fast preview): grade, scrim, glow,
@@ -87,13 +99,30 @@ SCRIM = {"left_min": 0.20, "left_to_px": 180,
 TEXT = {
     "font": os.path.join(FONT_DIR, "AM_Thulth_Regular_0.1.ttf"),
     "color": (255, 255, 255),
-    "nominal_pt": 96,
-    "min_pt": 60,
-    # Per-line ink cap; bar = ink + 2*pad and the widest ref bar is 0.503 W.
+    # 96 until 2026-08-01. The account's own newer reels set the Arabic far
+    # larger than the two 720p refs these constants were first measured from:
+    # on instagram.com/reel/DDAVDmsMQr3 the tail of 55:24 on its single-line
+    # card inks 165px tall at 720 (= 248px at 1080). The SAME measurement run
+    # over our own render under-reads the true bbox by 7.6% (134 measured vs
+    # 145 computed at 96pt), so the ref's true ink is ~179px at 1080 -- which
+    # this face reaches at ~122pt. Ink width agrees: ref 387px, ours at 132pt.
+    # 120 is the round number inside that bracket.
+    "nominal_pt": 120,
+    "min_pt": 75,
+    # Per-line ink cap; bar = ink + 2*pad. NOT scaled with the type: it is a
+    # frame fraction, and the reference's own pills measure 0.36-0.45 W, so
+    # the cap is where it should be and the 1.25x had to come out of the
+    # WORDS instead (fewer per line -- see the bars configs' `groups`).
     "max_line_width_frac": 0.45,
     # Bar centre lines as fractions of canvas height (measured rows).
+    # line 2 was 0.5592 (a 183px pill-centre gap) until 2026-08-01: at 120pt
+    # the tightest card in waqiah-83-87 left only 12px between line 1's kasra
+    # and line 2's shadda, measured per COLUMN, not bbox-to-bbox -- against
+    # 46px at 96pt. +15px takes it back to 27px. Line 1 did NOT move, so the
+    # block's centre falls 7.5px, toward the reference's (which sits 36px
+    # below the band centre against our 22px).
     "line1_center_y_frac": 0.4637,
-    "line2_center_y_frac": 0.5592,
+    "line2_center_y_frac": 0.5670,
     "single_center_y_frac": 0.5111,
 }
 # ONE drop shadow on the glyphs -- a solid offset copy of the silhouette,
@@ -103,11 +132,15 @@ TEXT_SHADOW = {"color": (0, 0, 0), "opacity": 1.0,
                "dx_frac": 0.0, "dy_frac": 0.003, "blur_px": 0}
 
 # The pill is a highlight band struck THROUGH the letter bodies, not a
-# background box: 44px tall against ~125px of glyph ink.
-BAR = {"height_px": 44, "pad_x_px": 27,
+# background box: 54px tall against ~155px of glyph ink.
+# Was 44/27/6 against 96pt type. Scaled with the 2026-08-01 resize, and the
+# scale is the reference's, not arithmetic: DDAVDmsMQr3's pill is a constant
+# 36.1px at 720 (hard edges, sub-pixel, identical across single- and
+# two-line cards) = 54px at 1080, and its pad measures 22-25px at 720 = ~35.
+BAR = {"height_px": 54, "pad_x_px": 34,
        # Baseline-anchored: this face's tashkeel overshoot the em box by
        # ~0.23em, so neither the ink bbox nor font metrics can place the bar.
-       "baseline_below_center_px": 6,
+       "baseline_below_center_px": 8,
        # The auto/config colour is the bar as it must READ IN THE FINISHED
        # FRAME; the FX screen passes lift the pill by a measured near-constant
        # factor, so it is DRAWN darker to land on target (predraw_color).

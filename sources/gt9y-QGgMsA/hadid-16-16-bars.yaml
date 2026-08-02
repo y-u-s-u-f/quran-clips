@@ -27,20 +27,28 @@ trim: [816.20, 843.75]
 crop: {x: 0, y: 0, w: 1328, h: 747}
 x_offset: -226
 
+# NUMBERS BELOW ARE AT 117pt, not the 120pt nominal: card 5's best split is
+# 2/3 at 395/497 against the 486px cap, so fit_pt takes the whole reel down
+# 2.5% to land it. Every alternative to that split is worse -- 3/2 is 686/208
+# and re-splitting the card would break "min qablu" out of its clause again,
+# the exact cut this grouping was built to undo -- so the shrink is accepted.
+#
 # One long ayah, cut at its clause joints. TWO LINES IS THE DEFAULT for a
 # card here; a single-line card is only kept where it closes on a waqf or on
-# the ayah, and cards 1/3/6 needed `line_split` because they fit under the
-# 486px cap and would otherwise have rendered as one wide pill mid-clause
-# (483, 410 and 458px respectively). `line_split` can only ever ADD a break --
-# a line that rasters past the cap is silently re-wrapped -- so it is the
-# right lever in that direction and no boundary had to move for it.
+# the ayah. Card 3 still needs `line_split` -- it fits under the cap at 434px
+# and would otherwise render as one wide pill mid-clause. Cards 1 and 6 keep
+# theirs for the balance they pick, not because a break is needed: at 117pt
+# both overflow (578 and 491) and would wrap anyway, just to 3/1 and 2/1.
 #
-# The two single-line cards that remain are both earned. Card 7 (fa-qasat
-# qulubuhum, 370px) closes on the ayah's interior waqf, the U+06D6 sala mark
-# the mushaf carries after qulubuhum. Card 8 (wa-kathirun minhum fasiqun,
-# 478px) closes the ayah on a held final word, which is exactly the case for
-# one wide pill. Both DO split cleanly if ever wanted (211/203 and 285/237) --
-# they are single by choice, not for want of a break.
+# THE 2026-08-01 RESIZE COST CARD 8 ITS WIDE PILL. It closes the ayah on a
+# held final word, which is exactly the case for one line, and it had it at
+# 96pt (478px). At 117pt it rasters at 517 and is re-wrapped to 281/223.
+# `line_split` cannot buy it back -- a line past the cap is re-wrapped
+# silently -- so the only lever left would be a smaller nominal, and one
+# card's pill is not worth the whole reel's type. Card 7 (fa-qasat qulubuhum,
+# 385px) still closes on the ayah's interior waqf, the U+06D6 sala mark the
+# mushaf carries after qulubuhum, and is still single BY CHOICE: it splits
+# cleanly at 192/181 if ever wanted.
 #
 # IBTIDA' RESTART at "wa-la yakunu": he says the phrase, breaks off in a 0.5s
 # waqf (827.50-828.00 abs) and says it again before completing it. The
@@ -56,18 +64,20 @@ x_offset: -226
 # earlier 5/5 cut had split "min qablu" off from it.
 groups:
   - n_words: 4        # a-lam ya'ni li-lladhina amanu
-    line_split: 2     # 212/315; 3/1 is 354/173, and the boundary cannot move
+    line_split: 2     # 193/373; 3/1 is 366/200, and the boundary cannot move
                       # -- card 2 would then open on "takhsha'a" with "an"
                       # left dangling at the end of card 1.
-  - n_words: 5        # an takhsha'a qulubuhum li-dhikri llah   273/399 auto
+  - n_words: 5        # an takhsha'a qulubuhum li-dhikri llah   267/420 auto
   - n_words: 4        # wa-ma nazala mina l-haqq
-    line_split: 2     # 225/232; 3/1 is 312/165
+    line_split: 2     # 209/217; 3/1 is 314/135
   - n_words: 2        # wa-la yakunu               <- said twice; its own card
-  - n_words: 5        # ka-lladhina utu l-kitaba min qablu      325/452 auto
+  - n_words: 5        # ka-lladhina utu l-kitaba min qablu      385/484 auto,
+                      # and the 484 is what pins the reel to 117pt.
   - n_words: 3        # fa-tala 'alayhimu l-amad
-    line_split: 1     # 186/316; 2/1 is 328/174, i.e. worse both ways round.
+    line_split: 1     # 161/319; 2/1 is 334/146, i.e. worse both ways round.
                       # No three-word card of these words balances -- taking
                       # a word off card 5 would break "min qablu" out of its
                       # clause again, which is the cut the restart card fixed.
   - n_words: 2        # fa-qasat qulubuhum         <- single line: waqf (U+06D6)
-  - n_words: 3        # wa-kathirun minhum fasiqun <- single line: ayah end
+  - n_words: 3        # wa-kathirun minhum fasiqun <- 281/223; the ayah-closing
+                      # wide pill is out of reach at 117pt (see above)

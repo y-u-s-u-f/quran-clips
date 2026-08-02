@@ -122,7 +122,16 @@ script stays independently runnable; do not "deduplicate" that.
   transitions with gap-fitting), and `build_graph()` (the filtergraph).
   Every constant at the top of the file is a measured value from reference
   reels; the provenance notes live in `legacy/templates/bars.yaml` and
-  `legacy/style/refs2/`.
+  `legacy/style/refs2/`. The CAPTION constants no longer come from those
+  two 720p refs: on 2026-08-01 the type went 96 -> 120pt, the pill 44 -> 54
+  and line 2 dropped 15px, measured off a newer account reel
+  (instagram.com/reel/DDAVDmsMQr3, whose pill is a constant 54px at 1080
+  and whose type solves to ~122pt). `max_line_width_frac` deliberately did
+  NOT scale — it is a frame fraction and the reference's own pills measure
+  0.36-0.45 W — so the size came out of the WORDS instead, and every bars
+  config was regrouped to fewer words per line in the same change. A card
+  that will not fit at 120pt takes the whole reel down with it via
+  `fit_pt`; hadid-16-16 renders at 117 for exactly that reason.
 - **`pipeline/render_hz.py`** — native landscape 1920x1080, ported from
   `legacy/scripts/render_text.py` + `build_render.py`. Same split as bars
   (`layout()` / `draw_layers()` / `schedule()` / `build_graph()`). Its
