@@ -1,273 +1,28 @@
-"""pipeline/crop.py -- solve a reel's 16:9 framing ONCE, at authoring time.
+"""pipeline/crop.py -- solve a reel's 16:9 framing at authoring time.
 
     tools/render-venv/bin/python pipeline/crop.py sources/<id>/<reel>.yaml
         [--frames 4] [--annotate out.png] [--write] [--force]
         [--dry-run] [--measurements FILE]
 
-Samples frames out of the reel's own window, asks a vision model where the
-reciter is, computes the crop window with plain arithmetic, prints the solve,
-and with --write edits `crop:` and `x_offset:` into the config.
+Samples frames, asks a vision model where the reciter is, computes the crop
+with arithmetic, prints; `--write` edits `crop:` + `x_offset:` into the
+config. `bars`/`hz` only (`default` uses YuNet at render).
 
-`bars` and `hz` only. `style: default` re-crops at RENDER time from YuNet
-(render_default.py `detect_subject`/`vertical_crop_filter`) and is left alone.
+Authoring only (invariant 4): model never consulted at render. Model returns
+head/crown/shoulders; never a crop. Bad answer = wrong box on `--annotate`.
 
-    WHY THIS IS AUTHORING AND NEVER RENDERING. CLAUDE.md invariant 4: nothing
-    outside committed files may affect a rendered pixel. A model call inside a
-    renderer would make two renders of one config differ, and the difference
-    would be invisible until someone diffed the frames. So the model is asked
-    once, here, the answer becomes four integers in a tracked YAML with a
-    provenance comment naming the model and the date, and generate.py and the
-    renderers stay pure and offline. The shape -- shell out to a model, force a
-    strictly-parsed numeric answer, cache to disk, degrade to something
-    deterministic, record which path was taken -- is
-    legacy/qc/author/linebreak.py's, and is followed here for the same reason:
-    the model's judgement is worth having and its output is never trusted.
+Horizontal (`targets()`, legacy equal-gap): caption = fixed-width column
+(centre ~0.302); reciter = HEAD box including headwear, not body. Body is
+containment only (clamped to BODY_FROM_FACE face widths of head centre);
+`outer` is air beyond the HEAD — overhang is printed. Caption yields if
+holding him puts text on his face.
 
-The model NEVER sees or returns a crop. It answers where the head, the crown
-and the shoulders are, as fractions of the frame, and the window is arithmetic
-from there. So a bad answer is a visibly wrong box on --annotate, not a
-plausible-looking crop nobody can check.
+Vertical: face at FACE_Y_FRAC; FACE_Y_BAND is printed scatter, not a refusal;
+crown/MAX_HEADROOM wins when they conflict. `_reconcile()` ties crown_y /
+face_cy to the head box before vertical().
 
---- the horizontal rule: equal gaps -------------------------------------------
-
-Ported from legacy/qc/author/crop.py:352 `targets()`. The frame width is
-divided between the caption column and the reciter's block, and the three gaps
--- outside the caption, between the two, outside the reciter -- are equal. Two
-gaps when the reciter runs off his own outer edge, which a wide shot always
-makes him.
-
-It reproduces the shipped reels only under one reading of its two terms, so the
-reading is written down here:
-
-  "caption block" is the FIXED-WIDTH caption column, not the ink of the current
-  phrase. Ink edges swing +/-0.09 W between phrases; the column centre does not
-  -- measured 0.302 +/- 0.006 across every frame of four reels.
-
-  "reciter block" is his HEAD BOUNDING BOX INCLUDING HEADWEAR, edge to edge --
-  not his head centre (with the centre the three gaps come out ~3x apart), and
-  NOT his body, which is what legacy's max(body, head) used.
-
-  The head reading is what the rule's own two published numbers pin. Solving
-  the three-gap branch for the block that lands the caption at `cap` gives
-  block = 1 - 3*cap + cap_w/2, and the hz reference reel's pair -- head centre
-  0.780 of the window, caption column at 0.302 -- is the SAME equation twice:
-  both reduce to gap + block/2 = 0.2225, i.e. block = 0.346. The two-gap branch
-  cannot produce that pair at all (it forces 2*gap + block = 1 - cap_w). Badr
-  al-Turki's head spans 0.336 of that window and his robe 0.461, so the pair
-  names the head.
-
-  Measured over the five known-good windows, caption anchor error against the
-  shipped value, |predicted - shipped|:
-
-                   head block   max(body, head)
-      YkXjYyKwHJ4     0.0021        0.0359
-      vqxYwdR4RvQ     0.0537        0.0093
-      9Yci0oWB2fE     0.0139        0.0417
-      1CQYaDe-nLE     0.0037        0.1759
-      -GZR1C9Acd4     0.0163        0.0606
-
-  The body block's 1CQYaDe-nLE row is the point: a 0.124 W anchor puts the
-  pills hard against the left edge of frame, which is the -0.105 failure of
-  sources/9Yci0oWB2fE/meta.yaml one step short of going negative. The one row
-  it wins, vqxYwdR4RvQ, is a reciter in full profile, where the head is only
-  0.116 W and the rule honestly asks for a caption further out than the 0.300
-  that source's cached solve was hand-pinned to.
-
-  Checked the other way round -- each shipped reel's head width measured in its
-  FINAL frame, run through the rule, against the anchor that reel actually
-  ships:
-
-      reel                        head w   rule says   shipped   delta
-      BADR-AL-TURKI (hz)           0.341     0.304      0.310    0.006
-      ABDULLAH-AL-JUHANY (bars)    0.335     0.297      0.301    0.004
-      AHMAD-AL-HUDHAIFI (bars)     0.314     0.304      0.299    0.005
-      AHMED-BIN-TALIB (bars)       0.148     0.359      0.302    0.057
-
-  Three of four inside 0.006. AHMED-BIN-TALIB is vqxYwdR4RvQ, and its 0.057 is
-  a KNOWN HAND-PIN THE SOLVER DISAGREES WITH ON PURPOSE, not a bug to tune out:
-  it is a wide profile shot with a 0.148 W head, the rule honestly asks for a
-  caption further out than the 0.300 that clip was pinned to, and moving the
-  rule to reproduce 0.300 would move the three reels that currently land on it.
-  vqxYwdR4RvQ is a regression target for its WINDOW and not for its anchor.
-
---- the body: a containment constraint, never gap arithmetic ------------------
-
-The body is measured for ONE job: to veto a window that cuts his silhouette.
-
-This is the bug that produced this paragraph. A live solve of vqxYwdR4RvQ on
-2026-08-01 (head cx 0.545, w 0.120 W; body 0.460..0.675 W; 4/4 frames, model
-confidence 0.98 -- the perception was right) chose {x:180, y:106, w:666, h:374}
-and REPORTED `outer 0.106`, a healthy margin. Its right edge was at x=845 and
-his robe reaches x=864: it measured the margin from his head (0.231 of the
-window) while his body spans 0.413 of it, and cut through his back while
-printing a number that said it had not. Gaps from the head is right; taking
-"there is air beyond his head" to mean "there is air beyond HIM" is not.
-
-So the two roles are separated. The head sets the three gaps. The body sets a
-band of legal window lefts, and inside that band the gap rule still picks. The
-band is:
-
-  CONTAIN     the window must hold body_left..body_right.
-  CAPTION     ... unless holding him would push the caption column onto his
-              head, in which case containment yields and he bleeds off his
-              outer edge, which is what the two-gap branch of the rule already
-              says happens on a wide shot. This is not hypothetical: the
-              shipped ABDULLAH-AL-JUHANY reel (1CQYaDe-nLE, window 666 px wide
-              because a full-width burned-in name plate forces the zoom) runs
-              his gold bisht 72 px off the right edge, and the window that
-              would contain it sits 72 px further right, where the pills land
-              on his ghutrah. Frame-checked: his head clears the caption column
-              by 0.057 of the window as shipped and by -0.052 contained.
-
-  The order matters and is measurable. Containment first would move
-  1CQYaDe-nLE's window 72 px (5.6% of frame) off its shipped value and put text
-  on his face; caption-clearance first leaves all four shipped windows where
-  they are and still moves vqxYwdR4RvQ off his back.
-
-  The band is per zoom level and does NOT choose between zoom levels -- see
-  solve() for the two versions that did and what each of them broke. Bleeding
-  off the outer edge is a shipped look: BADR-AL-TURKI and ABDULLAH-AL-JUHANY
-  both do it. What was never shipped is doing it while printing an `outer` gap
-  that says there is air there, so an overhang is now always printed.
-
---- clamping the body reading ------------------------------------------------
-
-The body is not trusted raw. BODY_FROM_FACE and HEAD_FROM_FACE are legacy/qc/
-author/crop.py:89-90, where they clamp a motion-blob silhouette for exactly
-this reason, and they are carried over with their arithmetic: a face is
-head_w / HEAD_FROM_FACE wide, and the body may reach BODY_FROM_FACE face widths
-out from the CENTRE OF HIS HEAD on either side -- 1.3 head widths a side.
-
-Half-extents actually measured, in head widths, over the five known sources
-(the wide ones re-checked against the pixels, not just against the model):
-
-      YkXjYyKwHJ4  0.593 / 0.779      1CQYaDe-nLE  0.847 / 1.163
-      vqxYwdR4RvQ  0.708 / 1.083      -GZR1C9Acd4  0.689 / 0.821
-      9Yci0oWB2fE  0.637 / 0.637
-
-None is clamped; 1.163 is 1CQYaDe-nLE's gold shoulder, verified at x~890 of
-1280 by eye. What IS clamped is the failure class: 9Yci0oWB2fE's swaying
-congregation once measured `reciter_w_frac` 1.201 against a 0.198 W head -- 3.0
-head widths a side -- solved the caption anchor to -0.105, off the left edge of
-frame, and REPORTED SUCCESS (sources/9Yci0oWB2fE/meta.yaml carries the
-write-up). A body wider than 2.6 face widths from the centre of his head is a
-detection artefact, not a reciter.
-
-Legacy clamps at 2.4 face widths a side, not 2.6. The looser number is kept
-because legacy measures from the FACE centre and this file measures from the
-HEAD centre, which on a profile shot is not the same point -- vqxYwdR4RvQ's
-ghutrah puts the two ~0.15 head widths apart.
-
---- the vertical rule: face at 0.275 of the window ---------------------------
-
-FACE_Y_FRAC and FACE_Y_BAND are the numbers legacy/qc/author/crop.py carries,
-re-measured from pixels rather than inherited: all 16 frames of four shipped
-reels put the face centre at 0.275 of the footage height, spanning 0.247-0.33.
-Headroom above the crown over the same frames is 0.00-0.08, mean 0.035.
-
-So the face target is primary and the crown is the guard: put the face at
-0.275, then refuse to clip the crown and refuse more air above it than any
-shipped reel has. Ordering it the other way -- crown plus a headroom budget,
-then clamp the face -- costs precision where it is checkable: with headroom
-capped at the 0.05 budget, vqxYwdR4RvQ's window lands 18 px (4% of its height)
-below the shipped one; face-first lands within 4 px, and 9Yci0oWB2fE within 5.
-
-    KNOWN LIMIT, inherited whole, and it cost a day. What the eye reads is
-    HEADROOM and the face is a proxy for it. The proxy holds for an upright
-    reciter and breaks for a bowed one: Salih al-Ansari (-GZR1C9Acd4) recites
-    deeply bowed, so his face sits low inside a tall head and pinning it at
-    0.275 pushes his crown off the top of the band. Centring the face at 0.50
-    was tried on 2026-07-30 and reverted the next day -- it rescued him by
-    accident and looked wrong on every upright reciter in reels/. Here the two
-    constraints are simply allowed to be inconsistent: when no y satisfies both
-    the band and the crown, the CROWN WINS -- y falls back to whatever the
-    crown/headroom constraint alone allows, and FACE_Y_BAND is the one that
-    gives way.
-
-    UPDATE 2026-08-01: that fallback used to also refuse to write. It no
-    longer does -- FACE_Y_BAND is the shipped reels' own scatter, not a
-    tolerance, and report() prints the miss rather than raising it as an
-    error; see FACE_Y_BAND's own comment for the measurement that this
-    dropped a hand-solve for a difference smaller than the model's own
-    run-to-run noise. The crown/headroom constraint itself is untouched by
-    this -- it was never the thing doing the refusing, only the thing the
-    band's fallback falls back to.
-
-This is also why the model is asked for `face_cy` separately from the head box.
-A head box including a ghutrah does not centre on the face: on 9Yci0oWB2fE the
-old detector's head+ghutrah box centred 57 px below the face on a 390 px head
-(see the hand-solve note in sources/9Yci0oWB2fE/meta.yaml), which is 0.09 of
-that window's height -- enough on its own to walk the 0.24-0.34 band.
-
---- and why crown_y and face_cy are then RECONCILED against the head box ------
-
-The two of them come back as free-floating scalars and the arithmetic above
-reads the DIFFERENCE between them. Nothing makes the model keep that difference
-consistent with the head it just boxed, and at 32b/fp8 it does not.
-
-Three --force solves of vqxYwdR4RvQ on 2026-08-01, each already pooling 3
-passes over the same four frames (PASSES was 3 at the time), landed the face
-at 0.265, 0.275 and 0.231 of the window: the SAME source wrote twice and
-refused once, back when landing outside FACE_Y_BAND still refused. All three had
-headroom pinned at ~0.08, so it was MAX_HEADROOM binding every time -- `want`
-falls below `crown - MAX_HEADROOM*h` exactly when face_cy - crown_y < 0.195*h,
-and the model put that distance at 0.375 head heights (0.090 H against a
-0.240 H head) where every hand-measured upright source in the fixtures shows
-0.500-0.560.
-
-Widening MAX_HEADROOM is not the fix: 0.08 is the most air any shipped reel has
-above the crown, and loosening it walks the crown toward the top edge. The
-INPUT is what is wrong, so it is repaired before vertical() sees it, in
-_reconcile(): crown becomes the head box's own top, and face_cy is clamped to
-FACE_IN_HEAD head heights below that.
-
-Not because the box holds still -- it does not. Over 15 passes of vqxYwdR4RvQ
-head_h came back anywhere from 0.160 to 0.280 H and head_cy from 0.280 to
-0.350. It is because tying the two scalars TO the box makes the crown
-constraint self-satisfying, and then the face fraction stops depending on the
-box at all: with face = crown + r*head_h and r at the FACE_IN_HEAD floor,
-`want` lands inside [lo, hi] and y = face - FACE_Y_FRAC*h, so fy comes out at
-0.275 whatever the box does. The window's y still follows the box, which is
-right -- it is where he is. What no longer follows it is the write/refuse
-decision.
-
-The separately-reported crown_y is dropped for the box top because it is the
-reading that disagrees with itself: over those same passes it sat 0.000-0.030 H
-BELOW its own box top on vqxYwdR4RvQ and 0.000-0.040 H ABOVE it on
-YkXjYyKwHJ4, and on YkXjYyKwHJ4 that one 0.040 alone swings the crown-to-face
-distance from 0.400 to 0.750 head heights -- i.e. it reads an upright reciter
-as more bowed than the hand-measured bowed one.
-
-face_cy stays a separate reported field, and inside the band the model's own
-answer is used untouched -- which is exactly what the ghutrah case above needs.
-
---- the guards ---------------------------------------------------------------
-
-Each one closes a failure that has already happened here:
-
-  body reach clamped to BODY_FROM_FACE face widths either side of the head
-  centre, and to the frame. See the section above for the 1.201 incident it
-  closes.
-
-  caption centre must land in (0, 1), or nothing is written.
-
-  the window may not cut his silhouette while a containing window exists that
-  still clears the caption. When none does, the overhang is PRINTED as a
-  fraction of the window rather than swallowed -- see the vqxYwdR4RvQ solve
-  that reported `outer 0.106` over a cut back.
-
-  obstructions are avoided, not fatal. If no window clears them the solver says
-  which box blocked and falls back to the best obstruction-ignoring window with
-  a warning, because returning nothing is worse: the same file records two of
-  six "burned-in" boxes on that source being a microphone cluster and a pillar
-  edge, and the solver refusing every window because of them. The prompt tells
-  the model at length that furniture is not a graphic, and a box seen in fewer
-  than half the frames is dropped as a hallucination.
-
-  --annotate draws the head box, the clamped body extent, the window, the
-  caption column and the three gaps, labelled, over a real frame. A bad solve
-  is caught by eye in one look; the numbers alone never catch it -- the cut
-  back above passed every printed number it had.
+Refuses: no face, off-frame caption. `--annotate` is the primary check —
+geometry guards only check the model's numbers against each other.
 """
 import argparse
 import datetime
@@ -326,96 +81,36 @@ def envvar(name, default=None):
 
 # --- the owner's numbers ---------------------------------------------------
 
-CAPTION_W = {"bars": 0.45,     # = render_bars.TEXT["max_line_width_frac"]
-             "hz": 0.504}      # = 2 x the old CAPTION_HALF_W 0.252
-CANVAS_W = {"bars": 1080,      # render_bars.BAND_W; x_offset is px on this
-            "hz": 1920}
-MIN_GAP = 0.02                 # a gap thinner than this is not a gap
-FACE_Y_FRAC = 0.275            # face centre in the window; measured, see above
-FACE_Y_BAND = (0.24, 0.34)     # the shipped reels' own observed spread -- a
-# 0.10-wide range, not a correctness bound. It used to gate a hard refusal;
-# demoted 2026-08-01 because the reference reels it is measured from were
-# never consistent with each other to begin with, and pooling PASSES queries
-# to stabilise a threshold drawn through the middle of their own scatter was
-# chasing noise smaller than the scatter: three --force solves of
-# vqxYwdR4RvQ on the SAME four frames landed the face at 0.243 (inside), 0.275
-# (inside) and 0.231 (outside) of the window -- a 0.012 run-to-run wobble,
-# 12% of the band's own width, flipping a write into a refusal for the same
-# source. report() still prints when a solve falls outside the band -- it is
-# worth a look -- but the config is written either way; --annotate is the
-# check now, not the number.
-MAX_HEADROOM = 0.08            # most air above the crown any shipped reel has
-FACE_IN_HEAD = (0.50, 0.85)    # how far the face centre sits below the top of
-# the head box, in head heights -- the band _reconcile() clamps face_cy into.
-# Hand-measured on the five fixture sources: 0.500 (9Yci0oWB2fE), 0.528
-# (1CQYaDe-nLE), 0.529 (YkXjYyKwHJ4), 0.560 (vqxYwdR4RvQ) upright, median
-# 0.528; 0.759 on the bowed al-Ansari (-GZR1C9Acd4). Live, over 15 passes of
-# vqxYwdR4RvQ, the model answers 0.350-0.687 per pass and 0.35-0.46 after the
-# median -- it puts the face most of a head too high, and that is the whole
-# instability; see "reconciled against the head box" above.
-# 0.50 is the LOW edge because it is the tightest reading the pixels actually
-# show, so it is the smallest clamp that keeps `want` off the MAX_HEADROOM
-# ceiling: at 0.50 the crown-to-face distance is 0.50 * head_h, and vqxYwdR4RvQ
-# needs 0.195 * h against a head that is 0.37-0.47 of the window tall.
-# 0.85 is a below-the-chin guard and nothing more. It has to stay CLEAR of
-# 0.759, because that reading is precisely what makes -GZR1C9Acd4 fall outside
-# FACE_Y_BAND; a high edge tight enough to look symmetric (0.56, say) would
-# clamp the bowed reciter back into the band and hide his broken framing
-# instead of printing it.
-MIN_CONF = 0.4                 # a frame the model is unsure of is not a vote
-BODY_FROM_FACE = 2.6           # legacy/qc/author/crop.py:89 -- how far his
-HEAD_FROM_FACE = 2.0           # legacy/qc/author/crop.py:90 -- silhouette may
-# reach from the centre of his head, in FACE widths, and the head-width-to-
-# face-width converter that makes the first number usable here (this file has
-# no face box, only a head box). See "clamping the body reading" above: the
-# five known sources measure 0.593-1.163 head widths a side against this
-# 1.3-head-width bar, and 9Yci0oWB2fE's congregation measured 3.0.
+CAPTION_W = {"bars": 0.45,     # render_bars.TEXT["max_line_width_frac"]
+             "hz": 0.504}      # 2 x render_hz CAPTION_HALF_W
+CANVAS_W = {"bars": 1080, "hz": 1920}
+MIN_GAP = 0.02
+FACE_Y_FRAC = 0.275            # measured face centre in shipped windows
+FACE_Y_BAND = (0.24, 0.34)     # shipped scatter; printed, never a refusal
+# (model noise on this number is bigger than the band -- vqxYwdR4RvQ same
+# four frames: 0.243 / 0.275 / 0.231). --annotate is the check.
+MAX_HEADROOM = 0.08
+FACE_IN_HEAD = (0.50, 0.85)    # face_cy below box top, in head heights
+# Fixtures: upright 0.500-0.560 (median 0.528), bowed al-Ansari 0.759.
+# Low edge = tightest real reading (keeps want off MAX_HEADROOM). High edge
+# stays clear of 0.759 so bowed framing still prints outside the band.
+MIN_CONF = 0.4
+BODY_FROM_FACE = 2.6           # legacy crop.py:89, from HEAD centre
+HEAD_FROM_FACE = 2.0           # legacy crop.py:90
+# Fixtures reach 0.593-1.163 head widths a side; congregation hit 3.0.
 
 # --- the model -------------------------------------------------------------
-#
-# Shelled out to the Claude Code CLI (`claude -p`), not an HTTP API: the
-# question reaches the model over the user's own local `claude` auth, so this
-# script needs no API key of its own (contrast the OpenRouter/Qwen transport
-# it replaces, which needed OPENROUTER_API_KEY). Only the transport changed --
-# the prompt, the schema and every guard below are untouched.
+# `claude -p` over local auth; no API key. Prompt/schema/guards are the
+# contract the arithmetic depends on.
 
-MODEL = "sonnet"                       # the alias passed to `claude --model`
-
-# Frame width sent to the model. Anthropic tokenises an image at roughly
-# (w_px * h_px) / 750 tokens, so a 1280x720 frame costs ~1.2k tokens and a 4K
-# frame would cost ~10x that for no more precision than the source's own
-# detail already gives up at this size.
-FRAME_W = 1280
+MODEL = "sonnet"
+FRAME_W = 1280                 # ~1.2k tokens/frame; 4K buys nothing here
 EST_TOKENS_PER_FRAME = 1200
-CTX = 1000000                          # tokens, Claude Sonnet's context window
-GRID = 1000.0                          # the model's own coordinate space --
-# unchanged from the Qwen-VL transport this replaces because the PROMPT text
-# asking for it is unchanged (see to_fractions() for why that prompt asks for
-# a 0-1000 grid rather than fractions or pixels).
-
-TIMEOUT = 180.0                        # a `claude -p` call spends a couple of
-# turns reading N images off disk before it answers -- measured 6-8s for one
-# frame and ~7.5s for four on this machine -- so 180s leaves headroom for a
-# slower box without hanging forever on a wedged CLI.
-RETRIES = 3
-# Bounded retries for a transient CLI hiccup (non-zero exit, a timeout) or a
-# reply that fails the defensive parse in parse() -- never a silent default.
-# See ask().
-
+CTX = 1000000
+GRID = 1000.0                  # prompt asks for 0-1000, not fractions
+TIMEOUT = 180.0                # ~7.5s for 4 frames measured; headroom
+RETRIES = 3                    # transient CLI / malformed parse; never silent
 PASSES = 1
-# Was 3 -- independent `claude -p` calls over the SAME frames pooled into one
-# median, carried from the OpenRouter/Qwen transport this replaces. The whole
-# reason to pool was to stabilise the FACE_Y_BAND refusal against run-to-run
-# noise: the same four vqxYwdR4RvQ frames landed the face at 0.243, writable,
-# on one run and 0.231, refused, on the next. That was a 0.012 wobble
-# flipping a decision inside a 0.10-wide band that was only ever the shipped
-# reels' own scatter, not a tolerance -- see FACE_Y_BAND's comment. Now that
-# the band no longer refuses, there is nothing left for pooling to buy: one
-# pass costs one subprocess call instead of three, ~8s instead of ~25s for a
-# 4-frame solve. median()/_spread() already handle a single pass correctly
-# (a one-element spread is 0.0 by construction, not a division), so nothing
-# downstream needed to change to drop this.
-
 PROMPT = """You are framing a Qur'an recitation video for a vertical social \
 media reel. I am showing you %d frames sampled from one continuous shot of the \
 same recitation, in time order. Report, PER FRAME and in that same order, where \
@@ -560,22 +255,8 @@ def extract(src, times, tmp, W, H):
 
 
 def to_fractions(parsed):
-    """The model's 0-1000 grid -> fractions of the frame, in place.
-
-    The grid is not decoration, it is the model's own coordinate space: the
-    Qwen-VL series is trained on grounding normalised to 0-1000, and it answers
-    in that space whatever units the prompt asks for. Measured on
-    vqxYwdR4RvQ frame 0 against a hand-read head at cx 0.567 W, crown 0.139 H,
-    body 0.465..0.684 W:
-
-        asked for 0..1 fractions   head cx 0.610   body 0.510..0.730
-        asked for frame pixels     head cx 0.469   body 0.391..0.547
-        asked for the 0-1000 grid  head cx 0.545   body 0.460..0.675
-
-    The pixel form is the worst of the three because the model normalises to
-    1000 anyway and the divisor is then wrong by 1280/1000. Asking in the
-    grid's own units and dividing here is the only form that is not a guess
-    about what the model meant."""
+    """0-1000 grid -> frame fractions. The model answers in that grid; asking
+    for 0..1 or pixels mis-scales (measured on vqxYwdR4RvQ)."""
     for f in parsed.get("frames") or []:
         if not isinstance(f, dict):
             continue
@@ -598,13 +279,8 @@ def to_fractions(parsed):
 # --- the model call --------------------------------------------------------
 
 def ask(paths, dims, cwd):
-    """One `claude -p` call, N frames. -> (parsed dict, envelope dict).
-
-    Frames are referenced by absolute path in the prompt text rather than
-    base64-encoded inline: `claude -p` reads an image file off disk when the
-    prompt names its path (verified live against this repo's own `claude`
-    install -- there is no image_url payload the way OpenRouter's API took
-    one), so extract()'s files are named here instead of read and encoded."""
+    """One `claude -p` call. -> (parsed, envelope). Paths named in the prompt;
+    CLI reads the JPEGs off disk."""
     listing = "\n".join("  frame %d: %s" % (i, p) for i, p in enumerate(paths))
     prompt = (PROMPT % (len(paths), dims[0], dims[1])
               + "\n\nThe frames, in the same time order, are these image "
@@ -613,20 +289,7 @@ def ask(paths, dims, cwd):
     cmd = [cli, "-p", prompt, "--model", MODEL, "--output-format", "json",
            "--allowedTools", "Read", "--strict-mcp-config",
            "--json-schema", json.dumps(SCHEMA)]
-    # --allowedTools Read: this call only ever needs to look at the sampled
-    # frames, never to edit a file or run a command.
-    # --strict-mcp-config with no --mcp-config: zero MCP servers, so whatever
-    # MCP setup the user's own `claude` has cannot make this call slower or
-    # less deterministic -- crop.py's answer must depend only on the frames.
-    # --json-schema SCHEMA: `claude -p` DOES have a structured-output flag
-    # (verified against `claude --help`, not assumed) and passing it cut a
-    # live gt9y-QGgMsA solve's malformed-reply rate to zero -- without it the
-    # model fenced its JSON in ```json, tacked a trailing sentence on after
-    # the closing fence, or drew an obstruction box as x0/y0/x1/y1 with a
-    # "label" key, none of which OpenRouter's `strict: true` ever let through.
-    # It is a reliability improvement, not a replacement for parse()'s
-    # defensive parsing below -- nothing guarantees a future CLI version (or
-    # a differently-behaving model) keeps honouring it as strictly.
+    # Read only; no MCP; schema cuts common malformations; parse() still walks.
     last_err = None
     for attempt in range(RETRIES):
         if attempt:
@@ -672,22 +335,8 @@ def ask(paths, dims, cwd):
 
 
 def parse(text):
-    """Strict: the answer is JSON matching SCHEMA, or it is nothing.
-
-    There is no `response_format: json_schema, strict: true` enforcement over
-    a CLI call the way OpenRouter's API gave the old transport -- `claude -p
-    --output-format json` guarantees only the ENVELOPE is JSON, not whatever
-    the model puts in its `result` string -- so the reply is parsed
-    defensively by hand: strip a markdown fence (a model told to answer with
-    "the JSON object and nothing else" still wraps it in ```json and/or
-    tacks on a stray closing sentence often enough that failing on either
-    would be failing on a formality), locate the JSON object by its own
-    braces rather than trusting the fence to be clean, then walk SCHEMA over
-    the parsed object with _validate() -- the same schema OpenRouter used to
-    hand the provider for server-side enforcement. Raises ValueError, not
-    SystemExit, so ask() can retry a malformed reply a bounded number of
-    times before giving up loudly -- never substituting a default for a
-    field that failed to come back."""
+    """JSON matching SCHEMA, or ValueError (ask() retries). Envelope is JSON;
+    `result` is not -- strip fence, take first {...}, walk SCHEMA."""
     s = (text or "").strip()
     fence = re.search(r"```(?:[a-zA-Z]*)\s*\n(.*?)```", s, re.DOTALL)
     if fence:
@@ -710,12 +359,7 @@ def parse(text):
 
 
 def _first_json_object(s):
-    """The first balanced {...} in s. -> the substring.
-
-    Cuts off anything the model appended after the object -- the trailing
-    "All four frames show the same static shot..." sentence this exists for
-    was observed live on gt9y-QGgMsA, past the closing ``` of an otherwise
-    well-formed reply."""
+    """First balanced {...}; drops trailing prose after the object."""
     depth = 0
     for i, ch in enumerate(s):
         if ch == "{":
@@ -728,18 +372,7 @@ def _first_json_object(s):
 
 
 def _validate(schema, value, path):
-    """SCHEMA, walked by hand over a parsed reply. -> [problem, ...].
-
-    Every field SCHEMA lists as required must be present, and every value
-    must be of the type (or enum) SCHEMA declares, at every level -- this is
-    the "required field is present and numeric" half of what `strict: true`
-    checked server-side over the OpenRouter transport. NOT the other half: an
-    extra property (Claude volunteers a "frame" index or an obstruction
-    "label" the OpenRouter transport's strict schema would have refused to
-    emit at all) is left alone rather than failed, because every consumer
-    downstream (usable(), median(), _boxes()) already reads fields by name
-    and ignores anything else -- rejecting a harmless addition would fail a
-    reply that answered the actual question correctly."""
+    """Required fields + types. Extra keys ignored (consumers read by name)."""
     t = schema.get("type")
     problems = []
     if t == "object":
@@ -826,14 +459,7 @@ def median(frames):
 
 
 def _reconcile(m):
-    """Make crown_y and face_cy agree with the head box before the geometry.
-
-    Medianed per key, the three readings can come from three different passes,
-    and vertical() then subtracts two of them from each other. The box is the
-    one of the three that holds still, so it is the one that arbitrates: crown
-    is its top, and face_cy is clamped to FACE_IN_HEAD head heights below that.
-    Both raw readings are kept for report() to print -- when the clamp fires it
-    is the model that was wrong, and that is worth seeing rather than hiding."""
+    """Tie crown_y / face_cy to the head box; keep raws for report()."""
     top = m["head_cy"] - m["head_h"] / 2.0
     lo = top + FACE_IN_HEAD[0] * m["head_h"]
     hi = top + FACE_IN_HEAD[1] * m["head_h"]
@@ -855,11 +481,7 @@ def _spread(v):
 
 
 def _boxes(per_frame, min_share=0.5):
-    """Obstruction boxes seen in at least half the frames, unioned.
-
-    A box in one frame of four is either a hallucination or an INTERMITTENT
-    lower-third; neither may narrow the window. A real burned-in graphic is in
-    every frame."""
+    """Boxes in >= half the frames, unioned. One-frame hits are dropped."""
     clusters = []
     for boxes in per_frame:
         for b in boxes:
@@ -892,24 +514,12 @@ def _union(a, b):
 # --- the geometry (no model involved) --------------------------------------
 
 def targets(style, side, block):
-    """Where the reciter's block centre and the caption centre must land.
-
-    Both are fractions of the OUTPUT window; `side` is the caption's side.
-    `block` is the head bounding box width as a fraction of the same window --
-    see the module docstring for why it is the head and not the body.
-
-    ONE rule for both styles, because the two per-style rules this replaces
-    were the same rule written twice: default's `A = (0.49 - w_r)/3` has 0.49 =
-    1 - 0.504, the caption column's width, so A is "split what is left over into
-    three equal gaps"; bars' "anchor 0.30 W, reciter clears 0.60 W" is
-    (0.60 - 0.45)/2 + 0.45/2 = 0.30 exactly, equal gaps either side of a 0.45
-    column with the reciter running off his outer edge."""
+    """Equal-gap centres (fractions of the output window). `block` = head
+    width / window. Same rule for bars and hz."""
     cap_w = CAPTION_W[style]
     gaps = 1.0 - block - cap_w
     outer = gaps / 3.0
     if outer < MIN_GAP:
-        # No room for air on his outer side: let him run off that edge and
-        # split what is left into the two gaps that bracket the caption.
         outer, inner = 0.0, max(gaps / 2.0, MIN_GAP)
     else:
         inner = outer
@@ -921,26 +531,15 @@ def targets(style, side, block):
 
 
 def caption_side(m):
-    """Which side the caption column goes on.
-
-    The composition rule is "the side he faces" -- a reciter turned to screen
-    left has the room in front of his face on that side, and text behind a head
-    reads as text stuck to it. Square to camera says nothing, so fall back to
-    the side he is NOT on."""
+    """Caption on the side he faces; square-on -> opposite his head."""
     if m["facing"] in ("left", "right"):
         return m["facing"]
     return "left" if m["head_cx"] > 0.5 else "right"
 
 
 def vertical(H, h, m):
-    """-> (y, lo, hi, ok). The legal band of window tops, and the pick in it.
-
-    lo/hi are returned rather than just y because the obstruction search moves
-    the window afterwards, and it may only move it INSIDE this band: an earlier
-    version let the search slide y toward 0.275 for a cheaper cost, which on
-    -GZR1C9Acd4 walked the window down 28 px past his crown and then reported
-    the face at a legal 0.328 -- the exact bowed-reciter failure this rule
-    exists to refuse."""
+    """-> (y, lo, hi, ok). Obstruction search may only move y inside [lo, hi].
+    Crown wins when the band and crown disagree (bowed reciter)."""
     crown = m["crown_y"] * H
     face = m["face_cy"] * H
     lo = max(face - FACE_Y_BAND[1] * h, crown - MAX_HEADROOM * h, 0.0)
@@ -948,9 +547,6 @@ def vertical(H, h, m):
     want = face - FACE_Y_FRAC * h
     ok = lo <= hi
     if not ok:
-        # The band and the crown disagree -- a bowed reciter. Keep the crown in
-        # frame and let the face land where it lands; the caller refuses to
-        # write and asks for a hand solve.
         lo = max(crown - MAX_HEADROOM * h, 0.0)
         hi = max(min(crown, float(H - h)), lo)
     lo, hi = max(0.0, lo), min(float(H - h), hi)
@@ -960,14 +556,8 @@ def vertical(H, h, m):
 
 
 def body_edges(W, m):
-    """His silhouette in source px, clamped. -> (left, right, clamped).
-
-    NEVER used by targets(): the body's only job is containment. The clamp is
-    legacy/qc/author/crop.py:89-90 -- a face is head_w / HEAD_FROM_FACE wide,
-    and he may reach BODY_FROM_FACE face widths out from the centre of his head
-    on either side. See "clamping the body reading" in the module docstring for
-    the five sources' measured reach and for the 1.201-W congregation this
-    exists to cut back down to a reciter."""
+    """Silhouette in source px, clamped to BODY_FROM_FACE of head centre.
+    Never used by targets() -- containment only."""
     head_cx = m["head_cx"] * W
     reach = (BODY_FROM_FACE / HEAD_FROM_FACE) * m["head_w"] * W
     raw_l, raw_r = m["body_left"] * W, m["body_right"] * W
@@ -977,23 +567,8 @@ def body_edges(W, m):
 
 
 def horizontal(W, w, m, side, cap_cx, cap_w):
-    """-> (lo, hi, c_lo, c_hi, contained). The legal band of window lefts.
-
-    Two constraints, and their ORDER is the whole fix (see the module
-    docstring's body section):
-
-      CAPTION  the caption column may not cross his head box. Hard: pills on a
-               ghutrah is the one thing no shipped reel does.
-      CONTAIN  inside what the caption leaves, the window must hold his whole
-               silhouette. Yields when it cannot, because a wide shot running
-               him off his outer edge is the two-gap branch of the rule working
-               as designed -- the shipped ABDULLAH-AL-JUHANY reel does exactly
-               that, 72 px of bisht past the right edge, and the containing
-               window for it puts text on his face.
-
-    Returned as a band rather than an x because the obstruction search moves
-    the window afterwards and may only move it inside here -- same reason
-    vertical() returns one."""
+    """-> (lo, hi, c_lo, c_hi, contained). Caption clearance first, then
+    contain the body (yields when holding him puts text on his face)."""
     bl, br, _ = body_edges(W, m)
     lo, hi = 0.0, float(W - w)
     head_l = (m["head_cx"] - m["head_w"] / 2.0) * W
@@ -1079,33 +654,9 @@ def hits(s, boxes, W, H, pad=6):
 
 
 def solve(W, H, m, style, side):
-    """Largest 16:9 window that frames him by the rules and misses the graphics.
-
-    Zoom is a last resort, not a knob: start at the biggest window the source
-    allows and shrink only because a bigger one cannot both place him AND clear
-    a burned-in logo. That is the reasoning written by hand into
-    clips/al-ahzab-70-71's config, made mechanical.
-
-    CONTAINMENT LIVES IN THE BAND, NOT HERE, and that is deliberate. It is
-    applied by horizontal() inside each zoom level, so within a window size the
-    solve shifts minimally to hold him; it is NOT a term or a tier in the
-    choice BETWEEN zoom levels. Both alternatives were built and measured on
-    the four shipped reels:
-
-      as a tier (contains him beats cost), the live YkXjYyKwHJ4 solve jumps to
-      a 1536 px window to swallow a body reading that over-runs his real robe
-      by 85 px, and lands the face at 0.230 of it -- outside the band, so the
-      whole solve then refuses to write a source that has a good window.
-      as a cost penalty, no weight separates the two cases: the one that leaves
-      1CQYaDe-nLE's shipped window alone also lets a window that cuts 60 px off
-      YkXjYyKwHJ4's robe win, and the one that stops that drags 1CQYaDe-nLE
-      37 px right, onto the edge of his head.
-
-    Both are the same mistake -- treating "contains him" as more important than
-    the vertical rule and the caption clearance, when the shipped reels say it
-    is less. BADR-AL-TURKI and ABDULLAH-AL-JUHANY both run the reciter's robe
-    off the right edge of frame. Cutting his outer edge is a look this account
-    ships; cutting it while REPORTING clean air beside him was the bug."""
+    """Largest 16:9 window that frames him and clears graphics. Zoom is last
+    resort. Containment is inside horizontal()'s band per zoom -- never a
+    term between zoom levels (tier/cost both break a shipped reel)."""
     boxes = m["obstructions"]
     best, best_forced = None, None
     for i in range(26):
@@ -1119,10 +670,7 @@ def solve(W, H, m, style, side):
                 c["cost"] = cost(c)
                 c["blocked_by"] = hits(c, boxes, W, H)
                 c["rank"] = (0 if c["blocked_by"] is None else 1, c["cost"])
-                # The 0.16 gate is a sanity bound on the gap rule, and the
-                # containment band can pin x past it on a source that cannot
-                # pan (it had nothing to reject before the band existed). Keep
-                # the gate, keep a way out.
+                # 0.16 gate on the gap rule; containment can pin past it.
                 if best_forced is None or c["rank"] < best_forced["rank"]:
                     best_forced = c
                 if abs(c["fx"] - c["fx_target"]) > 0.16:
@@ -1132,8 +680,7 @@ def solve(W, H, m, style, side):
         if best is not None and best["rank"][0] == 0 and \
                 s["scale"] > 0.92 and \
                 abs(best["fx"] - best["fx_target"]) < 0.02:
-            break        # a near-full-size window already frames him; stop
-            # before trading resolution for a placement it already has.
+            break
     if best is None:
         best = best_forced
     if best is None:
@@ -1238,22 +785,13 @@ def report(m, sol, style, W, H):
               % (m["n"] - m.get("face_seen", 0), m["n"], sol["fx_target"]),
               file=sys.stderr)
     if not sol["y_ok"]:
-        # An aesthetic note, not a refusal -- see FACE_Y_BAND's comment.
-        # 0.24-0.34 is the shipped reels' own scatter, not a tolerance, and the
-        # model's run-to-run noise on this number is bigger than the band is
-        # wide, so gating a write on it was a coin flip wearing a threshold's
-        # clothes. The crown was already kept in frame by vertical()'s own
-        # fallback (that part never refused); this print is only "the face
-        # landed somewhere the references didn't," worth a look on --annotate,
-        # never worth a SystemExit.
+        # FACE_Y_BAND miss: printed only; config still written.
         print("! face lands at %.3f of the window, outside the %.2f-%.2f the "
               "shipped reels span. Not fatal -- check --annotate before "
               "trusting it, especially on a bowed reciter (see the al-Ansari "
               "clips), but the config is written regardless."
               % (sol["fy"], FACE_Y_BAND[0], FACE_Y_BAND[1]), file=sys.stderr)
-    # Containment. Printed after the gaps because it is the thing the gaps
-    # cannot see: `outer` is the air beyond his HEAD, and a window can have
-    # 0.106 of it while cutting his back (the vqxYwdR4RvQ solve of 2026-08-01).
+    # `outer` is air beyond the HEAD — can look healthy while cutting his back.
     print("body    : %.3f..%.3f of window; margin left %+.3f, right %+.3f "
           "(%.3f W of frame, clamped to %.1f face widths of head centre)"
           % ((sol["body_l"] - sol["x"]) / float(sol["w"]),
@@ -1564,11 +1102,9 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
         to_fractions(entry["parsed"])
     usage = entry.get("usage") or {}
     if usage:
-        # Printed so the cost of a solve is checked against a bill rather than
-        # trusted: one 4-frame pass measured $0.09-0.13 total_cost_usd (the
-        # CLI's own figure, not a hand computation the way the OpenRouter
-        # transport needed PRICE_IN/PRICE_OUT for -- Claude Code reports it
-        # directly in the --output-format json envelope).
+        # Printed so the cost of a solve is checked against a bill: one 4-frame
+        # pass measures $0.09-0.13 total_cost_usd (Claude Code reports it in
+        # the --output-format json envelope).
         print("usage   : %s  ->  $%.5f"
               % (json.dumps({k: v for k, v in usage.items()
                              if isinstance(v, (int, float))}),

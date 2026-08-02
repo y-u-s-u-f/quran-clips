@@ -77,10 +77,9 @@ MODEL = "MahmoudAshraf/mms-300m-1130-forced-aligner"
 LANGUAGE = "ara"           # ISO 639-3; the mushaf is always Arabic
 
 # A reel opens ON the recitation. Dead air at the head is where viewers
-# scroll, and a flat 0.30s pad either side -- what this script used to keep
-# -- measurably produced reels starting with 0.38s of silence. The head is
-# now MEASURED (head_cut) and the tail is not: a held final word wants its
-# decay, so it keeps the pad.
+# scroll. The head is MEASURED (head_cut); a flat pad on both sides
+# measurably produced reels starting with 0.38s of silence. The tail keeps
+# the pad: a held final word wants its decay.
 HEAD_LEAD = 0.12           # air kept before the first word, when available
 HEAD_LOOKBACK = 2.0        # how far back to look for the waqf it comes out of
 HEAD_MAX = 0.25            # a hand-set trim looser than this gets called out

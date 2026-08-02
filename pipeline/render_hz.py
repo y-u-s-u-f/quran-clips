@@ -65,8 +65,8 @@ ARABIC = {"color": (247, 245, 239),      # #F7F5EF, warm white
 
 ENGLISH = {"color": (245, 243, 237),     # #F5F3ED
            "alpha": 240,                 # a hair behind the Arabic
-           # ALL-CAPS at ONE size: Albertus has no true small-caps and the
-           # faked petite caps were dropped (style.yaml `smallcaps: false`).
+           # ALL-CAPS at ONE size: Albertus has no true small-caps
+           # (style.yaml `smallcaps: false`).
            "cap_pt": 29,
            "tracking_pct": 3,            # of the point size, per character
            "max_line_width_frac": 0.55,
@@ -75,9 +75,8 @@ ENGLISH = {"color": (245, 243, 237),     # #F5F3ED
 
 # ONE drop shadow, composited from the MERGED ink alpha of both scripts (they
 # are drawn into the same layer), so an English line never casts a second
-# shadow onto the Arabic. blur 3.0 = style.yaml's `blur_px: 5` x the 0.6 the
-# legacy renderer multiplied it by before handing it to GaussianBlur -- the
-# template number was never the radius that shipped.
+# shadow onto the Arabic. blur 3.0 = style.yaml's `blur_px: 5` x 0.6 -- the
+# radius that ships.
 SHADOW = {"color": (0, 0, 0), "alpha": 153,     # style.yaml opacity 0.60
           "offset_px": 2, "blur_px": 3.0}
 

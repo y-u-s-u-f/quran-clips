@@ -371,10 +371,9 @@ def render(plan):
         print("      cropping horizontal source to 9:16 on the subject...")
         vf, crop_x = vertical_crop_filter(info, subject)
         cropped = os.path.join(tmp, "cropped.mp4")
-        # veryfast/crf 10, the settings generate.trim_media was measured onto:
-        # this is a THROWAWAY that composite() re-encodes at crf 18 minutes
-        # later, and against a lossless cut of the same window crf 10 came back
-        # -65% CPU and 50.39 dB against slow/crf 16's 50.14 dB.
+        # veryfast/crf 10: throwaway intermediate that composite() re-encodes
+        # at crf 18. Against a lossless cut of the same window: -65% CPU and
+        # 50.39 dB (see OPTIMIZATIONS.md).
         run([FFMPEG, "-y", "-v", "error", "-i", source, "-vf", vf,
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "10",
              "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", cropped])

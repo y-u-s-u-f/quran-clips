@@ -1,65 +1,13 @@
-"""pipeline/render_bars.py -- the `bars` style renderer, full port.
+"""pipeline/render_bars.py -- the `bars` style renderer.
 
-Vertical 1080x1920: the footage letterboxed into a centred 16:9 band on pure
-black, graded down to the reference's luma, white Thuluth on equal-height
-colour pills, a right-to-left wipe on the first card and strictly sequential
-crossfades after it, and the band FX chain -- glow, bar glow, text glow,
-scan, procedural snow, heat shimmer -- confined strictly to the band (any
-spill into the letterbox instantly reads as wrong).
+Vertical 1080x1920: graded footage in a centred 16:9 band, white Thuluth on
+colour pills, wipe then sequential crossfades, band-confined FX (fx.py).
 
-Ported from legacy/scripts/render_bars.py + legacy/scripts/build_bars.py +
-legacy/qc/timeline.py, with the style numbers from legacy/templates/bars.yaml
-(pixel forensics of the account's two reference reels). The effects
-themselves live in pipeline/fx.py.
+Constants from reference reels (legacy/templates/bars.yaml); size 120pt /
+54px pill / 0.45 W ink (DDAVDmsMQr3). Golden: tests/graph_parity.py.
+Cost: OPTIMIZATIONS.md. `fx: {heat: false}` for timing previews.
 
-THE GOLDEN BYTE-IDENTITY CONTRACT NOW RUNS AGAINST
-tests/golden/bars-filtergraph.txt, not the frozen legacy fixture: the
-2026-08-01 speed work deliberately broke byte-identity with
-legacy/tests/golden/at-tawbah-128-128/filtergraph.txt, and the replacement
-lives in this repo (tests/graph_parity.py). Five changes broke it, all
-owner-approved, none of them a look decision:
-  * heat's two perlin maps are pre-baked and fed in as inputs (heat_layers);
-  * wide gaussians run at reduced linear size -- half from sigma 20 (10 as of
-    the second pass below), quarter from sigma 40 (fx.blur);
-  * heat's supersample went 3 -> 2;
-  * caption layers are cropped to their own ink and placed, instead of being
-    full-canvas plates overlaid at 0:0 three times each (trim_to_ink), and
-    every one of those overlays is gated to the card's own window;
-  * the two glow accumulator plates are the size of the rows that can
-    actually reach the band, not the full 1920 (BarGlow.slice_rows, and
-    TextGlow's plate at band size).
-Measured on sources/gt9y-QGgMsA, each against the render before it: 47.1dB
-for the bake, 53.1dB for the half-res work, 48.8dB for the supersample,
-53.2dB for the quarter-res step; the caption crop and both plate shrinks
-came back bit-identical (PSNR inf). Wall 372s -> 96s on a 4P+4E machine.
-
-Two more on 2026-08-01, both re-blessed into tests/golden/bars-filtergraph.txt
-after a PSNR re-render:
-  * the signature is cropped to its own ink and placed, like the captions --
-    it is the one overlay up for the WHOLE reel, so a full-canvas plate for
-    ~200x27px of type was the most expensive of them (13.1s -> 10.1s CPU,
-    371 -> 220 MB peak RSS on a 23s reel); bit-identical;
-  * scan and textglow blur at half linear size (fx.HALF_RES_SIGMA 20 -> 10),
-    the last two band blurs that still ran at full size.
-
-THE CAPTIONS WERE RESIZED ON 2026-08-01 and the fixture re-blessed again.
-The account's newer reels set the Arabic far larger than the two 720p refs
-these constants came from -- measured off instagram.com/reel/DDAVDmsMQr3,
-whose pill is a constant 54px at 1080 against our 44 and whose type solves
-to ~122pt against our 96. Type went 96 -> 120pt, the pill 44 -> 54 with its
-pad 27 -> 34 and its baseline offset 6 -> 8, and line 2 dropped 15px because
-the taller glyphs closed the gap between the lines to 12px. The ink cap did
-NOT move (0.45 W is a frame fraction and the reference's own pills measure
-0.36-0.45 W), so the extra size had to come out of the WORDS: every bars
-config was regrouped to fewer words per line, and hadid-16-16 now renders at
-117pt because one line in it will not fit at 120.
-
-Per-reel switches, via the config's `fx:` map (e.g. `fx: {heat: false}` --
-heat is ~27% of the remaining render time, measured 118s -> 87s on a 27.5s
-8-card reel, and is the one to drop for a fast preview): grade, scrim, glow,
-barglow, textglow, scan, snow, heat.
-
-Called by generate.py with the resolved plan; not a standalone CLI.
+Called by generate.py; not a standalone CLI.
 """
 import colorsys
 import json
@@ -107,28 +55,12 @@ SCRIM = {"left_min": 0.20, "left_to_px": 180,
 TEXT = {
     "font": os.path.join(FONT_DIR, "AM_Thulth_Regular_0.1.ttf"),
     "color": (255, 255, 255),
-    # 96 until 2026-08-01. The account's own newer reels set the Arabic far
-    # larger than the two 720p refs these constants were first measured from:
-    # on instagram.com/reel/DDAVDmsMQr3 the tail of 55:24 on its single-line
-    # card inks 165px tall at 720 (= 248px at 1080). The SAME measurement run
-    # over our own render under-reads the true bbox by 7.6% (134 measured vs
-    # 145 computed at 96pt), so the ref's true ink is ~179px at 1080 -- which
-    # this face reaches at ~122pt. Ink width agrees: ref 387px, ours at 132pt.
-    # 120 is the round number inside that bracket.
+    # ~122pt solves DDAVDmsMQr3's ink; 120 is the round number inside.
     "nominal_pt": 120,
     "min_pt": 75,
-    # Per-line ink cap; bar = ink + 2*pad. NOT scaled with the type: it is a
-    # frame fraction, and the reference's own pills measure 0.36-0.45 W, so
-    # the cap is where it should be and the 1.25x had to come out of the
-    # WORDS instead (fewer per line -- see the bars configs' `groups`).
+    # Frame fraction (refs' pills 0.36-0.45 W); size comes from word count.
     "max_line_width_frac": 0.45,
-    # Bar centre lines as fractions of canvas height (measured rows).
-    # line 2 was 0.5592 (a 183px pill-centre gap) until 2026-08-01: at 120pt
-    # the tightest card in waqiah-83-87 left only 12px between line 1's kasra
-    # and line 2's shadda, measured per COLUMN, not bbox-to-bbox -- against
-    # 46px at 96pt. +15px takes it back to 27px. Line 1 did NOT move, so the
-    # block's centre falls 7.5px, toward the reference's (which sits 36px
-    # below the band centre against our 22px).
+    # Measured rows; ~27px between lines on the tightest 120pt card.
     "line1_center_y_frac": 0.4637,
     "line2_center_y_frac": 0.5670,
     "single_center_y_frac": 0.5111,
@@ -139,19 +71,11 @@ TEXT = {
 TEXT_SHADOW = {"color": (0, 0, 0), "opacity": 1.0,
                "dx_frac": 0.0, "dy_frac": 0.003, "blur_px": 0}
 
-# The pill is a highlight band struck THROUGH the letter bodies, not a
-# background box: 54px tall against ~155px of glyph ink.
-# Was 44/27/6 against 96pt type. Scaled with the 2026-08-01 resize, and the
-# scale is the reference's, not arithmetic: DDAVDmsMQr3's pill is a constant
-# 36.1px at 720 (hard edges, sub-pixel, identical across single- and
-# two-line cards) = 54px at 1080, and its pad measures 22-25px at 720 = ~35.
+# Pill through the glyph bodies: 54px @1080 (= 36.1px @720 on DDAVDmsMQr3).
 BAR = {"height_px": 54, "pad_x_px": 34,
-       # Baseline-anchored: this face's tashkeel overshoot the em box by
-       # ~0.23em, so neither the ink bbox nor font metrics can place the bar.
+       # Tashkeel overshoot ~0.23em; ink bbox cannot place the bar.
        "baseline_below_center_px": 8,
-       # The auto/config colour is the bar as it must READ IN THE FINISHED
-       # FRAME; the FX screen passes lift the pill by a measured near-constant
-       # factor, so it is DRAWN darker to land on target (predraw_color).
+       # Drawn darker so FX screen-lift lands on the finished-frame colour.
        "fx_screen_lift": 0.179, "fx_sat_retain": 0.88}
 # Auto-derivation of the pill colour from the clip's own GRADED band.
 BAR_AUTO = {"lightness_gain": 1.78, "lightness_min": 0.34, "lightness_max": 0.48,
@@ -293,14 +217,11 @@ def derive_bar_color(src, dur, crop, tmp, grade_on=True):
     meaningless saturation (colours cancel in the mean), so below the
     threshold the mean of the per-pixel saturations is used instead.
 
-    `fps=1` runs FIRST: it used to sit after the lanczos scale and the grade,
-    so 24 of every 25 frames were scaled and graded and then discarded
-    (8.57s -> 1.89s CPU, -78%, on a 23s 1080p clip; it scales with source
-    resolution and length). This moves the pill by up to one LSB on one
-    channel -- `vignette` dithers per frame, so feeding it 25 frames instead
-    of 700 advances its PRNG differently -- which is a look change, but a
-    sub-quantiser one on a colour that is a heuristic to begin with. Pin
-    `bar_color:` in the config to bypass the pass entirely."""
+    `fps=1` runs FIRST, then scale/grade (8.57s -> 1.89s CPU on a 23s 1080p
+    clip). `vignette` dithers per frame, so sampling 25 frames instead of
+    every frame can move the pill by one LSB on one channel -- a
+    sub-quantiser look change on a colour that is a heuristic to begin with.
+    Pin `bar_color:` in the config to bypass the pass entirely."""
     a = BAR_AUTO
     tile = int(a["sample_tile"])
     tile_png = os.path.join(tmp, "bar_color_sample.png")
@@ -740,8 +661,8 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     """-> (filter_complex, input argv). Inputs: [0]=source, [1..2n]=bar,text
     per phrase, then snow, then scrim (last of the legacy set, so dropping it
     cannot shift any other index), then the signature, then the two heat
-    maps. The heat pair goes LAST for the same reason scrim went last: every
-    index before it keeps the number it had before the maps were pre-baked."""
+    maps. The heat pair goes LAST so optional maps never renumber earlier
+    inputs."""
     W, H = CANVAS_W, CANVAS_H
     tr = TRANSITIONS
     nphrases = len(rep)

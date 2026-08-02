@@ -3,32 +3,23 @@
     tools/render-venv/bin/python tests/graph_parity.py
     tools/render-venv/bin/python tests/graph_parity.py --bless
 
-CLAUDE.md invariant 2 says a look change is an owner decision and never a
-refactor side-effect. It used to be enforced by diffing the emitted
-filtergraph against legacy/tests/golden/at-tawbah-128-128/filtergraph.txt.
-The 2026-08-01 speed work changed that graph deliberately and the golden
-lives under read-only legacy/, so there was nothing to re-bless and the
-invariant went to "re-render a reel and PSNR it", which is weaker: PSNR
-drifts, and three 50dB steps in a row compound into something visible.
-
-This restores the hard check with a fixture the repo owns. It rebuilds the
-same clip the legacy golden was recorded from -- at-tawbah-128-128, the
-first bars reel, which is the useful case precisely because it exercises a
-wipe card, crossfade cards, a two-line card and a single-line card in one
-graph -- and diffs the filtergraph against tests/golden/bars-filtergraph.txt
-byte for byte.
+CLAUDE.md invariant 2: a look change is an owner decision and never a
+refactor side-effect. This rebuilds the at-tawbah-128-128 graph -- the useful
+case because it exercises a wipe card, crossfade cards, a two-line card and a
+single-line card in one graph -- and diffs it filter by filter against
+tests/golden/bars-filtergraph.txt.
 
 Only the FILTERGRAPH is fixtured, not the argv: the graph text carries every
-number that decides a pixel (geometry, sigmas, gains, fade times, and now
-each caption layer's ink box and enable window), while the argv is just the
-input paths, which differ per machine.
+number that decides a pixel (geometry, sigmas, gains, fade times, each
+caption layer's ink box and enable window), while the argv is just the input
+paths, which differ per machine.
 
     NO ARABIC IS TYPED HERE. The caption text is read out of
-    legacy/clips/at-tawbah-128-128/clip.yaml, the archived recipe the golden
-    was recorded against. legacy/ is reference material: this READS a data
-    file from it and never imports or runs any of its code.
+    legacy/clips/at-tawbah-128-128/clip.yaml, the archived recipe. legacy/ is
+    reference material: this READS a data file from it and never imports or
+    runs any of its code.
 
-The recipe (from OPTIMIZATIONS.md, itself recovered from the golden):
+The recipe (from OPTIMIZATIONS.md, recovered from the golden):
 x_offset -216, dur 23.720, crop 48,30,1280x720, tint (191,140,54) recovered
 from the golden's glow scalars via rr/0.35*255, every switch on, no
 signature, and the golden's own loudnorm chain so the audio leg is fixed

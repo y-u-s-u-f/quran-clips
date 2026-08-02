@@ -1,9 +1,8 @@
 # ASR and alignment: what we use, what we rejected, and why
 
-Written after replacing Whisper's word timings with CTC forced alignment
-(commit `80df887`). Records the models that were measured and the trade-offs,
-so the next person asking "can't we just use a smaller Quran model?" has the
-evidence instead of re-running it.
+Records the models that were measured and the trade-offs, so the next person
+asking "can't we just use a smaller Quran model?" has the evidence instead of
+re-running it.
 
 **Current stack:** `transcribe.py` (Whisper large-v3-turbo) for discovery,
 `align.py` (Meta MMS CTC forced alignment) for timing. **Decision: keep it.**
@@ -25,14 +24,14 @@ it isn't.
    ASR that transcribes the repeated phrase **twice**. This is the job that
    pins us to Whisper, and the one every alternative fails.
 
-Whisper is only needed for 1 and 3. It has nothing to do with 2 any more.
+Whisper is only needed for 1 and 3. Timing is forced alignment against
+known mushaf text.
 
 ## Measured comparison
 
 Two clips, both in `sources/`. Discovery is scored through the real
 `generate.identify_verse_span()` path (chunked search), not a single
-whole-clip search — the chunked path is meaningfully more forgiving, and an
-early version of this table wrongly failed fastconformer by not using it.
+whole-clip search — the chunked path is meaningfully more forgiving.
 
 | Option | Faatir 35:31-34 | Maryam 19:88-95 | Repeat | Disk | Runtime |
 |---|---|---|---|---|---|
@@ -47,11 +46,6 @@ handle discovery fine (turbo, Tarteel, fastconformer). Only the
 autoregressive one handles a restart. Anyone optimising this pipeline for
 size will find discovery easy to replace and will lose repeats silently
 unless they test for it specifically.
-
-Two entries in this table were wrong in an earlier draft because discovery
-was scored with a single whole-clip `quran.search()` instead of the chunked
-`identify_verse_span()` the pipeline actually uses. That method wrongly
-failed both Tarteel and fastconformer on Maryam. Score the real path.
 
 ### Whisper large-v3-turbo — current, for discovery + repeats
 

@@ -197,14 +197,10 @@ class Effect(object):
 # at 48x27 and bilinearly upscaled -- "that low resolution IS the softness of
 # the look".
 #
-# The quarter threshold is where the blur's radius stops being large against
-# the grid it is sampled on: at 1/n the kernel still spans sigma/n samples, and
-# sigma 40 keeps that at 10. The half threshold was 20 by that same rule until
-# 2026-08-01; it is now 10, which is a MEASUREMENT rather than the rule. It is
-# what brings in scan (sigma 10.09) and textglow (sigma 14), the last two band
-# blurs that still ran at full size: 7.2s -> 3.0s CPU each per 10s of 1080x608
-# (-58%), at 55.6 dB and 54.9 dB measured against real footage -- a harsher
-# input than the sparse plates these two actually blur.
+# Quarter threshold: at 1/n the kernel still spans sigma/n samples, and sigma
+# 40 keeps that at 10. Half threshold (10) is a measurement that brings in scan
+# (sigma 10.09) and textglow (sigma 14): 7.2s -> 3.0s CPU each per 10s of
+# 1080x608 (-58%), at 55.6 dB and 54.9 dB against real footage.
 HALF_RES_SIGMA = 10.0
 QUARTER_RES_SIGMA = 40.0
 
@@ -327,11 +323,10 @@ class TextGlow(Effect):
     layer = "text"
 
     def plate(self, g, ctx):
-        # Band-sized, not canvas-sized: this plate was ALWAYS cropped to the
-        # band before anything was done to it, and the blur comes after that
-        # crop, so glyph ink outside the band has never contributed. Doing
-        # the crop by accumulating at band size instead is the same pixels
-        # for a third of the plate and a third of every overlay onto it.
+        # Band-sized, not canvas-sized: this plate is cropped to the band before the
+# blur, so glyph ink outside the band never contributes. Accumulating at band
+# size is the same pixels for a third of the plate and a third of every
+# overlay onto it.
         g.chain(None,
                 f"color=c=black:s={ctx.BW}x{ctx.BH}:r={ctx.fps}:d={ctx.dur:.3f}",
                 "tg0")

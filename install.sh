@@ -17,9 +17,8 @@
 #   6. prints a doctor-style summary of what resolved and what is missing
 #
 # The extra venvs exist so whisper's and torch's dependency trees can NEVER
-# be installed into the interpreter that renders Arabic: a careless resolve
-# once replaced a RAQM-enabled Pillow and every caption silently rendered
-# unjoined.
+# be installed into the interpreter that renders Arabic: without RAQM, every
+# caption silently renders unjoined.
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
