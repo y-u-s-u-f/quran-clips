@@ -23,7 +23,7 @@ python3 pipeline/fetch.py "https://www.youtube.com/watch?v=..."
 # transcribe + quran.py search ONLY if you don't know the verses
 tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml
 tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
-tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml
+tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml [--vertical]
 python3 pipeline/publish.py reels/<reel>.mp4
 ```
 
@@ -32,7 +32,7 @@ python3 pipeline/publish.py reels/<reel>.mp4
 ```
 sources/<id>/   source.*, captions.srt?, whisper.*, <reel>.yaml, <reel>.align.json, crop.json
 reels/          output only
-pipeline/       fetch transcribe quran align crop generate publish + render_*
+pipeline/       fetch transcribe quran align crop generate letterbox publish + render_*
 assets/         fonts + mushaf/translation editions
 legacy/         archived; do not run/edit/import
 ```
@@ -86,6 +86,11 @@ All 30fps and fixed-size; a weak source is upscaled, never delivered small.
 - **`bars`** — 1920×1080, Thuluth on pills (213pt / 96px / 0.45 W ink), wipe
   then sequential crossfades, full FX (`fx.py`). Never burns a signature.
   Golden: `tests/graph_parity.py`. `fx: {heat: false}` for timing previews.
+
+`--vertical` (`letterbox.py`) delivers a 1920×1080 render as 1080×1920, black
+above and below — 1080×608 of picture, about a third of the frame, so bars'
+213pt Arabic arrives on the phone nearer 120pt-equivalent. The native
+`vertical` style is what avoids that trade.
 
 Design rationale lives in each renderer's module docstring.
 

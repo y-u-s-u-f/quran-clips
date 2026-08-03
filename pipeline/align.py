@@ -15,10 +15,16 @@ inheriting the previous word's end.
 Writes, next to the config:
 
     <reel>.align.json   {"words": [{"w","t0","t1","score"}...],
+                         "trim": [t0, t1],
                          "backend": "ctc-forced-aligner", "model": ...}
 
 generate.py prefers this file over whisper.json + Needleman-Wunsch
 alignment when it exists beside the config.
+
+Word times are relative to `trim`, which is why the window is stamped into
+the file: a config whose trim has since been edited re-aligns on its own,
+with no --force, rather than leaving timings that are silently the wrong
+number of milliseconds off.
 
 A config with NO `trim:` is aligned against the whole source and the trim
 is derived from where the first and last mushaf word actually land, then
@@ -83,6 +89,13 @@ LANGUAGE = "ara"           # ISO 639-3; the mushaf is always Arabic
 HEAD_LEAD = 0.12           # air kept before the first word, when available
 HEAD_LOOKBACK = 2.0        # how far back to look for the waqf it comes out of
 HEAD_MAX = 0.25            # a hand-set trim looser than this gets called out
+# The other way a hand-set trim is wrong: it cuts INSIDE the first word's
+# attack and the word is heard without its opening consonant. Milliseconds do
+# not order these -- measured, a 100ms head is clean and a 120ms one clips --
+# but the level at the cut against the floor of the silence before it does:
+# the clipped trims read -37.3 dB over a -52 dB floor and -35.5 over -56, the
+# clean ones -51.6 and -61.5 over those same floors.
+HEAD_FLOOR_MARGIN = 6.0    # dB above the local floor = inside the onset ramp
 TAIL_PAD = 0.30
 ENV_STEP = 0.05            # RMS bin, seconds
 
@@ -161,6 +174,24 @@ def head_cut(src, onset, lead=HEAD_LEAD, lookback=HEAD_LOOKBACK):
     return max(gap_start, onset - lead), env[i][0] + ENV_STEP - gap_start
 
 
+def cut_level(src, t, lookback=0.60, ahead=0.10):
+    """(dB at the cut, dB floor of the silence before it), or None.
+
+    None whenever the question cannot be asked -- a trim at the very start of
+    the source has no silence in front of it to measure against, and a window
+    that yields too few bins says nothing -- so the caller stays quiet rather
+    than guessing."""
+    lo = max(0.0, t - lookback)
+    if t - lo < 4 * ENV_STEP:
+        return None
+    env = rms_envelope(src, lo, t + ahead)
+    before = [db for tt, db in env if tt < t]
+    at = next((db for tt, db in env if tt >= t), None)
+    if at is None or len(before) < 4:
+        return None
+    return at, min(before)
+
+
 def extract_window(src, out_wav, t0, t1):
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
            "-ss", "%.3f" % t0]
@@ -230,14 +261,46 @@ def apply_repeats(results, repeats, min_fix=0.5):
     return fixed
 
 
+def trim_note(out_path, trim, tol=0.01):
+    """Why an existing alignment no longer matches the config, or None.
+
+    Word timings are relative to the trim window, so an edited `trim:` leaves
+    the file wrong by however far the window moved -- and generate.py reads it
+    happily, captions hundreds of ms out with nothing said. Editing a trim is
+    unambiguous intent, so it re-aligns on its own instead of costing the
+    author a --force they have to remember. Values are compared loosely
+    because both sides are rounded to 2dp."""
+    def fmt(t):
+        return ("whole source" if t is None else
+                "[%s]" % ", ".join("end" if v is None else "%.2f" % v
+                                   for v in t))
+    try:
+        was = json.load(open(out_path, encoding="utf-8")).get("trim")
+    except ValueError:
+        return "unreadable -- re-aligning"
+    now = ([None if v is None else float(v) for v in (list(trim) + [None])[:2]]
+           if trim else None)
+    if was is None:
+        return "no trim recorded -- re-aligning"
+    if now is not None and len(was) == 2 and all(
+            (a is None) == (b is None) and (a is None or abs(a - b) <= tol)
+            for a, b in zip(was, now)):
+        return None
+    return "stale (trim %s -> %s), re-aligning" % (fmt(was), fmt(now))
+
+
 def align(config_path, force=False):
     cfg = generate.load_config(config_path)
     cfg = generate.resolve_paths(cfg, config_path)
     out_path = generate.align_path_for(config_path)
-    if os.path.exists(out_path) and not force:
-        print("%s exists -- use --force to re-run"
-              % os.path.relpath(out_path, generate.ROOT))
-        return out_path
+    if os.path.exists(out_path):
+        note = trim_note(out_path, cfg.get("trim"))
+        if note:
+            print("  %s" % note)
+        elif not force:
+            print("%s exists -- use --force to re-run"
+                  % os.path.relpath(out_path, generate.ROOT))
+            return out_path
 
     # No trim in the config: align the WHOLE source and read the window back
     # off the alignment. The <star> token between words lets the CTC path
@@ -328,11 +391,17 @@ def align(config_path, force=False):
         # recitation, and it is free here: results[0] is already relative to
         # the window the config asked for.
         head = results[0]["start"]
+        level = None if head > HEAD_MAX else cut_level(cfg["input"], t0)
         if head > HEAD_MAX:
             print("  ! %.2fs of dead air before the first word. A reel should "
                   "open on the recitation -- even a second of nothing and "
                   "people scroll. Set trim start to %.2f (%.0fms lead)."
                   % (head, t0 + head - HEAD_LEAD, HEAD_LEAD * 1000))
+        elif level and level[0] > level[1] + HEAD_FLOOR_MARGIN:
+            print("  ! trim starts %.0fdB above the %.0fdB floor -- the cut is "
+                  "inside the first word's onset ramp and will clip its "
+                  "attack. Back the trim start up to where the envelope leaves "
+                  "the floor." % (level[0] - level[1], level[1]))
         else:
             print("  head: %.0fms before the first word" % (head * 1000))
 
@@ -343,7 +412,9 @@ def align(config_path, force=False):
                               else min(r["end"], window), 3),
                   "score": round(r["score"], 3)}
                  for w, r in zip(words, results)]
-    json.dump({"words": out_words, "backend": "ctc-forced-aligner", "model": MODEL},
+    json.dump({"words": out_words,
+               "trim": [round(t0, 2), None if t1 is None else round(t1, 2)],
+               "backend": "ctc-forced-aligner", "model": MODEL},
               open(out_path, "w"), ensure_ascii=False, indent=1)
     print("  %d words -> %s" % (len(out_words), os.path.relpath(out_path, generate.ROOT)))
     return out_path

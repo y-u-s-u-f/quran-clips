@@ -15,11 +15,19 @@ noted; also `sources/hajri-23-taraweeh/hujurat-4-5-*.yaml` (26.2s, 5 cards,
 | `vertical` | ~12s | ~121s |
 
 `bars` is 3.16x the pixels of the other two styles per frame and carries the
-whole FX stack, which is where the gap comes from. The perlin heat maps bake
-once per (size, duration bucket) and are cached outside the reel's tmp, so
-only the first bars render at a given size pays the ~6 minutes; pin
-`fx: {heat: false}` for timing previews (~27% cheaper, and never judge LOOK
-without the full stack).
+whole FX stack, which is where the gap comes from. The perlin heat maps are
+cached in `tools/cache/heat/`, outside `/tmp` so a sweep cannot bill the bake
+twice, and any map at least as long as the reel is reused verbatim — perlin
+is a deterministic field over (x, y, t) where `-t` only decides where to stop
+reading, so a long map's opening frames are bit-identical to a short bake
+(framemd5, and a whole reel re-rendered off a 60s map instead of a 30s one
+hashes the same). Only a reel longer than every cached map pays perlin, at
+~9.3s of wall per second of map per axis. Pin `fx: {heat: false}` for timing
+previews (~27% cheaper, and never judge LOOK without the full stack).
+
+`generate.py --vertical` adds one x264 pass (`veryfast`, crf 18, audio
+stream-copied) over the finished file: **~3s wall / ~11s CPU** on a 21.2s
+1920x1080 reel.
 
 ## Techniques in place
 
@@ -35,7 +43,7 @@ Changing these needs PSNR; bars graph edits also need
   to skip (vignette dither can move one LSB).
 - **`trim_media`: `veryfast`/crf 10** — 50.39 dB vs lossless. crf 14 is
   *worse* (49.46); size ≠ fidelity across presets.
-- **`heat` perlin maps pre-baked** (`heat_layers`, 30s buckets) — 47.1 dB.
+- **`heat` perlin maps pre-baked** (`heat_layers`, longest-map reuse) — 47.1 dB.
 - **`fx.blur` half/quarter-res** (`HALF_RES_SIGMA` 10, `QUARTER_RES_SIGMA`
   40). Bar glow band-sliced (+3σ). Scan/textglow via `blur`: −58% CPU at
   55.6/54.9 dB. Heat supersample = 2 (48.8 dB). Glow plates band-sized
@@ -62,6 +70,10 @@ Changing these needs PSNR; bars graph edits also need
 - **`wrap_english` balance**: <1s/reel.
 - **`align.py` memory**: already windowed; long auto-trim is a correctness
   hazard anyway.
+- **Letterbox pass at `slow`**: 54.97→58.32 dB vs the padded source for
+  10.9→17.5s CPU. Both are far above the 45 dB floor, and the input is already
+  a crf-18 `slow` encode of the final pixels — the dB buys fidelity to a
+  finished encode, not to the render.
 - **Delete `trim_media`**: ~3.1s wall; seek into long source is cheaper to
   decode than the intermediate. Not worth the A/V-sync surface.
 

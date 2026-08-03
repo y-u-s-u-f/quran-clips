@@ -8,8 +8,9 @@ resolution, aligning the Whisper word timings against the known-correct
 mushaf text, caption grouping, silence handling, suppress/nudge corrections
 and verse-number ornaments. Rendering and compositing are the style files'
 job -- render_text.py (Arabic + English over graded footage, at either
-1080x1920 `vertical` or 1920x1080 `horizontal`) and render_bars.py (vertical
-letterbox band, Arabic-only pills), dispatched on the config's `style:` key.
+1080x1920 `vertical` or 1920x1080 `horizontal`) and render_bars.py (1920x1080,
+Arabic-only pills over the full picture), dispatched on the config's `style:`
+key. `--vertical` then letterboxes the result onto 1080x1920 (letterbox.py).
 
     TEXT INTEGRITY. Caption Arabic is built by slicing the word list of
     `quran.ayah()` -- the committed Uthmani text -- never from the Whisper
@@ -430,7 +431,49 @@ def require_whisper(cfg):
     return cfg["whisper"]
 
 
-def load_forced_alignment(path, ref_words):
+def format_window(w):
+    return "[%.2f, %s]" % (w[0], "end" if w[1] is None else "%.2f" % w[1])
+
+
+def check_align_window(path, data, window):
+    """Refuse an align file measured against a different `trim:`.
+
+    Its word times are RELATIVE to the window align.py cut, so editing `trim:`
+    afterwards drifts every caption by the difference with nothing on screen
+    to say so. Tolerance is 10ms -- under a frame at 30fps, and both sides are
+    written to 2dp.
+
+    A file with no `trim` key predates the stamp: warn and render. Erroring
+    would brick every already-aligned config in sources/ over a window that
+    was never recorded and so cannot be shown to be wrong, and align.py
+    re-aligns such a file anyway, so the gap closes on its own."""
+    stored = data.get("trim")
+    if stored is None:
+        print("      ! %s has no `trim` stamp, so nothing can confirm its word "
+              "times were measured against %s. Re-run pipeline/align.py if the "
+              "captions drift." % (os.path.basename(path),
+                                   format_window(window)))
+        return
+    try:
+        got = [None if v is None else float(v) for v in stored]
+        assert len(got) == 2 and got[0] is not None
+    except (TypeError, ValueError, AssertionError):
+        raise SystemExit("%s: `trim` must be [start, end] seconds (end may be "
+                         "null), not %r -- re-run pipeline/align.py"
+                         % (path, stored))
+    if any((a is None) != (b is None) or
+           (a is not None and abs(a - b) > 0.01) for a, b in zip(got, window)):
+        drift = window[0] - got[0]
+        raise SystemExit(
+            "%s was aligned against trim %s but the config now says %s -- its "
+            "word times are relative to that window.%s Re-run "
+            "pipeline/align.py on this config."
+            % (path, format_window(got), format_window(window),
+               "" if abs(drift) <= 0.01
+               else " Every caption would land %+.2fs off." % drift))
+
+
+def load_forced_alignment(path, ref_words, window):
     """Per-word timestamps from pipeline/align.py's CTC forced alignment
     (Meta's MMS model, run against the KNOWN mushaf text -- see align.py's
     docstring). Already 1:1 with ref_words, since the aligner places
@@ -438,6 +481,7 @@ def load_forced_alignment(path, ref_words):
     interpolation needed. Falls back to align_words() + whisper.json when
     this file doesn't exist."""
     data = json.load(open(path, encoding="utf-8"))
+    check_align_window(path, data, window)
     words = data["words"]
     if len(words) != len(ref_words):
         raise ValueError(
@@ -830,7 +874,36 @@ def resolve_paths(cfg, config_path, output_override=None):
     return cfg
 
 
-def run_config(config_path, output_override=None):
+# Wall seconds of bake per second of heat map, measured at 1920x1080/30
+# (46.5s for a 5s map). `perlin` is single-threaded, and a reel that spills
+# into a fresh 30s bucket pays this once per axis.
+HEAT_BAKE_RATE = 9.3
+
+
+def warn_heat_bake(cfg, dur, tmp):
+    """Announce a pending heat bake instead of going silent for many minutes.
+
+    Only a reel longer than every cached map pays this, and paying it once
+    buys every shorter reel after it -- so the note is a heads-up, never a
+    reason to re-cut the span."""
+    import render_bars    # Pillow at module level, and pipeline/align.py
+                          # imports this file under an interpreter without it:
+                          # every render_bars import stays inside a function.
+    if not render_bars.switches(cfg.get("fx"))["heat"]:
+        return
+    span, paths = render_bars.heat_map_paths(dur)
+    missing = [p for p in paths if not os.path.exists(p)]
+    if not missing:
+        return
+    hint = " Every later reel up to %ds then reuses it." % span
+    print("      heat: %.1fs reel, no cached map covers it -- baking %ds, "
+          "%d of 2 maps missing. Expect ~%dmin of perlin first.%s Set "
+          "fx: {heat: false} to skip it."
+          % (dur, span, len(missing),
+             round(HEAT_BAKE_RATE * span * len(missing) / 60.0), hint))
+
+
+def run_config(config_path, output_override=None, vertical=False):
     cfg = load_config(config_path)
     cfg = resolve_paths(cfg, config_path, output_override)
     tmp = cfg["tmp_dir"]
@@ -844,9 +917,11 @@ def run_config(config_path, output_override=None):
         raise SystemExit("%s has no video stream -- every style renders over "
                          "footage" % os.path.basename(cfg["input"]))
     t0w = 0.0
+    window = (0.0, None)
     if cfg.get("trim"):
         t0, t1 = (list(cfg["trim"]) + [None])[:2]
         t0w = float(t0)
+        window = (t0w, None if t1 is None else float(t1))
         trimmed = os.path.join(tmp, "trimmed.mp4")
         print("      trimming to %s-%ss" % (t0, t1 if t1 is not None else "end"))
         source = trim_media(source, trimmed, float(t0),
@@ -889,7 +964,7 @@ def run_config(config_path, output_override=None):
 
     if forced:
         print("[4/6] Using forced alignment (pipeline/align.py)...")
-        stamps = load_forced_alignment(align_path, words)
+        stamps = load_forced_alignment(align_path, words, window)
     else:
         print("[4/6] Aligning %d mushaf words..." % len(words))
         stamps = align_words(words, asr_words)
@@ -932,6 +1007,9 @@ def run_config(config_path, output_override=None):
             "arabic": arabic, "english": english, "verses": verses,
             "tmp": tmp, "out": cfg["output"]}
 
+    if cfg["style"] == "bars":
+        warn_heat_bake(cfg, info["duration"], tmp)
+
     print("[6/6] Rendering (%s style)..." % cfg["style"])
     if cfg["style"] == "bars":
         import render_bars
@@ -939,6 +1017,10 @@ def run_config(config_path, output_override=None):
     else:
         import render_text
         render_text.render(plan)
+    if vertical:
+        import letterbox
+        print("      letterboxing to %dx%d" % (letterbox.W, letterbox.H))
+        letterbox.letterbox(cfg["output"])
     tag_output(cfg["output"], int(surah), a0, a1, cfg["reciter"])
     print("Done: %s" % cfg["output"])
     return {"surah": int(surah), "ayah_start": a0, "ayah_end": a1,
@@ -953,13 +1035,18 @@ def main(argv=None):
     ap.add_argument("config", nargs="?", help="sources/<id>/<reel>.yaml")
     ap.add_argument("-o", "--output", help="override the output path")
     ap.add_argument("--print-schema", action="store_true")
+    ap.add_argument("--vertical", action="store_true",
+                    help="letterbox the finished reel to 1080x1920")
+    # These runs are long and normally watched: line-buffer so progress reaches
+    # a pipe or a log as it happens, not all at once at exit.
+    sys.stdout.reconfigure(line_buffering=True)
     a = ap.parse_args(argv)
     if a.print_schema:
         print(config_schema())
         return 0
     if not a.config:
         ap.error("config path required (or --print-schema)")
-    result = run_config(a.config, a.output)
+    result = run_config(a.config, a.output, a.vertical)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

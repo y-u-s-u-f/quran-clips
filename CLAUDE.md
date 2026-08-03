@@ -5,7 +5,7 @@ To *produce a reel*, invoke the `make-post` skill
 
 ## Codebase map
 
-Ten standalone scripts under `pipeline/`; each owns one stage, reads/writes
+Eleven standalone scripts under `pipeline/`; each owns one stage, reads/writes
 plain files. No shared util module — `fetch.py` and `transcribe.py` each
 carry their own `.env` reader so every script stays independently runnable.
 
@@ -46,6 +46,15 @@ carry their own `.env` reader so every script stays independently runnable.
   groups / silences / `suppress`/`nudge` (nudge last) /
   `print_verification`. Dispatches on `style:` with plan dict
   (`cfg/src/info/arabic/english/verses/tmp/out`).
+- **`letterbox.py`** — finished 1920x1080 mp4 -> 1080x1920, black above and
+  below. One x264 pass (crf 18, `veryfast`), audio stream-copied, and no
+  decision of its own past the scale/pad. `bars` is the style that needs it:
+  the 16:9 picture IS its canvas. `generate.py --vertical` calls it after the
+  render and BEFORE tagging, so the tags survive. Standalone
+  (`letterbox.py <reel.mp4> [out.mp4]`, replacing in place) it is not
+  idempotent — a second pass letterboxes the letterbox to a postage stamp;
+  under `--vertical` that cannot happen because generate renders 1920x1080
+  fresh each time.
 - **`publish.py`** — mp4 -> Instagram + Facebook. Tags from the file
   (`--surah/--ayat/--reciter` if missing). Caption from `tafsir()` + ayat +
   hashtags. Cover at `COVER_MS` 1550. Credentials in `.env`; no pixels

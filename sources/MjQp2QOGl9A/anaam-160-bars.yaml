@@ -1,0 +1,20 @@
+style: bars
+surah: 6
+ayah_start: 160
+ayah_end: 160
+reciter: "الوليد الشمسان"
+trim: [62.36, 83.35]
+
+# framing solved by pipeline/crop.py on 2026-08-02,
+# sonnet via claude code CLI, median of 4/4 sampled frames.
+# Head box 0.211 of the window, bars caption column 0.450 -> equal 0.113
+# gaps; face centre at 0.375 of the window height.
+# Re-solve with `pipeline/crop.py <this-file> --force`; edit these
+# by hand and they stay edited (crop.py then refuses without --force).
+crop: {x: 0, y: 104, w: 1344, h: 756}
+x_offset: -311
+groups:
+  - n_words: 6
+  - n_words: 3
+  - n_words: 4
+  - n_words: 3

@@ -23,7 +23,7 @@ python3 pipeline/quran.py --search "<arabic>" ; python3 pipeline/quran.py s:a-b
 # write sources/<id>/<reel>.yaml
 tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml
 tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
-tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml
+tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml [--vertical]
 ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate
 python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
 ```
@@ -46,7 +46,9 @@ Know the verses → skip transcribe. Name `surah`/`ayah_start`/`ayah_end`.
   as a centred window with no anchor key. **Always `--annotate` and look**
   (see below). Local `claude -p`; cached in `crop.json`.
 - **generate** — validates, renders. Read timing line, verification block,
-  bars bar-widths.
+  bars bar-widths. Never pipe it through `tail`: output is withheld until the
+  process exits, so a healthy 15-minute render reads as hung. `grep
+  --line-buffered`, or redirect to a file and read that.
 
 ## Verify English against BOTH translations
 
@@ -144,7 +146,17 @@ All 30fps, fixed size; a weak source is upscaled, never delivered small.
   (`x_offset`). Same renderer and look as vertical.
 - **bars** — 1920×1080 pills + FX, no letterbox, no signature ever.
   `fx: {heat: false}` for timing (~27% cheaper); never judge LOOK without the
-  full stack. Optional `bar_color:`.
+  full stack. Optional `bar_color:`. Heat maps live in `tools/cache/heat/`
+  and any map at least as long as the reel is used as-is, so span length
+  costs nothing until a reel outruns every cached map — 60s covers what we
+  cut. Only then does perlin run (~9.3s of wall per second of map, per axis),
+  and it announces itself before the render.
+- **`--vertical`** (any style) letterboxes the finished 1920×1080 onto
+  1080×1920: 1080×608 of picture, about a third of the frame, so bars' 213pt
+  Arabic arrives on the phone nearer 120pt-equivalent. The native `vertical`
+  style is what avoids that trade. Safe to re-run through generate, which
+  renders 1920×1080 fresh each time; `pipeline/letterbox.py` on its own
+  applied twice shrinks the picture to a postage stamp.
 - `english:` from Saheeh, cut at clauses, verify vs both editions.
 - Look knobs (vertical + horizontal only): `arabic_font`, `english_font`,
   `arabic_scale`, `english_scale`, `english_caps`, `vignette`, `dim`.

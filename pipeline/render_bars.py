@@ -466,38 +466,97 @@ def scrim_plate(tmp):
     return path
 
 
-def heat_layers(tmp, dur):
-    """The two perlin displacement maps heat needs, baked to mp4 and cached.
+# Heat maps are machine-level, not reel-level: pure geometry from FX_CFG
+# constants, identical for every reel. They live outside any reel's tmp and
+# outside /tmp entirely -- macOS sweeps /private/tmp, and re-buying a bake
+# this expensive on a timer is the whole problem. tools/ is already the
+# repo's home for heavy machine-local artefacts and is gitignored wholesale.
+HEAT_CACHE = os.path.join(ROOT, "tools", "cache", "heat")
 
-    Cached OUTSIDE the reel's tmp, one level up, because unlike snow these
-    depend on nothing about the reel: snow is tinted by the clip's own bar
-    colour, while these are pure geometry from FX_CFG constants. Baked once
-    on a machine, every later reel reuses them. That matters because the bake
-    is the expensive part -- `perlin` is single-threaded and runs at ~0.4x
-    realtime, 66s per map for a 26s reel.
+# `perlin` is a deterministic field over (x, y, t) and -t only decides where
+# to stop reading it: frames 0..N of a long bake are bit-identical to a bake
+# of length N (verified by framemd5). So a map is not an approximation of a
+# shorter one, it IS the shorter one, and the only reason to bake short is
+# disk. Bake generously once -- 60s covers every reel we cut, at ~2.2MB per
+# map-second per axis -- and no later reel pays perlin again.
+MIN_HEAT_SPAN = 60
 
-    Cached in 30s buckets: a bake is reusable by any reel no longer than it,
-    so most reels hit the same 30s pair and a long one bakes its own. crf 8
-    on flat low-frequency noise, matching the snow loop's setting -- the maps
-    are read back through a 3x bicubic upscale, which is far softer than the
-    quantiser.
-    """
+
+def heat_map_tag(span):
+    """The cache filename stem for a `span`-second map, minus the seed.
+
+    Keyed on exactly what determines the baked BYTES -- the perlin source's
+    own arguments plus geometry and length. Not on supersample, scroll_v,
+    rms_frac_w or the perlin_centre/sd pair: those live in the graph's
+    scroll/scale/lut, downstream of the file, and folding them in here would
+    throw away a valid 164s bake every time one of them is tuned."""
     c = FX_CFG["heat"]
-    span = int(math.ceil(max(dur, 1.0) / 30.0) * 30)
-    cache = os.path.dirname(os.path.normpath(tmp)) or tmp
-    os.makedirs(cache, exist_ok=True)
-    # Keyed on exactly what determines the baked BYTES -- the perlin source's
-    # own arguments plus geometry and length. Not on supersample, scroll_v,
-    # rms_frac_w or the perlin_centre/sd pair: those live in the graph's
-    # scroll/scale/lut, downstream of the file, and folding them in here would
-    # throw away a valid 164s bake every time one of them is tuned.
-    tag = "%dx%d_%d_%ds_o%s_p%s_x%s_t%s" % (
+    return "%dx%d_%d_%ds_o%s_p%s_x%s_t%s" % (
         BAND_W, BAND_H, FPS, span, c.get("octaves", 6),
         c.get("persistence", 0.6), c["xscale"], c["tscale"])
+
+
+def heat_map_paths(dur):
+    """-> (span in seconds, [x map path, y map path]).
+
+    Resolves to the SHORTEST cached pair that already covers `dur`, whatever
+    length that is, so a reel never re-bakes what a longer map already holds.
+    Only when nothing covers it does it name a fresh bake, floored at
+    MIN_HEAT_SPAN so the first one buys every later reel too.
+
+    Reads the cache directory but writes nothing, so generate.py can warn
+    about a pending bake before a render starts rather than leaving the
+    author at a silent terminal."""
+    c = FX_CFG["heat"]
+    seeds = (("x", int(c.get("seed_x", 11))), ("y", int(c.get("seed_y", 77))))
+    paths = lambda span: [                                        # noqa: E731
+        os.path.join(HEAT_CACHE, "heat%s_%s_s%d.mp4"
+                     % (axis, heat_map_tag(span), seed))
+        for axis, seed in seeds]
+    for span in sorted(cached_heat_spans()):
+        if span >= dur and all(os.path.exists(p) for p in paths(span)):
+            return span, paths(span)
+    span = max(int(math.ceil(max(dur, 1.0) / 30.0) * 30), MIN_HEAT_SPAN)
+    return span, paths(span)
+
+
+def cached_heat_spans():
+    """Lengths, in seconds, of every complete x-map already on disk."""
+    c = FX_CFG["heat"]
+    head = "heatx_%dx%d_%d_" % (BAND_W, BAND_H, FPS)
+    tail = "_o%s_p%s_x%s_t%s_s%d.mp4" % (
+        c.get("octaves", 6), c.get("persistence", 0.6), c["xscale"],
+        c["tscale"], int(c.get("seed_x", 11)))
     out = []
-    for axis, seed in (("x", int(c.get("seed_x", 11))),
-                       ("y", int(c.get("seed_y", 77)))):
-        path = os.path.join(cache, "heat%s_%s_s%d.mp4" % (axis, tag, seed))
+    for name in sorted(os.listdir(HEAT_CACHE)) if os.path.isdir(
+            HEAT_CACHE) else []:
+        if name.startswith(head) and name.endswith(tail):
+            middle = name[len(head):-len(tail)]
+            if middle.endswith("s") and middle[:-1].isdigit():
+                out.append(int(middle[:-1]))
+    return out
+
+
+def heat_layers(dur):
+    """The two perlin displacement maps heat needs, baked to mp4 and cached.
+
+    Cached in HEAT_CACHE, not the reel's tmp, because unlike snow these depend
+    on nothing about the reel: snow is tinted by the clip's own bar colour,
+    while these are pure geometry from FX_CFG constants. Baked once on a
+    machine, every later reel reuses them. That matters because the bake is
+    the expensive part -- `perlin` is single-threaded and runs far slower
+    than realtime.
+
+    crf 8 on flat low-frequency noise, matching the snow loop's setting -- the
+    maps are read back through a 3x bicubic upscale, which is far softer than
+    the quantiser.
+    """
+    span, paths = heat_map_paths(dur)
+    os.makedirs(os.path.dirname(paths[0]), exist_ok=True)
+    c = FX_CFG["heat"]
+    out = []
+    for axis, seed, path in zip("xy", (int(c.get("seed_x", 11)),
+                                       int(c.get("seed_y", 77))), paths):
         if not os.path.exists(path):
             print("      heat map %s: baking %ds of perlin (once per machine, "
                   "reused by every reel)" % (axis, span))
@@ -838,7 +897,7 @@ def render(plan):
                  r["x1"] - r["x0"]))
 
     snow_path = snow_layer(tmp, target_rgb) if on["snow"] else None
-    heat_paths = heat_layers(tmp, dur) if on["heat"] else None
+    heat_paths = heat_layers(dur) if on["heat"] else None
     scrim = scrim_plate(tmp) if on["scrim"] else None
     if cfg["signature"]:
         print("      signature %r IGNORED -- the bars style never burns one "

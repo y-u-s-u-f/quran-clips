@@ -1,0 +1,23 @@
+style: bars
+surah: 80
+ayah_start: 38
+ayah_end: 42
+reciter: "الوليد الشمسان"
+trim: [282.82, 322.35]
+
+# framing solved by pipeline/crop.py on 2026-08-02,
+# sonnet via claude code CLI, median of 4/4 sampled frames.
+# Head box 0.271 of the window, bars caption column 0.450 -> equal 0.093
+# gaps; face centre at 0.364 of the window height.
+# Re-solve with `pipeline/crop.py <this-file> --force`; edit these
+# by hand and they stay edited (crop.py then refuses without --force).
+crop: {x: 14, y: 120, w: 1344, h: 756}
+x_offset: -349
+groups:
+  - n_words: 3
+  - n_words: 2
+    line_split: 1   # 80:39 is two long words; one line runs 979px against a
+                    # 691-773px reel and its ink sits 5px off the 864 cap
+  - n_words: 4
+  - n_words: 2
+  - n_words: 4
