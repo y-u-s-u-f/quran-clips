@@ -169,6 +169,28 @@ Only `fetch.py` leaves the machine. `.env` pool + `--proxy`: static
 residential → datacentre → fail. Rotating exits cannot download. Prefer
 full download + `trim` over `--timestamps` through an authenticated proxy.
 
+**Keep the pools full** — `.env` once held 8 of 105 endpoints and a fetch died
+while 32 working exits sat unused. Refill from the Webshare API (plan
+`13868573` = static, `13868572` = datacentre), non-US first. Note `envvar()`
+prefers the environment over the file, so a stale `set -a` export of
+`QC_PROXY_*` silently overrides `.env`; `unset` it first.
+
+`Sign in to confirm you're not a bot` is the player API, per exit IP **and per
+player client**. If a control video also fails unproxied it is NOT IP
+reputation — sweep `PLAYER_CLIENTS` instead of endpoints. Upgrading yt-dlp does
+not help (stock and nightly behave identically).
+
+**Check the printed `WxH`.** `tv_simply` without a GVS PO token skips its https
+formats and delivers 640x360 while exiting 0. Start the provider first:
+
+```
+cd /tmp/bgutil/server && node build/main.js &   # 127.0.0.1:4416, not persistent
+curl -s http://127.0.0.1:4416/ping             # gate on this
+```
+
+Plugin must sit one directory deep (`~/.config/yt-dlp/plugins/bgutil/yt_dlp_plugins/`)
+or yt-dlp reports `Plugin directories: none`.
+
 ## Hard rules
 
 - No model-typed Arabic — from `quran.py` only.
