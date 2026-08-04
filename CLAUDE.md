@@ -10,8 +10,14 @@ plain files. No shared util module — `fetch.py` and `transcribe.py` each
 carry their own `.env` reader so every script stays independently runnable.
 
 - **`fetch.py`** — URL/local -> `sources/<id>/`. yt-dlp (proxy pool,
-  `web_embedded` retry, `ensure_aac`, stub gate). Caps at `MAX_FPS` 30 at
-  intake. No third-party imports.
+  `PLAYER_CLIENTS` ladder, `ensure_aac`, stub gate). Caps at `MAX_FPS` 30 at
+  intake. No third-party imports. The bot check fires at the player API per
+  exit IP AND per player client, so recovery is the next client, never
+  retrying one harder: `tv_simply` leads because it resolved on 32 of 105
+  exits where the yt-dlp default and `web_embedded` failed on every one
+  (measured 2026-08). The client that resolved metadata is pinned for the
+  media fetch and captions. 1080p from `tv_simply` needs a GVS PO token
+  (bgutil provider on 127.0.0.1:4416) or it silently serves 640x360.
 - **`transcribe.py`** — `source.*` -> `whisper.json` + `.srt`. Backend
   subprocess against `tools/asr-venv` via `_SNIPPETS` (strings so they run
   under an interpreter that cannot import this package). Contract:
