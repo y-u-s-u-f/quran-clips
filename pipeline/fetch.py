@@ -227,6 +227,12 @@ FORMAT = ("bv*[height<=1080][fps<=%(fps)d]+ba[ext=m4a]/"
 # where the yt-dlp default and `web_embedded` failed on all 105, so it leads.
 # `web_embedded` stays last: it is the one that still exposes 1080p when the
 # others answer DRM-only.
+#
+# `tv_simply` costs 1080p unless a GVS PO token is available: without one it
+# skips its https formats and the selector above silently settles for 640x360,
+# exiting 0 with a real (small) file that the stub gate accepts. A local bgutil
+# provider on 127.0.0.1:4416 supplies the token; check it is up before a fetch
+# and read the printed WxH afterwards, since only that reveals the downgrade.
 PLAYER_CLIENTS = ["tv_simply", "android_vr", "ios", "tv", "web_safari",
                   "web_embedded"]
 
