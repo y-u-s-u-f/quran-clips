@@ -8,9 +8,9 @@ Arabic + English over graded footage, at one of two canvases:
 ONE look on two canvases, verified against
 reels/BADR-AL-TURKI-AHZAB-56-56.mp4: the footage reframed by the config's
 `crop` and pushed down under ONE black alpha plate (flat dim + optional soft
-vignette + a backing gradient behind the caption block), warm-white Uthmanic
+vignette + a backing gradient sized to the caption block), warm-white Uthmanic
 Hafs on a single line with the ayah medallion inline, tracked ALL-CAPS Albertus
-beneath it, one shared soft drop shadow for both scripts, and 0.45s dissolves
+beneath it, one shared hard drop shadow for both scripts, and 0.45s dissolves
 between cards. The two shapes share every one of those: they differ only in
 canvas and in where the block sits.
 
@@ -39,7 +39,7 @@ import re
 import subprocess
 import sys
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, features
+from PIL import Image, ImageChops, ImageDraw, ImageFont, features
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -89,8 +89,10 @@ EN_WIDTH_FRAC = {"horizontal": 0.55, "vertical": 0.82}
 ENGLISH = {"color": (245, 243, 237),     # #F5F3ED
            "alpha": 240,                 # a hair behind the Arabic
            # ALL-CAPS at ONE size: Albertus has no true small-caps
-           # (style.yaml `smallcaps: false`).
-           "cap_pt": 29,
+           # (style.yaml `smallcaps: false`). 33 against the 72pt Arabic is
+           # style.yaml's own pairing -- below it the English reads as a
+           # footnote to the ayah rather than its other half.
+           "cap_pt": 33,
            "tracking_pct": 3,            # of the point size, per character
            "line_height_mult": 1.62,
            # Of the frame's SHORT side, not its height: the pair's spacing
@@ -100,23 +102,23 @@ ENGLISH = {"color": (245, 243, 237),     # #F5F3ED
 
 # ONE drop shadow, composited from the MERGED ink alpha of both scripts (they
 # are drawn into the same layer), so an English line never casts a second
-# shadow onto the Arabic. blur 3.0 = style.yaml's `blur_px: 5` x 0.6 -- the
-# radius that ships.
-SHADOW = {"color": (0, 0, 0), "alpha": 153,     # style.yaml opacity 0.60
-          "offset_px": 2, "blur_px": 3.0}
+# shadow onto the Arabic. Hard 1px down-right (315 deg light), no blur: nothing
+# is plated behind the block, so the shadow alone seats the type.
+SHADOW = {"color": (0, 0, 0), "alpha": 204,     # opacity 0.80
+          "offset_px": 1}
 
 # The grade: a single black RGBA plate whose alpha is dim + vignette + a
-# backing gradient under the caption block, clamped so the darkest pixel still
+# backing gradient behind the caption block, clamped so the darkest pixel still
 # reads as footage rather than a box.
 GRADE = {"cap": 190,
          "vignette": {"rx_frac": 0.62, "ry_frac": 0.62,
                       "a_center": 0, "a_edge": 126, "ease": 2.2}}
-# The backing follows the block, so it is shaped like the block: a column in
-# landscape, a band in portrait.
-BACKING = {"horizontal": {"dy_frac": 0.04, "rx_frac": 0.32, "ry_frac": 0.26,
-                          "a_center": 130, "a_edge": 0, "ease": 1.45},
-           "vertical": {"dy_frac": 0.06, "rx_frac": 0.60, "ry_frac": 0.15,
-                        "a_center": 130, "a_edge": 0, "ease": 1.45}}
+# The backing is sized to the INK it seats, not to the frame: a frame-fraction
+# ellipse reads as a band far bigger than the type it carries. The pads are
+# multiples of the block's own half-width/half-height, and they are >1 because
+# an ellipse through the block's corners would leave those corners at alpha 0.
+BACKING = {"pad_x": 1.40, "pad_y": 1.55,
+           "a_center": 130, "a_edge": 0, "ease": 1.45}
 
 # With no measured reciter the block is centred on the frame; `y_offset` (and
 # `x_offset`) are the per-clip nudges.
@@ -347,8 +349,8 @@ def layout(orientation, phrases, english, cfg, face_bottom):
 
     def bounds(bb, base):
         """The block's (top, bottom) in px. Measured on the INK: the shadow is
-        a 2px offset inside a 3.0px blur, i.e. a near-symmetric halo, so
-        including it moves the solved anchor by ~1px -- and `y_offset` is the
+        a hard 1px down-right offset, so including it would leave the top alone
+        and move the solved centre by half a pixel -- and `y_offset` is the
         knob for that kind of nudge anyway."""
         bot = bb[3]
         for ln, y in base:
@@ -402,15 +404,13 @@ def layout(orientation, phrases, english, cfg, face_bottom):
 # ---------------------------------------------------------------------------
 
 def with_shadow(ink, W, H):
-    """The ink plus ONE soft drop shadow struck from its merged alpha: a solid
-    black layer through that alpha, pushed down-right and blurred, ink over it
-    -- a lift off the footage, not an outline ring."""
+    """The ink plus ONE hard drop shadow struck from its merged alpha: a solid
+    black layer through that alpha, pushed down-right, ink over it -- a lift
+    off the footage, not an outline ring."""
     off = SHADOW["offset_px"]
     solid = Image.new("RGBA", (W, H), SHADOW["color"] + (SHADOW["alpha"],))
     sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sh.paste(solid, (0, 0), ink.getchannel("A"))
-    sh = sh.transform((W, H), Image.AFFINE, (1, 0, -off, 0, 1, -off))
-    sh = sh.filter(ImageFilter.GaussianBlur(SHADOW["blur_px"]))
+    sh.paste(solid, (off, off), ink.getchannel("A"))
     return Image.alpha_composite(sh, ink)
 
 
@@ -486,22 +486,43 @@ def radial_alpha(w, h, cx, cy, rx, ry, a_center, a_edge, ease, lo=48, hi=27):
     return small.resize((w, h), Image.BILINEAR)
 
 
-def grade_plate(lay, orientation, W, H, vignette, dim, tmp):
+def backing_ellipse(lay):
+    """(cx, cy, rx, ry) for the backing, solved from the UNION of the phrase
+    blocks -- one plate serves every card, so it has to cover the widest and
+    the deepest. Both scripts are centred on `cx`, and an English line that
+    does NOT wrap outruns the Arabic it sits under, so the half-width is the
+    max over both rather than the Arabic's alone."""
+    cx = lay["cx"]
+    half = 0.0
+    for p in lay["phrases"]:
+        bb = p["ar_bbox"]
+        half = max(half, bb[2] - cx, cx - bb[0])
+        for ln, _ in p["english"]:
+            half = max(half, en_width(en_tokens(ln, lay["stroke_macron"],
+                                                lay["caps"]),
+                                      lay["en_font"], lay["tracking"]) / 2.0)
+    y0 = min(p["top"] for p in lay["phrases"])
+    y1 = max(p["bottom"] for p in lay["phrases"])
+    return (cx, (y0 + y1) / 2.0, half * BACKING["pad_x"],
+            (y1 - y0) / 2.0 * BACKING["pad_y"])
+
+
+def grade_plate(lay, W, H, vignette, dim, tmp):
     """The single black plate that seats the type: flat dim, optionally a
-    vignette, plus a backing gradient centred just below the Arabic anchor
-    (live footage runs brighter than the account's moody grade, and warm-white
-    type over a sunlit thobe needs the backing to read at all). Capped so the
-    darkest pixel is still footage."""
-    v, t = GRADE["vignette"], BACKING[orientation]
+    vignette, plus the backing behind the caption block (live footage runs
+    brighter than the account's moody grade, and warm-white type over a sunlit
+    thobe needs the backing to read at all). Capped so the darkest pixel is
+    still footage."""
+    v = GRADE["vignette"]
     combo = Image.new("L", (W, H), max(0, min(255, int(round(dim * 255)))))
     if vignette:
         combo = ImageChops.add(combo, radial_alpha(
             W, H, W / 2.0, H / 2.0, W * v["rx_frac"], H * v["ry_frac"],
             v["a_center"], v["a_edge"], v["ease"]))
+    bcx, bcy, brx, bry = backing_ellipse(lay)
     combo = ImageChops.add(combo, radial_alpha(
-        W, H, lay["cx"], lay["ar_cy"] + t["dy_frac"] * H,
-        W * t["rx_frac"], H * t["ry_frac"],
-        t["a_center"], t["a_edge"], t["ease"]))
+        W, H, bcx, bcy, brx, bry,
+        BACKING["a_center"], BACKING["a_edge"], BACKING["ease"]))
     combo = combo.point(lambda a: min(a, GRADE["cap"]))
     black = Image.new("L", (W, H), 0)
     path = os.path.join(tmp, "grade.png")
@@ -730,8 +751,7 @@ def render(plan):
               % (p["i"], r["ar_w"], r["en_lines"], p["top"], p["bottom"],
                  p["top"] / float(H), p["bottom"] / float(H)))
 
-    grade_png = grade_plate(lay, orientation, W, H, cfg["vignette"],
-                            cfg["dim"], tmp)
+    grade_png = grade_plate(lay, W, H, cfg["vignette"], cfg["dim"], tmp)
     sig = (signature_card(cfg["signature"],
                           ENGLISH_FONTS[cfg["english_font"]]["path"], W, H,
                           tmp, cfg["signature_offset"])
