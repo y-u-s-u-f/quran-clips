@@ -10,8 +10,11 @@ plain files. No shared util module — `fetch.py` and `transcribe.py` each
 carry their own `.env` reader so every script stays independently runnable.
 
 - **`fetch.py`** — URL/local -> `sources/<id>/`. yt-dlp (proxy pool,
-  `web_embedded` retry, `ensure_aac`, stub gate). Caps at `MAX_FPS` 30 at
-  intake. No third-party imports.
+  `PLAYER_CLIENTS` ladder, `ensure_aac`, stub gate). Caps at `MAX_FPS` 30 at
+  intake. No third-party imports. The bot check fires per exit IP AND per
+  player client, so recovery walks `PLAYER_CLIENTS` and pins whichever one
+  resolved metadata; the measured order and the PO-token caveat that costs
+  1080p are in the file.
 - **`transcribe.py`** — `source.*` -> `whisper.json` + `.srt`. Backend
   subprocess against `tools/asr-venv` via `_SNIPPETS` (strings so they run
   under an interpreter that cannot import this package). Contract:

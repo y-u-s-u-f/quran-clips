@@ -169,6 +169,10 @@ Only `fetch.py` leaves the machine. `.env` pool + `--proxy`: static
 residential → datacentre → fail. Rotating exits cannot download. Prefer
 full download + `trim` over `--timestamps` through an authenticated proxy.
 
+`Sign in to confirm you're not a bot` is per exit IP and per player client, so
+fetch walks `PLAYER_CLIENTS` on its own: read the printed `client` and `WxH`
+(a client without a GVS PO token exits 0 at 640x360) before blaming the pool.
+
 ## Hard rules
 
 - No model-typed Arabic — from `quran.py` only.
