@@ -58,7 +58,7 @@ carry their own `.env` reader so every script stays independently runnable.
 - **`publish.py`** — mp4 -> Instagram + Facebook. Tags from the file
   (`--surah/--ayat/--reciter` if missing). Caption from `tafsir()` + ayat +
   hashtags. Cover at `COVER_MS` 1550. Credentials in `.env`; no pixels
-  touched.
+  touched. A reel that posted is tagged green in Finder (`--draft` is not).
 - **`render_text.py`** — the `vertical` (1080x1920) and `horizontal`
   (1920x1080) styles: ONE look on two canvases, Pillow only (no libass).
   `layout()` SOLVES the anchor — landscape centres the median phrase's block,

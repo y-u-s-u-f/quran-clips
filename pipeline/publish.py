@@ -32,11 +32,14 @@ produces.
 Credentials live in `.env` (FB_PAGE_ID, FB_PAGE_TOKEN, IG_BUSINESS_ACCOUNT_ID)
 and never in the repo. Publishing is the one stage that both leaves the
 machine AND changes something irreversible, so it prints the caption and asks
-before it posts unless `--yes` is given.
+before it posts unless `--yes` is given. A reel that posted is tagged green in
+Finder, so `reels/` shows what has already gone out; `--draft` leaves it
+untagged.
 """
 import argparse
 import json
 import os
+import plistlib
 import re
 import subprocess
 import sys
@@ -58,6 +61,17 @@ RUPLOAD = "https://rupload.facebook.com"
 # Only the ayat + tafsir can push past it (a 6-ayah span does), so the
 # overflow rule drops the recited text and keeps the explanation.
 IG_CAPTION_MAX = 2200
+
+# The Finder tag a published reel carries, so `reels/` shows at a glance what
+# has already gone out -- the same green label applied by hand until now.
+# A tag is stored in the user-tags xattr as "<name>\n<colour index>", and the
+# swatch Finder actually draws comes from the separate FinderInfo label, so
+# both are written (measured: the xattr alone leaves the file colourless and
+# unlisted by `mdls`). Finder's AppleScript `label index` runs the colours in
+# the opposite order to the stored index -- green is 2 on disk, 6 to Finder.
+PUBLISHED_TAG = "Green"
+TAG_COLOR_INDEX = 2
+FINDER_LABEL_INDEX = 6
 
 # Where the cover frame is cut from, in milliseconds. Both platforms default
 # to frame 0 on an API upload -- neither picks a frame the way the app's
@@ -369,6 +383,41 @@ def find_reel(arg):
     raise SystemExit("no reel matches %r (looked in %s)" % (arg, reels))
 
 
+def mark_published(path):
+    """Tag the reel green in Finder, the way a posted reel has always been
+    marked by hand.
+
+    Existing tags are preserved and the tag is not duplicated on a re-post.
+    Cosmetic and macOS-only: a failure here never fails a publish that already
+    succeeded, so it is reported rather than raised."""
+    if sys.platform != "darwin":
+        return
+    key = "com.apple.metadata:_kMDItemUserTags"
+    try:
+        # -x: hex out. The payload is a binary plist and is not text.
+        cur = subprocess.run(["xattr", "-p", "-x", key, path],
+                             capture_output=True, text=True)
+        tags = []
+        if cur.returncode == 0:
+            blob = bytes.fromhex("".join(cur.stdout.split()))
+            tags = list(plistlib.loads(blob))
+        if any(t.split("\n")[0] == PUBLISHED_TAG for t in tags):
+            return
+        tags.append("%s\n%d" % (PUBLISHED_TAG, TAG_COLOR_INDEX))
+        subprocess.run(
+            ["xattr", "-w", "-x", key,
+             plistlib.dumps(tags, fmt=plistlib.FMT_BINARY).hex(), path],
+            check=True, capture_output=True)
+        subprocess.run(
+            ["osascript", "-e",
+             'tell application "Finder" to set label index of '
+             '(POSIX file "%s" as alias) to %d' % (path, FINDER_LABEL_INDEX)],
+            capture_output=True, timeout=15)
+        print("  tagged %s in Finder" % PUBLISHED_TAG.lower())
+    except Exception as e:                                  # noqa: BLE001
+        print("  ! could not tag the file %s: %s" % (PUBLISHED_TAG.lower(), e))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="publish a rendered reel to Instagram + Facebook")
@@ -430,6 +479,8 @@ def main(argv=None):
                          cover=cover)
         if cover:
             os.remove(cover)
+    if not a.draft:
+        mark_published(a.reel)
     return 0
 
 
