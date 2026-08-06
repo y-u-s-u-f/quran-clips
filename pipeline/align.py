@@ -258,12 +258,20 @@ def apply_repeats(results, repeats, min_fix=0.5):
     would sit uncaptioned. The word to move is the first one the aligner
     placed at/after the second utterance -- no text matching needed. Its
     predecessor's end is clamped so the two cannot overlap. Corrections
-    smaller than min_fix are noise, not a missed utterance."""
+    smaller than min_fix are noise, not a missed utterance.
+
+    A target at or before the predecessor's own start is skipped, since
+    clamping the predecessor to it would leave that word ending before it
+    begins (measured: end 58.52 against start 60.98, a zero-length card).
+    That is the shape when the aligner already split the phrase across both
+    utterances, so the earlier one is claimed and there is nothing to move."""
     fixed = []
     for first_start, second_start in repeats:
         k = next((i for i, r in enumerate(results)
                   if r["start"] >= second_start), None)
         if k is None or results[k]["start"] - first_start < min_fix:
+            continue
+        if k and first_start <= results[k - 1]["start"]:
             continue
         fixed.append((k, results[k]["start"], first_start))
         results[k]["start"] = first_start
