@@ -3,6 +3,7 @@
 #
 #     ./install.sh            full setup (idempotent; re-run any time)
 #     ./install.sh --check    report only, install nothing
+#     ./install.sh --hermes   also register skills/ with the Hermes harness
 #
 # What it does, in order:
 #   1. checks the system tools (python3, ffmpeg, ffprobe, yt-dlp, curl)
@@ -21,14 +22,21 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-CHECK_ONLY=0
-[ "${1:-}" = "--check" ] && CHECK_ONLY=1
-
 ok=()    # summary lines
 bad=()   # missing pieces + what they block
 
 say()  { printf '%s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+CHECK_ONLY=0
+REGISTER_HERMES=0
+for arg in "$@"; do
+    case "$arg" in
+        --check)  CHECK_ONLY=1;;
+        --hermes) REGISTER_HERMES=1;;
+        *) say "unknown flag: $arg (want --check or --hermes)"; exit 2;;
+    esac
+done
 
 # ---------------------------------------------------------------------------
 # 1. system tools
@@ -155,6 +163,47 @@ if have "${QC_CLAUDE:-claude}"; then
     ok+=("framing      $(command -v "${QC_CLAUDE:-claude}") (crop.py)")
 else
     ok+=("framing      claude CLI absent (optional; hand-write crop:/x_offset:)")
+fi
+
+# ---------------------------------------------------------------------------
+# 4b. Hermes harness (optional). Claude Code finds the skill by itself through
+# .claude/skills/make-post; Hermes needs the repo's skills/ dir named in its
+# config. Same SKILL.md either way -- the symlink and this entry point at one
+# file, which is why the two harnesses cannot drift.
+# ---------------------------------------------------------------------------
+HCFG="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
+if have hermes; then
+    if [ -f "$HCFG" ] && grep -qF "$ROOT/skills" "$HCFG"; then
+        ok+=("hermes       skills/ registered in $HCFG")
+    elif [ "$REGISTER_HERMES" = 1 ] && [ "$CHECK_ONLY" = 0 ]; then
+        # Textual edit, not a YAML round-trip: config.yaml is the user's own
+        # commented file and safe_dump would strip every comment in it.
+        "$PY" - "$HCFG" "$ROOT/skills" <<'PYEOF'
+import pathlib, sys
+cfg, entry = pathlib.Path(sys.argv[1]), sys.argv[2]
+cfg.parent.mkdir(parents=True, exist_ok=True)
+text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+item = "    - %s\n" % entry
+if entry in text:
+    pass
+elif "  external_dirs: []" in text:
+    text = text.replace("  external_dirs: []\n", "  external_dirs:\n" + item, 1)
+elif "  external_dirs:\n" in text:
+    text = text.replace("  external_dirs:\n", "  external_dirs:\n" + item, 1)
+elif "\nskills:\n" in text:
+    text = text.replace("\nskills:\n", "\nskills:\n  external_dirs:\n" + item, 1)
+else:
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text += "skills:\n  external_dirs:\n" + item
+cfg.write_text(text, encoding="utf-8")
+PYEOF
+        ok+=("hermes       skills/ registered in $HCFG (./install.sh --hermes)")
+    else
+        ok+=("hermes       present; run ./install.sh --hermes to enable /make-post")
+    fi
+else
+    ok+=("hermes       not installed (optional; Claude Code drives the pipeline alone)")
 fi
 
 # ---------------------------------------------------------------------------
