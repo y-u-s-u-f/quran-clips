@@ -56,8 +56,10 @@ the first utterance with no reference word to claim it -- the alignment
 times only the second, seconds late. That case is corrected here from
 whisper.json, which DOES transcribe both utterances: two consecutive
 segments carrying the same words are the restart, and the phrase's
-opening word is pulled back onto the first of them. It cannot be found
-in the confidence scores instead -- a long held madd scores just as low.
+opening word is pulled back onto the first of them. Only segments inside
+the reel's own trim window count, since a long recording repeats short
+phrases outside it. It cannot be found in the confidence scores
+instead -- a long held madd scores just as low.
 
 The correction needs whisper.json, so it only runs when transcribe.py
 has been used. Name the span and skip the transcript and a restart goes
@@ -223,14 +225,23 @@ def write_trim(config_path, t0, t1):
     open(config_path, "w", encoding="utf-8").write("".join(lines))
 
 
-def find_repeats(whisper_path, t0):
+def find_repeats(whisper_path, t0, t1=None):
     """Ibtida' restarts, as (first_utterance_start, second_utterance_start).
 
     Two consecutive Whisper segments carrying the SAME words is the reciter
     breaking off and starting the phrase again. Whisper transcribes both
     utterances; the mushaf reference has the phrase once, so forced alignment
-    can only ever claim one of them -- this is where the other one is."""
+    can only ever claim one of them -- this is where the other one is.
+
+    Only segments inside the aligned window count. The transcript covers the
+    whole source, and a long recording repeats short phrases (a takbir, an
+    ayah from elsewhere) outside the reel; those map to negative
+    reel-relative times that apply_repeats would drag real words back to.
+    Measured on a 954s Fajr: 11 out-of-window matches put the opening word at
+    -628.60s and took every card's timing with it."""
     segments = json.load(open(whisper_path, encoding="utf-8")).get("segments", [])
+    end = t1 if t1 is not None else float("inf")
+    segments = [s for s in segments if t0 <= s["t0"] <= end]
     out = []
     for a, b in zip(segments, segments[1:]):
         toks = tuple(quran.tokens(a["text"]))
@@ -247,12 +258,20 @@ def apply_repeats(results, repeats, min_fix=0.5):
     would sit uncaptioned. The word to move is the first one the aligner
     placed at/after the second utterance -- no text matching needed. Its
     predecessor's end is clamped so the two cannot overlap. Corrections
-    smaller than min_fix are noise, not a missed utterance."""
+    smaller than min_fix are noise, not a missed utterance.
+
+    A target at or before the predecessor's own start is skipped, since
+    clamping the predecessor to it would leave that word ending before it
+    begins (measured: end 58.52 against start 60.98, a zero-length card).
+    That is the shape when the aligner already split the phrase across both
+    utterances, so the earlier one is claimed and there is nothing to move."""
     fixed = []
     for first_start, second_start in repeats:
         k = next((i for i, r in enumerate(results)
                   if r["start"] >= second_start), None)
         if k is None or results[k]["start"] - first_start < min_fix:
+            continue
+        if k and first_start <= results[k - 1]["start"]:
             continue
         fixed.append((k, results[k]["start"], first_start))
         results[k]["start"] = first_start
@@ -362,7 +381,7 @@ def align(config_path, force=False):
     # still share the alignment window's clock.
     if os.path.exists(cfg["whisper"]):
         for k, was, now in apply_repeats(results,
-                                         find_repeats(cfg["whisper"], t0)):
+                                         find_repeats(cfg["whisper"], t0, t1)):
             print("  repeated phrase: %s starts at %.2fs, not %.2fs "
                   "(reciter restarted; caption now covers both)"
                   % (words[k], now, was))

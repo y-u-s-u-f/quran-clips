@@ -100,12 +100,25 @@ DEFAULTS = {
     "arabic_font": "uthmanic_hafs",   # uthmanic_hafs | thuluth
     "english_font": "albertus",       # albertus | gentium
     "arabic_scale": 1.0,         # x the house nominal 72pt
-    "english_scale": 1.0,        # x the house 29pt caps
+    "english_scale": 1.0,        # x the house 33pt caps
+    "text_width_frac": None,     # override the ink-width cap the fitted point
+                                 # size is solved against, as a fraction of
+                                 # canvas width. The house caps (0.51 Arabic /
+                                 # 0.55 English on landscape) hold the type to
+                                 # the reference reels' measure, and a *_scale
+                                 # above them silently stops scaling instead of
+                                 # erroring. Raise it only when the widest card
+                                 # still leaves real margin at the size asked
+                                 # for; splitting the widest groups is the
+                                 # other way to buy the same size.
     "english_caps": True,        # ALL-CAPS English (the reference reels' own
                                  # setting); false sets it as authored
     "vignette": True,            # the grade plate's soft edge darkening
     "dim": 0.118,                # flat black over the footage, 0 (untouched)
                                  # to 1 (black). 0.118 = the measured 30/255.
+                                 # The backing carries the type's contrast, so
+                                 # this is the global mood knob: dial it down
+                                 # for footage that should stay bright.
     "face_bottom": None,         # vertical only: fraction of the canvas
                                  # height at which the reciter's head box
                                  # ends, measured by crop.py. The caption
@@ -179,7 +192,9 @@ an error rather than a silent no-op.
 
     # vertical + horizontal: arabic_font (uthmanic_hafs | thuluth),
     #   english_font (albertus | gentium), arabic_scale, english_scale
-    #   (multipliers on the house 72pt Arabic / 29pt English caps),
+    #   (multipliers on the house 72pt Arabic / 33pt English caps),
+    #   text_width_frac (raises the ink-width cap the fitted size is solved
+    #   against, so a *_scale is not silently clipped by it),
     #   english_caps (true = ALL-CAPS, the reference reels' setting),
     #   vignette (true | false), dim (0 untouched .. 1 black; 0.118 house)
     # bars style: bar_color ("#RRGGBB" | omit for auto),

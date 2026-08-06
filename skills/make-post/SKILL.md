@@ -3,187 +3,161 @@ name: make-post
 description: >-
   Make a Quran recitation clip/reel from a YouTube URL or local video.
   Trigger on "make a post from <url>", "make a clip from this recitation",
-  "turn this into a reel". Drives pipeline/: fetch -> (transcribe) -> config
-  -> align -> crop -> generate. Styles: vertical | horizontal | bars.
+  "turn this into a reel". Runs fetch -> (transcribe) -> config -> align ->
+  crop -> generate. Styles: vertical | horizontal | bars.
 ---
 
-# make-post — Quran reel pipeline
+# make-post — make a reel
 
-Run the scripts; author the YAML; make the judgement calls below. Do not
-re-derive what a script already does. From repo root. On an unfamiliar
-machine: `./install.sh --check` first. Reference: `pipeline/README.md`.
+Run the steps, author the YAML, fix what the output tells you. From repo root.
+Unfamiliar machine: `./install.sh --check` first.
 
-## Sequence
+## Steps
 
 ```
 python3 pipeline/fetch.py <url-or-path> [--name SLUG] [--proxy] [--timestamps A-B]
-# captions.srt first if present (cheapest span finder) — then, only if needed:
+# find the span: captions.srt if fetch got one, else
 python3 pipeline/transcribe.py sources/<id>
-python3 pipeline/quran.py --search "<arabic>" ; python3 pipeline/quran.py s:a-b
-# write sources/<id>/<reel>.yaml
+python3 pipeline/quran.py --search "<arabic>"     # -> surah:ayah
+# write sources/<id>/<reel>.yaml   (see Config)
 tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml
 tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml [--vertical]
-ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate
+ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate, always
 python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
 ```
 
-Know the verses → skip transcribe. Name `surah`/`ayah_start`/`ayah_end`.
+- Know the verses already → skip transcribe, name them in the config.
+- `captions.srt` is the cheapest span finder: dedupe rolling windows (keep each
+  block's last line). Timings are ±1–2s — enough to pick a span, never to `trim:`.
+- Open `/tmp/c.png` and look, every time. crop.py's guards check its own numbers
+  against each other, not whether it found a real face.
+- Never pipe `generate.py` through `tail`: output is withheld until the process
+  exits, so a healthy 15-minute render reads as hung. `grep --line-buffered`, or
+  redirect to a file and read that.
 
-- **fetch** — `sources/<id>/`, ≤30fps at intake, AAC guaranteed, stub gate.
-  Keep existing `source.mp4`. If `captions.srt` exists, dedupe rolling
-  windows (keep each block's last line) before transcribing — timings are
-  loose (±1–2s), good enough to choose a span, never to `trim:`.
-- **transcribe** — `whisper.json` + `.srt`. Trust mushaf for WHAT; ASR for
-  WHERE.
-- **quran.py** — only Arabic/translations. `--search` / `s:a-b` / `--words`.
-- **align** — CTC of known mushaf → `<reel>.align.json`. Omit `trim:` only
-  when source ≈ reel (long sources misfire quietly — see Trim).
-- **crop** (every style) — → `crop:` plus `x_offset:` (bars, horizontal) or
-  `face_bottom:` (vertical). Column styles use the equal-gap rule; vertical
-  centres him and reports where his head box ENDS. Estimate; refuses on no
-  face / off-frame caption / no room under his chin, and treats an empty shot
-  as a centred window with no anchor key. **Always `--annotate` and look**
-  (see below). Local `claude -p`; cached in `crop.json`.
-- **generate** — validates, renders. Read timing line, verification block,
-  bars bar-widths. Never pipe it through `tail`: output is withheld until the
-  process exits, so a healthy 15-minute render reads as hung. `grep
-  --line-buffered`, or redirect to a file and read that.
+## Config
 
-## Verify English against BOTH translations
-
-`generate.py` prints each card's Arabic + English, then Saheeh + Taqi for
-every verse. **Check every card against both.** Card English must cover the
-same clause as its Arabic; where the editions agree on order, contradiction
-means a mis-split — fix `groups`/`english:`, re-run. Do not accept unverified.
-
-## Config you author
-
-`generate.py --print-schema` is authoritative.
+`generate.py --print-schema` is authoritative. Unknown key = error.
 
 ```yaml
-style: vertical                   # or horizontal | bars
-signature: null                   # omit/null = none; bars NEVER burns one
+style: vertical                   # vertical | horizontal | bars
+signature: null                   # omit/null = none; bars never burns one
 surah: 78
 ayah_start: 31
 ayah_end: 34
-reciter: "..."                    # Arabic, COPIED from title/earlier hashtag
-trim: [16.4, 48.0]                # see Trim
+reciter: "..."                    # Arabic, COPIED from the title or an earlier config
+trim: [16.4, 48.0]                # see Fixing → trim
 groups:
-  - n_words: 3                    # MUST sum to span word count
-    english: "..."                # vertical + horizontal
-    line_split: 2                 # bars; omit = auto
+  - n_words: 3                    # MUST sum to the span's word count
+    english: "..."                # vertical + horizontal; bars is Arabic-only
+    line_split: 2                 # bars only; omit = auto
+# crop:, x_offset:, face_bottom: are written by crop.py --write
+# optional: suppress, nudge, verse_numbers, y_offset, arabic_font, english_font,
+#   arabic_scale, english_scale, text_width_frac, english_caps, vignette, dim,
+#   bar_color, grade, fx
 ```
 
-**No Arabic in configs** — `n_words` slices mushaf. Count with:
+Requirements:
 
-```
-tools/render-venv/bin/python -c "import sys; sys.path.insert(0,'pipeline'); import generate; \
-  w=generate.spoken_words(generate.fetch_verses(57,16,16)); \
-  print(len(w)); [print(i,x) for i,x in enumerate(w)]"
-```
+- **No Arabic typed by you, anywhere.** `n_words` slices the mushaf. Count with:
 
-Not `ayah()['ar'].split()` (counts unspoken marks; 57:16 is 28, not 30).
+  ```
+  tools/render-venv/bin/python -c "import sys; sys.path.insert(0,'pipeline'); import generate; \
+    w=generate.spoken_words(generate.fetch_verses(57,16,16)); \
+    print(len(w)); [print(i,x) for i,x in enumerate(w)]"
+  ```
 
-Judgement: split at waqf; never span two ayat; avoid opening on a connective;
-`suppress` non-recitation.
+  Not `ayah()['ar'].split()` — it counts unspoken marks (57:16 is 28, not 30).
+- Split groups at waqf; never span two ayat; don't open a card on a connective.
+- `english:` from Saheeh, cut at clause boundaries.
+- `suppress:` anything that is not recitation.
+- Hand-write `crop:`/`x_offset:`/`face_bottom:` only if crop.py refused.
 
-## Trim
+Per style: `vertical` (1080×1920) needs `crop:` + `face_bottom:` — generate
+refuses a landscape source without a crop rather than centre-crop him blind.
+`horizontal` and `bars` (1920×1080) need `x_offset:`. `--vertical` letterboxes a
+1920×1080 render onto 1080×1920, leaving the picture about a third of the frame,
+so bars' Arabic arrives nearer 120pt-equivalent; native `vertical` avoids that
+trade. Safe to re-run through generate.
 
-Open ON the first word. `align.py` auto-trim (no `trim:`): 0.12s before
-onset, clamped to the waqf; prints `head: …`. Hand-set `trim:` is never
-moved; >0.25s head gap is called out. Tail keeps 0.30s.
+## Verify English against BOTH translations
 
-**Auto-trim only when source ≈ reel.** On a long multi-surah recording it
-returns valid JSON while a trailing word is captured downstream — only tell
-is a collapsed score. Then: pick rough span from captions/whisper → hand
-`trim:` → read scores (low mid-phrase madd is normal) → re-bound if needed.
-Also hand-set for deliberate excerpts / second takes.
+`generate.py` prints each card's Arabic + English, then Saheeh + Taqi for every
+verse. **Check every card against both.** Card English must cover the same clause
+as its Arabic; where the editions agree on order, a contradiction means a
+mis-split — fix `groups`/`english:` and re-run. Do not accept unverified.
 
-Haram audio has no true silence (~−35dB floor). Use RMS envelope dips
-(0.4–0.9s to −27…−34dB vs speech ~−11dB), not `silencedetect`.
+## Fixing
 
-## Ibtidāʾ restarts
+**Trim / the opening word.** Open ON the first word. Auto-trim (omit `trim:`) is
+only safe when the source is roughly the reel; on a long recording it returns
+valid JSON while a trailing word is captured, and the only tell is a collapsed
+score. So: rough span from captions/whisper → hand `trim:` → read the scores (low
+mid-phrase madd is normal) → re-bound. Hand-set trim is never moved; align prints
+the head gap and calls out >0.25s. Also hand-set for deliberate excerpts and
+second takes. Haram audio has no true silence (~−35dB floor): find boundaries by
+RMS envelope dips (0.4–0.9s at −27…−34dB against speech ~−11dB), not
+`silencedetect`.
 
-Restarted phrase → **its own card** (same words, separate group). `align.py`
-corrects onset from consecutive identical Whisper segments and prints it.
-Whisper may collapse into one long word — scan align output for duration
-outliers (e.g. 3.1s vs 0.7–1.2s neighbours) before assuming no restart.
-Check card start vs envelope before `nudge:` (0-based indices).
+**Restarted phrase (ibtidāʾ).** It gets its own card: same words, separate group.
+align.py corrects the onset from consecutive identical Whisper segments and prints
+it. Whisper sometimes collapses a restart into one long word — scan align output
+for duration outliers (3.1s beside 0.7–1.2s neighbours) before concluding there
+was none. Check the card start against the envelope before reaching for `nudge:`
+(0-based indices).
 
-## When crop.py cannot see a face
+**crop.py boxed a shoulder.** A draped, hooded or turned head can box clean and
+confident (fy=0.275) and still be wrong; bowed posture fails differently. Look at
+the annotation. Hand-solve by measuring crown / body / congregation / graphics over
+several frames: head centre at **0.771 of the window**, crown kept in frame. For
+`x_offset`, match the outer margins, or centre him in the free space if he runs off
+the edge — `(f-0.5)*1920`. For `face_bottom`, where his head box ends as a fraction
+of canvas height.
 
-Guards check the model's numbers against each other — not whether a face
-exists. A draped/hooded/turned head can box a shoulder and look clean
-(high confidence, fy=0.275). **`--annotate` and look.** Bowed posture is a
-different failure. Hand-solve: measure crown/body/congregation/graphics over
-several frames; head centre at **0.771 of the window**; keep crown in frame.
-`x_offset`: match outer margins, or centre in free space if he runs off the
-edge — `(f-0.5)*1920` for bars and horizontal. For vertical, hand-set
-`face_bottom` to where his head box ends as a fraction of the canvas height.
+**Text size is width-limited.** `fit_pt` shrinks the shared point size until the
+widest card fits the ink cap (0.51 W Arabic / 0.55 W English on landscape), so a
+big `arabic_scale` can silently resolve smaller than asked: 1.80 on a 4-word card
+fitted 111pt, not 130pt, with no error. Read generate.py's `arabic:` line — when
+`widest raw` equals `cap`, the cap is binding. Either split the widest groups or
+raise `text_width_frac`, and measure the widest card at the target size first so
+the new cap still leaves margin (130pt → 1143px = 0.595 W, so 0.62).
 
-## Caption line balance (bars)
+**Bars caption lines.** Budget is 213pt with an 864px ink cap → 2–3 words a line.
+If the reported pt is under nominal, one long line is dragging the whole reel down.
+Lines should land within ~30px of each other; >60px is visible. Let auto-balance
+try first, then fix the card boundary (`n_words`) before `line_split` — a
+`line_split` past the cap re-wraps silently, and there is no kashida. Single line
+only at a waqf or ayah end. Take ~3pt of loss over a broken clause; some cards
+won't balance, so pick the closer break and stop.
 
-Budget: 213pt, 864px ink cap → **2–3 words/line**. If reported pt < nominal,
-one line is dragging the reel down.
+**Bars timing previews.** `fx: {heat: false}` renders ~27% cheaper, but never
+judge the LOOK without the full stack.
 
-1. Lines within ~30px width; >60px visible. Auto-balance first.
-2. Fix card boundary (`n_words`) before `line_split`. No kashida.
-3. Single-line only at waqf/ayah end; at 120pt three words rarely fit.
-4. `line_split` past the cap re-wraps silently.
-5. One over-cap line shrinks the whole reel via `fit_pt` — re-cut first;
-   accept ~3pt loss over a broken clause.
-6. Some cards won't balance — pick the closer break, note why, stop.
+**The picture is too dark.** The grade aims the band at mean luma 0.15-0.32, and
+a source lit darker than the reference reels lands under it — a Dubai taraweeh
+measured 0.05, where the reciter reads as a silhouette. Lift that reel's own
+config, `grade: {brightness: -0.12, gamma: 0.95}` (keys: brightness contrast
+saturation gamma, merged over the house numbers), not the constant in
+render_bars.py: measured across the tracked bars reels, moving GRADE_EQ far
+enough to fix the dark ones pushes the correctly-exposed ones out the bright
+side. The grade also feeds the pill-colour derivation, so the bar hue moves with
+it. The scrim is not the lever — its whole range is worth about 3 luma here.
 
-## Styles
+**fetch: "Sign in to confirm you're not a bot".** It is per exit IP and per player
+client, and fetch walks the clients itself. Read the printed `client` and `WxH`
+before blaming the proxy pool: a client without a GVS PO token exits 0 at 640x360,
+a silent quality failure rather than an error. Pool + `--proxy` goes static
+residential → datacentre → fail; rotating exits cannot download. Prefer a full
+download plus `trim:` over `--timestamps` through an authenticated proxy.
 
-All 30fps, fixed size; a weak source is upscaled, never delivered small.
+## Rules
 
-- **vertical** — 1080×1920; block centred horizontally, hung under his chin
-  (`face_bottom`). A landscape source NEEDS a `crop:` — generate refuses
-  without one rather than centre-cropping him blind.
-- **horizontal** — 1920×1080; block centred vertically, column opposite him
-  (`x_offset`). Same renderer and look as vertical.
-- **bars** — 1920×1080 pills + FX, no letterbox, no signature ever.
-  `fx: {heat: false}` for timing (~27% cheaper); never judge LOOK without the
-  full stack. Optional `bar_color:`. A source lit darker than the reference
-  reels lands under the grade's own 0.15-0.32 mean-luma target (measured: a
-  Dubai taraweeh sat at 0.05) — lift THAT config with
-  `grade: {brightness: -0.12, gamma: 0.95}` rather than the constant in
-  `render_bars.py`, which would drag every in-range reel out the bright side.
-  The grade also feeds the pill-colour derivation, so expect the bar hue to
-  move with it. Heat maps live in `tools/cache/heat/`
-  and any map at least as long as the reel is used as-is, so span length
-  costs nothing until a reel outruns every cached map — 60s covers what we
-  cut. Only then does perlin run (~9.3s of wall per second of map, per axis),
-  and it announces itself before the render.
-- **`--vertical`** (any style) letterboxes the finished 1920×1080 onto
-  1080×1920: 1080×608 of picture, about a third of the frame, so bars' 213pt
-  Arabic arrives on the phone nearer 120pt-equivalent. The native `vertical`
-  style is what avoids that trade. Safe to re-run through generate, which
-  renders 1920×1080 fresh each time; `pipeline/letterbox.py` on its own
-  applied twice shrinks the picture to a postage stamp.
-- `english:` from Saheeh, cut at clauses, verify vs both editions.
-- Look knobs (vertical + horizontal only): `arabic_font`, `english_font`,
-  `arabic_scale`, `english_scale`, `english_caps`, `vignette`, `dim`.
-- `x_offset`/`y_offset` nudge the solved anchor. Signature always centred
-  horizontally (`signature_offset` is vertical only).
-
-## Egress (cloud)
-
-Only `fetch.py` leaves the machine. `.env` pool + `--proxy`: static
-residential → datacentre → fail. Rotating exits cannot download. Prefer
-full download + `trim` over `--timestamps` through an authenticated proxy.
-
-## Hard rules
-
-- No model-typed Arabic — from `quran.py` only.
-- `signature` optional (omit = none); bars ignores it.
-- Never pip-install into the render venv — `./install.sh` only.
-- Trust fetch's stub gate; don't bypass.
+- No model-typed Arabic — it comes from `quran.py` only.
+- Never pip-install into a venv; `./install.sh` only.
+- Trust fetch's stub gate; don't bypass it.
 - Decode-check before calling a render done.
 - Do not `open` artefacts; report the path.
 - Never publish unless asked (`--caption-only` is safe for review). A reel
   that posted is tagged green in Finder; `--draft` and `--caption-only` are not.
-- Don't delete/overwrite a different reel; filename is identity.
-- `legacy/` is archived — never run it here.
+- Don't delete or overwrite a different reel; the filename is its identity.

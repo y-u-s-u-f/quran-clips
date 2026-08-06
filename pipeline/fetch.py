@@ -220,10 +220,21 @@ FORMAT = ("bv*[height<=1080][fps<=%(fps)d]+ba[ext=m4a]/"
           "bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/"
           "b[height<=1080]/bv*+ba/b") % {"fps": MAX_FPS}
 
-# The 403 / DRM-only fallback: when the default player clients refuse,
-# `web_embedded` is often the only one still exposing 1080p. Cheap to retry
-# with, so it is a plain second attempt.
-EMBED_ARGS = ["--extractor-args", "youtube:player_client=web_embedded"]
+# Player-client ladder. The bot check ("Sign in to confirm you're not a bot")
+# fires per exit IP AND per player client at the player API, before any bytes
+# move, so recovery is the next client, never retrying one harder. Measured
+# 2026-08 over 105 endpoints x 5 clients: `tv_simply` resolved on 31 exits
+# where the yt-dlp default and `web_embedded` failed on all 105, so it leads.
+# `web_embedded` stays last: it is the one that still exposes 1080p when the
+# others answer DRM-only.
+#
+# `tv_simply` costs 1080p unless a GVS PO token is available: without one it
+# skips its https formats and the selector above silently settles for 640x360,
+# exiting 0 with a real (small) file that the stub gate accepts. A local bgutil
+# provider on 127.0.0.1:4416 supplies the token; check it is up before a fetch
+# and read the printed WxH afterwards, since only that reveals the downgrade.
+PLAYER_CLIENTS = ["tv_simply", "android_vr", "ios", "tv", "web_safari",
+                  "web_embedded"]
 
 
 def _run_ytdlp(args, proxy=None, capture=False):
@@ -235,13 +246,19 @@ def _run_ytdlp(args, proxy=None, capture=False):
     return p.returncode, "", ""
 
 
-def _with_fallback(args, proxy=None, capture=False):
-    rc, out, err = _run_ytdlp(args, proxy, capture)
-    if rc == 0:
-        return rc, out, err
-    print("  yt-dlp failed (rc=%d); retrying with player_client=web_embedded"
-          % rc, file=sys.stderr)
-    return _run_ytdlp(EMBED_ARGS + args, proxy, capture)
+def _with_fallback(args, proxy=None, capture=False, client=None):
+    """Walk PLAYER_CLIENTS until one resolves. `client` pins a known-good one
+    (the caller passes back what metadata succeeded with, so the media fetch
+    does not re-pay the ladder)."""
+    order = [client] if client else PLAYER_CLIENTS
+    rc = out = err = None
+    for cl in order:
+        cl_args = ["--extractor-args", "youtube:player_client=%s" % cl]
+        rc, out, err = _run_ytdlp(cl_args + args, proxy, capture)
+        if rc == 0:
+            return rc, out, err, cl
+        print("  player_client=%s failed (rc=%d)" % (cl, rc), file=sys.stderr)
+    return rc, out, err, None
 
 
 def parse_ts(spec):
@@ -258,10 +275,12 @@ def fetch_youtube(vid, out_dir, proxy=None, timestamps=None):
 
     # metadata first: title/duration are worth having on screen before minutes
     # of download, and a bot check fires here, before any bytes move.
-    rc, out, err = _with_fallback(["-J", "--no-playlist", url], proxy,
-                                  capture=True)
+    rc, out, err, client = _with_fallback(["-J", "--no-playlist", url], proxy,
+                                          capture=True)
     if rc != 0:
-        raise RuntimeError("yt-dlp metadata failed:\n%s" % (err or out)[-2000:])
+        raise RuntimeError("yt-dlp metadata failed:\n%s"
+                           % ((err or out) or "")[-2000:])
+    print("  client  : %s" % client)
     meta = json.loads(out)
     print("  %s | %ss | %sx%s | %s" % (
         meta.get("title"), meta.get("duration"), meta.get("width"),
@@ -276,7 +295,7 @@ def fetch_youtube(vid, out_dir, proxy=None, timestamps=None):
             a, _, b = timestamps.partition("-")
             args = ["--download-sections",
                     "*%s-%s" % (parse_ts(a), parse_ts(b))] + args
-        rc, _, _ = _with_fallback(args, proxy)
+        rc, _, _, _ = _with_fallback(args, proxy, client=client)
         if rc != 0 or not usable(dst):
             raise RuntimeError(
                 "download failed for %s (file %s)" % (
@@ -293,7 +312,7 @@ def fetch_youtube(vid, out_dir, proxy=None, timestamps=None):
     _with_fallback(["--no-playlist", "--skip-download", "--write-auto-subs",
                     "--sub-lang", "ar-orig", "--convert-subs", "srt",
                     "-o", os.path.join(out_dir, "source.%(ext)s"), url],
-                   proxy)
+                   proxy, client=client)
     got = os.path.join(out_dir, "source.ar-orig.srt")
     if os.path.exists(got):
         os.replace(got, srt)

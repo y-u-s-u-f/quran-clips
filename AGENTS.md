@@ -10,8 +10,11 @@ plain files. No shared util module — `fetch.py` and `transcribe.py` each
 carry their own `.env` reader so every script stays independently runnable.
 
 - **`fetch.py`** — URL/local -> `sources/<id>/`. yt-dlp (proxy pool,
-  `web_embedded` retry, `ensure_aac`, stub gate). Caps at `MAX_FPS` 30 at
-  intake. No third-party imports.
+  `PLAYER_CLIENTS` ladder, `ensure_aac`, stub gate). Caps at `MAX_FPS` 30 at
+  intake. No third-party imports. The bot check fires per exit IP AND per
+  player client, so recovery walks `PLAYER_CLIENTS` and pins whichever one
+  resolved metadata; the measured order and the PO-token caveat that costs
+  1080p are in the file.
 - **`transcribe.py`** — `source.*` -> `whisper.json` + `.srt`. Backend
   subprocess against `tools/asr-venv` via `_SNIPPETS` (strings so they run
   under an interpreter that cannot import this package). Contract:
@@ -26,8 +29,8 @@ carry their own `.env` reader so every script stays independently runnable.
   `safe_dump` eats comments). Head measured via `rms_envelope` (Haram reverb
   floors `silencedetect`); tail keeps `TAIL_PAD`. Whisper needed only for
   verse discovery and ibtidāʾ repeats (`find_repeats` needs Whisper to have
-  split the two utterances). Auto-trim is only sound when the source is
-  roughly the reel.
+  split the two utterances, and only scans the trim window). Auto-trim is
+  only sound when the source is roughly the reel.
 - **`crop.py`** — authoring-time framing for EVERY style: `crop:` plus
   `x_offset:` (bars, horizontal) or `face_bottom:` (vertical). Shells out to
   `claude -p` (local auth); arithmetic decides the window. Column styles use
