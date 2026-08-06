@@ -29,8 +29,8 @@ carry their own `.env` reader so every script stays independently runnable.
   `safe_dump` eats comments). Head measured via `rms_envelope` (Haram reverb
   floors `silencedetect`); tail keeps `TAIL_PAD`. Whisper needed only for
   verse discovery and ibtidāʾ repeats (`find_repeats` needs Whisper to have
-  split the two utterances). Auto-trim is only sound when the source is
-  roughly the reel.
+  split the two utterances, and only scans the trim window). Auto-trim is
+  only sound when the source is roughly the reel.
 - **`crop.py`** — authoring-time framing for EVERY style: `crop:` plus
   `x_offset:` (bars, horizontal) or `face_bottom:` (vertical). Shells out to
   `claude -p` (local auth); arithmetic decides the window. Column styles use
