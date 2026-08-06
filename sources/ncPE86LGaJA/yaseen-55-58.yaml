@@ -1,0 +1,28 @@
+style: bars
+surah: 36
+ayah_start: 55
+ayah_end: 58
+reciter: "علاء إبراهيم المزجاجي"
+trim: [879.9, 911.1]
+# This taraweeh is lit far darker than the reference reels: the house grade
+# lands its band at mean luma 0.05, under the 0.15-0.32 the grade aims at.
+# Lifted to 0.26 here rather than in render_bars, where it would drag the
+# reels already inside the band out the bright side.
+grade: {brightness: -0.12, contrast: 1.20, saturation: 0.78, gamma: 0.95}
+
+# framing solved by pipeline/crop.py on 2026-08-06,
+# sonnet via claude code CLI, median of 4/4 sampled frames.
+# Head box 0.198 of the window, bars caption column 0.450 -> equal 0.117
+# gaps; face centre at 0.291 of the window height.
+# Re-solve with `pipeline/crop.py <this-file> --force`; edit these
+# by hand and they stay edited (crop.py then refuses without --force).
+crop: {x: 0, y: 78, w: 972, h: 546}
+x_offset: -302
+groups:
+  - n_words: 4      # إن أصحاب الجنة اليوم
+  - n_words: 3      # في شغل فاكهون
+  - n_words: 4      # هم وأزواجهم في ظلال
+  - n_words: 3      # على الأرائك متكئون
+  - n_words: 3      # لهم فيها فاكهة
+  - n_words: 3      # ولهم ما يدعون
+  - n_words: 5      # سلام قولا من رب رحيم

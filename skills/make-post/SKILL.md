@@ -146,7 +146,13 @@ All 30fps, fixed size; a weak source is upscaled, never delivered small.
   (`x_offset`). Same renderer and look as vertical.
 - **bars** — 1920×1080 pills + FX, no letterbox, no signature ever.
   `fx: {heat: false}` for timing (~27% cheaper); never judge LOOK without the
-  full stack. Optional `bar_color:`. Heat maps live in `tools/cache/heat/`
+  full stack. Optional `bar_color:`. A source lit darker than the reference
+  reels lands under the grade's own 0.15-0.32 mean-luma target (measured: a
+  Dubai taraweeh sat at 0.05) — lift THAT config with
+  `grade: {brightness: -0.12, gamma: 0.95}` rather than the constant in
+  `render_bars.py`, which would drag every in-range reel out the bright side.
+  The grade also feeds the pill-colour derivation, so expect the bar hue to
+  move with it. Heat maps live in `tools/cache/heat/`
   and any map at least as long as the reel is used as-is, so span length
   costs nothing until a reel outruns every cached map — 60s covers what we
   cut. Only then does perlin run (~9.3s of wall per second of map, per axis),
@@ -177,6 +183,7 @@ full download + `trim` over `--timestamps` through an authenticated proxy.
 - Trust fetch's stub gate; don't bypass.
 - Decode-check before calling a render done.
 - Do not `open` artefacts; report the path.
-- Never publish unless asked (`--caption-only` is safe for review).
+- Never publish unless asked (`--caption-only` is safe for review). A reel
+  that posted is tagged green in Finder; `--draft` and `--caption-only` are not.
 - Don't delete/overwrite a different reel; filename is identity.
 - `legacy/` is archived — never run it here.

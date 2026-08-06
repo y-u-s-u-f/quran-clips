@@ -1,0 +1,44 @@
+# Al-Fatihah 1:2-7, Alaa al-Mizjaji, 23rd night tahajjud 1445.
+style: vertical
+signature: "TilawatQuraniyyah"
+
+surah: 1
+ayah_start: 2
+ayah_end: 7
+reciter: "علاء المزجاجي"
+
+# HAND-SET. The source is 42 minutes of tahajjud with the Fatihah recited
+# once per rak'ah, so auto-trim has nothing to bound itself with. Whisper
+# also drops this whole stretch (nothing between 925.2 and 953.6, then a
+# mis-heard "الله أكبر"), so the bounds come off the RMS envelope: the
+# takbir burst sits at 927.0-927.5, dead air to 929.2, first word at 929.25;
+# the last word ends 967.05 and the congregation's amin follows as a -29..-33
+# dB plateau to 971.5, which the tail must not reach.
+# He does not voice the basmalah -- the first phrase runs 929.25-933.5, one
+# ayah's worth -- hence ayah_start: 2.
+trim: [929.13, 967.35]
+
+
+# framing solved by pipeline/crop.py on 2026-08-05,
+# sonnet via claude code CLI: NO RECITER in 4/4 sampled frames, so this is simply
+# the centred 9:16 window and the caption stays centred on
+# both axes -- there is nothing in the shot to place it
+# against.
+# Re-solve with `pipeline/crop.py <this-file> --force`; edit these
+# by hand and they stay edited (crop.py then refuses without --force).
+crop: {x: 656, y: 2, w: 606, h: 1076}
+groups:
+  - n_words: 4        # 1:2
+    english: "All praise is due to Allah, Lord of the worlds"
+  - n_words: 2        # 1:3
+    english: "The Entirely Merciful, the Especially Merciful"
+  - n_words: 3        # 1:4
+    english: "Sovereign of the Day of Recompense"
+  - n_words: 4        # 1:5
+    english: "It is You we worship and You we ask for help"
+  - n_words: 3        # 1:6
+    english: "Guide us to the straight path"
+  - n_words: 4        # 1:7
+    english: "The path of those upon whom You have bestowed favor"
+  - n_words: 5
+    english: "not of those who have evoked anger or of those who are astray"

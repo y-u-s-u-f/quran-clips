@@ -1,0 +1,37 @@
+# Luqman 31:34, Alaa al-Mizjaji, 23rd night tahajjud 1445 -- the surah's
+# closing ayah, the five things known only to Allah.
+style: vertical
+signature: "TilawatQuraniyyah"
+
+surah: 31
+ayah_start: 34
+ayah_end: 34
+reciter: "علاء المزجاجي"
+
+# HAND-SET for the same reason as the Fatihah cut beside it: a 42-minute
+# source. Off the RMS envelope -- 31:33 ends into a dip at 888.3, first word
+# at 889.25, last word runs to 926.05 with the ruku takbir following at 927.0.
+trim: [889.13, 926.35]
+
+
+# framing solved by pipeline/crop.py on 2026-08-05,
+# sonnet via claude code CLI: NO RECITER in 4/4 sampled frames, so this is simply
+# the centred 9:16 window and the caption stays centred on
+# both axes -- there is nothing in the shot to place it
+# against.
+# Re-solve with `pipeline/crop.py <this-file> --force`; edit these
+# by hand and they stay edited (crop.py then refuses without --force).
+crop: {x: 656, y: 2, w: 606, h: 1076}
+groups:
+  - n_words: 5
+    english: "Indeed, Allah has knowledge of the Hour"
+  - n_words: 2
+    english: "and sends down the rain"
+  - n_words: 4
+    english: "and knows what is in the wombs"
+  - n_words: 6
+    english: "And no soul perceives what it will earn tomorrow"
+  - n_words: 6
+    english: "and no soul perceives in what land it will die"
+  - n_words: 4
+    english: "Indeed, Allah is Knowing and Acquainted"

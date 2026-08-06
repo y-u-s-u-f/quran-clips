@@ -114,6 +114,12 @@ DEFAULTS = {
 
     # bars style only ----------------------------------------------------
     "bar_color": None,           # "#RRGGBB"; default: derived from the footage
+    "grade": None,               # eq= overrides for the picture grade, e.g.
+                                 # {brightness: -0.12, gamma: 0.95}. The house
+                                 # numbers target mean luma 0.15-0.32; a source
+                                 # darker than the refs lands under it, and
+                                 # only that source's config should move. Keys:
+                                 # brightness contrast saturation gamma.
     "fx": None,                  # per-stage switches, e.g. {heat: false};
                                  # stages: grade scrim glow barglow textglow
                                  # scan snow heat (all on by default)
@@ -177,6 +183,9 @@ an error rather than a silent no-op.
     #   english_caps (true = ALL-CAPS, the reference reels' setting),
     #   vignette (true | false), dim (0 untouched .. 1 black; 0.118 house)
     # bars style: bar_color ("#RRGGBB" | omit for auto),
+    #   grade: {brightness: -0.12, gamma: 0.95, ...} to move the picture
+    #   grade for THIS source only (keys: brightness contrast saturation
+    #   gamma; the house numbers target mean luma 0.15-0.32),
     #   fx: {heat: false, ...} to switch stages off (grade scrim glow
     #   barglow textglow scan snow heat; heat is ~half the render time)
 

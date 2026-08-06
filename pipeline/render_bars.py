@@ -199,7 +199,30 @@ def fit_pt(nominal_pt, min_pt, max_width, widest):
 # grade + bar colour
 # ---------------------------------------------------------------------------
 
-def band_source_chain(crop, grade_on=True):
+def grade_eq(grade=None):
+    """The eq= arguments for the picture grade.
+
+    GRADE_EQ is measured off the reference reels and is the look. A source
+    graded darker than those refs lands under the 0.15-0.32 band the grade
+    aims at (measured: this Dubai taraweeh sits at 0.05), and the fix belongs
+    in that source's config, not here -- moving the constant drags every reel
+    already sitting in the band out the bright side."""
+    if not grade:
+        return GRADE_EQ
+    known = ("brightness", "contrast", "saturation", "gamma")
+    unknown = sorted(set(grade) - set(known))
+    if unknown:
+        raise SystemExit("unknown grade key(s): %s -- expected %s"
+                         % (", ".join(unknown), ", ".join(known)))
+    vals = {}
+    for part in GRADE_EQ.split(":"):
+        k, _, v = part.partition("=")
+        vals[k] = v
+    vals.update({k: "%g" % float(v) for k, v in grade.items()})
+    return ":".join("%s=%s" % (k, vals[k]) for k in known)
+
+
+def band_source_chain(crop, grade_on=True, grade=None):
     """[0:v] -> the graded 1920x1080 picture (no captions).
     The grade also feeds the bar-colour derivation, so turning it off moves
     the pill hue as well as the picture."""
@@ -212,10 +235,10 @@ def band_source_chain(crop, grade_on=True):
     if not grade_on:
         return pre
     return "%s,eq=%s,colorbalance=%s,vignette=%s" % (
-        pre, GRADE_EQ, GRADE_CB, GRADE_VIGNETTE)
+        pre, grade_eq(grade), GRADE_CB, GRADE_VIGNETTE)
 
 
-def derive_bar_color(src, dur, crop, tmp, grade_on=True):
+def derive_bar_color(src, dur, crop, tmp, grade_on=True, grade=None):
     """Sample the clip's own GRADED band and apply the measured rule:
         H = hue of the band's mean RGB
         L = clamp(1.78 * L_mean, 0.34, 0.48)
@@ -232,7 +255,7 @@ def derive_bar_color(src, dur, crop, tmp, grade_on=True):
     a = BAR_AUTO
     tile = int(a["sample_tile"])
     tile_png = os.path.join(tmp, "bar_color_sample.png")
-    vf = ("fps=%s," % a["sample_fps"] + band_source_chain(crop, grade_on)
+    vf = ("fps=%s," % a["sample_fps"] + band_source_chain(crop, grade_on, grade)
           + ",scale=48:27,tile=%dx%d" % (tile, tile))
     run([FFMPEG, "-v", "error", "-y", "-t", "%.3f" % dur, "-i", src,
          "-vf", vf, "-frames:v", "1", tile_png])
@@ -723,7 +746,7 @@ def loudnorm_filter(st):
 # ---------------------------------------------------------------------------
 
 def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
-                ln, afade, heat_paths=None):
+                ln, afade, heat_paths=None, grade=None):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1..2n]=bar,text
     per phrase, then snow, then scrim (last of the legacy set, so dropping it
     cannot shift any other index), then the two heat maps. The heat pair goes
@@ -764,7 +787,7 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
                  heat_y_in=heat_in[1] if heat_in else None)
 
     wtgt = str(tr["wipe_target"]).lower()
-    g_.chain(vin, [band_source_chain(crop, on["grade"]), "setsar=1",
+    g_.chain(vin, [band_source_chain(crop, on["grade"], grade), "setsar=1",
                    "fps=%d" % FPS, "format=gbrp"], "bnd")
     if on["scrim"]:
         g_.chain(scrim_in, "format=gbrp", "scr")
@@ -875,6 +898,9 @@ def render(plan):
     if crop and not all(k in crop for k in ("x", "y", "w", "h")):
         raise SystemExit("crop must carry x, y, w, h")
     on = switches(cfg.get("fx"))
+    grade = cfg.get("grade")
+    if grade:
+        print("      grade override: eq=%s" % grade_eq(grade))
 
     # pill colour: config override, else derived from the graded band itself.
     # `target` is as-seen-in-the-finished-frame; the pill is DRAWN darker so
@@ -883,7 +909,7 @@ def render(plan):
         target_rgb = hexrgb(cfg["bar_color"])
         print("      bar colour: %s (config)" % cfg["bar_color"])
     else:
-        target_rgb = derive_bar_color(src, dur, crop, tmp, on["grade"])
+        target_rgb = derive_bar_color(src, dur, crop, tmp, on["grade"], grade)
     drawn_rgb = predraw_color(target_rgb)
     tint = [c / 255.0 for c in target_rgb]
 
@@ -915,7 +941,7 @@ def render(plan):
                 AUDIO["fade_out_s"]))
 
     fc, in_argv = build_graph(src, dur, crop, rep, sched, tint, on,
-                              snow_path, scrim, ln, afade, heat_paths)
+                              snow_path, scrim, ln, afade, heat_paths, grade)
 
     out = plan["out"]
     cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv
