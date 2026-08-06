@@ -54,7 +54,8 @@ groups:
     line_split: 2                 # bars only; omit = auto
 # crop:, x_offset:, face_bottom: are written by crop.py --write
 # optional: suppress, nudge, verse_numbers, y_offset, arabic_font, english_font,
-#   arabic_scale, english_scale, english_caps, vignette, dim, bar_color, fx
+#   arabic_scale, english_scale, text_width_frac, english_caps, vignette, dim,
+#   bar_color, fx
 ```
 
 Requirements:
@@ -113,6 +114,14 @@ several frames: head centre at **0.771 of the window**, crown kept in frame. For
 `x_offset`, match the outer margins, or centre him in the free space if he runs off
 the edge — `(f-0.5)*1920`. For `face_bottom`, where his head box ends as a fraction
 of canvas height.
+
+**Text size is width-limited.** `fit_pt` shrinks the shared point size until the
+widest card fits the ink cap (0.51 W Arabic / 0.55 W English on landscape), so a
+big `arabic_scale` can silently resolve smaller than asked: 1.80 on a 4-word card
+fitted 111pt, not 130pt, with no error. Read generate.py's `arabic:` line — when
+`widest raw` equals `cap`, the cap is binding. Either split the widest groups or
+raise `text_width_frac`, and measure the widest card at the target size first so
+the new cap still leaves margin (130pt → 1143px = 0.595 W, so 0.62).
 
 **Bars caption lines.** Budget is 213pt with an 864px ink cap → 2–3 words a line.
 If the reported pt is under nominal, one long line is dragging the whole reel down.

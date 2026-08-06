@@ -319,7 +319,8 @@ def layout(orientation, phrases, english, cfg, face_bottom):
     stroke = en_spec["stroke_macron"]
 
     texts = [norm_ar(p["text"]) for p in phrases]
-    max_ar_w = AR_WIDTH_FRAC[orientation] * W
+    width_frac = cfg["text_width_frac"]
+    max_ar_w = (width_frac or AR_WIDTH_FRAC[orientation]) * W
     nominal = ARABIC["nominal_pt"] * cfg["arabic_scale"]
     probe = truetype(ar_path, max(1, int(nominal)))
     raw = [ar_bbox(t, probe) for t in texts]
@@ -331,7 +332,7 @@ def layout(orientation, phrases, english, cfg, face_bottom):
     cap_pt = max(12, int(round(ENGLISH["cap_pt"] * cfg["english_scale"])))
     en_font = truetype(en_spec["path"], cap_pt)
     tracking = ENGLISH["tracking_pct"] / 100.0 * cap_pt
-    max_en_w = EN_WIDTH_FRAC[orientation] * W
+    max_en_w = (width_frac or EN_WIDTH_FRAC[orientation]) * W
     caps = cfg["english_caps"]
     en_lines = [wrap_english(e["text"], en_font, tracking, max_en_w, stroke,
                              caps)

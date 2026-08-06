@@ -58,7 +58,8 @@ x_offset: -384                    # bars + horizontal: the caption column
 face_bottom: 0.371                # vertical: where his head box ends
 y_offset: 0                       # px nudge on whichever anchor applies
 # optional: suppress, nudge, verse_numbers, arabic_font, english_font,
-#   arabic_scale, english_scale, english_caps, vignette, dim, bar_color, fx
+#   arabic_scale, english_scale, text_width_frac, english_caps, vignette, dim,
+#   bar_color, fx
 ```
 
 Rules: Uthmani by word index (no model-typed Arabic); unknown key = error;
