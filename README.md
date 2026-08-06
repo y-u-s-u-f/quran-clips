@@ -38,6 +38,7 @@ Demos in `docs/`. Details: `pipeline/README.md`.
 
 ```
 pipeline/    workflow scripts + renderers (+ fx.py)
+skills/      the make-post agent workflow (both harnesses)
 sources/<id>/  source media, whisper.*, per-reel *.yaml + *.align.json
 reels/       output (untracked)
 assets/      fonts + mushaf/translations
@@ -79,7 +80,9 @@ both editions.
 Three interpreters: `tools/render-venv` (RAQM Pillow), `asr-venv`,
 `align-venv`. Only `./install.sh` builds them. `.env` is machine config
 (binaries, ASR, proxies, Meta credentials) — never pixels. Full guide:
-`INSTALL.md`. Agent drive: `.claude/skills/make-post/SKILL.md`.
+`INSTALL.md`. Agent drive: `skills/make-post/SKILL.md` — one skill, reached
+by Claude Code through `.claude/skills/` and by Hermes through
+`./install.sh --hermes`.
 
 Media and renders stay local; configs are committed. Nothing here
 redistributes anyone's footage.
