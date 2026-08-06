@@ -1,7 +1,7 @@
-# CLAUDE.md — writing code in quran-clips
+# AGENTS.md — writing code in quran-clips
 
 To *produce a reel*, invoke the `make-post` skill
-(`.claude/skills/make-post/SKILL.md`).
+(`skills/make-post/SKILL.md`).
 
 ## Codebase map
 
@@ -121,4 +121,23 @@ carry their own `.env` reader so every script stays independently runnable.
 - **Verify:** end-to-end on a cached source, decode-check, verification
   block, golden parity for bars; for `quran.py`, whole-mushaf vs legacy.
 - **Docs travel with code:** `DEFAULTS`, `config_schema()`,
-  `pipeline/README.md`, make-post skill.
+  `pipeline/README.md`, `skills/make-post/SKILL.md`.
+
+## Agent harness
+
+Claude Code and Hermes both drive this repo and read the same two files:
+`AGENTS.md` (Claude Code imports it from `CLAUDE.md`) and
+`skills/make-post/SKILL.md` (Claude Code reaches it through the
+`.claude/skills/make-post` symlink; Hermes through `skills.external_dirs`,
+which `./install.sh --hermes` sets). Edit those files, never a copy.
+
+- `make-post` is the ONLY workflow for producing a reel. A general
+  video-editing, captioning or reel-teardown skill does not know this
+  pipeline's mushaf slicing, CTC alignment or golden filtergraph, and
+  substituting one silently produces a different reel.
+- Keep repo knowledge in the repo. Nothing here belongs in a harness's
+  private memory or skill store — a fact that lives in one harness's memory
+  is a fact the other harness will contradict.
+- `crop.py` shells out to the `claude` binary as a vision subprocess. That is
+  a tool on PATH, like `ffmpeg`, not the agent you are — it is unrelated to
+  which harness is running you.
