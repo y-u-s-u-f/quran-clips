@@ -1,0 +1,24 @@
+style: bars
+surah: 33
+ayah_start: 56
+ayah_end: 56
+reciter: "الوليد الشمسان"
+# Haram audio has no true silence: bounds read off the RMS envelope, where the
+# onset lifts from a -38dB floor at 1015.85 and the held tasliman decays into a
+# -45dB dip by 1037.05, with the next ayah starting at 1037.45.
+trim: [1015.80, 1037.30]
+
+
+# framing solved by pipeline/crop.py on 2026-08-07,
+# sonnet via claude code CLI, median of 4/4 sampled frames.
+# Head box 0.335 of the window, bars caption column 0.450 -> equal 0.072
+# gaps; face centre at 0.455 of the window height.
+# Re-solve with `pipeline/crop.py <this-file> --force`; edit these
+# by hand and they stay edited (crop.py then refuses without --force).
+crop: {x: 8, y: 50, w: 1268, h: 714}
+x_offset: -390
+groups:
+  - n_words: 3
+  - n_words: 3
+  - n_words: 3
+  - n_words: 4
