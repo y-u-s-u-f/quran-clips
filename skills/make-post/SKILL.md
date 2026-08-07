@@ -147,9 +147,11 @@ it. The scrim is not the lever — its whole range is worth about 3 luma here.
 **fetch: "Sign in to confirm you're not a bot".** It is per exit IP and per player
 client, and fetch walks the clients itself. Read the printed `client` and `WxH`
 before blaming the proxy pool: a client without a GVS PO token exits 0 at 640x360,
-a silent quality failure rather than an error. Pool + `--proxy` goes static
-residential → datacentre → fail; rotating exits cannot download. Prefer a full
-download plus `trim:` over `--timestamps` through an authenticated proxy.
+a silent quality failure rather than an error. `--client android_vr` pins a client
+that carries the full ladder and recovers 1080p when `tv_simply` lands short.
+Pool + `--proxy` goes static residential → datacentre → fail; rotating exits cannot
+download. Prefer a full download plus `trim:` over `--timestamps` through an
+authenticated proxy.
 
 ## Rules
 

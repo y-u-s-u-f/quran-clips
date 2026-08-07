@@ -233,6 +233,8 @@ FORMAT = ("bv*[height<=1080][fps<=%(fps)d]+ba[ext=m4a]/"
 # exiting 0 with a real (small) file that the stub gate accepts. A local bgutil
 # provider on 127.0.0.1:4416 supplies the token; check it is up before a fetch
 # and read the printed WxH afterwards, since only that reveals the downgrade.
+# With no provider running, `--client android_vr` pins a client whose formats
+# need no token and reaches 1080p.
 PLAYER_CLIENTS = ["tv_simply", "android_vr", "ios", "tv", "web_safari",
                   "web_embedded"]
 
@@ -269,14 +271,14 @@ def parse_ts(spec):
     return spec
 
 
-def fetch_youtube(vid, out_dir, proxy=None, timestamps=None):
+def fetch_youtube(vid, out_dir, proxy=None, timestamps=None, client=None):
     url = "https://www.youtube.com/watch?v=%s" % vid
     dst = os.path.join(out_dir, "source.mp4")
 
     # metadata first: title/duration are worth having on screen before minutes
     # of download, and a bot check fires here, before any bytes move.
     rc, out, err, client = _with_fallback(["-J", "--no-playlist", url], proxy,
-                                          capture=True)
+                                          capture=True, client=client)
     if rc != 0:
         raise RuntimeError("yt-dlp metadata failed:\n%s"
                            % ((err or out) or "")[-2000:])
@@ -373,6 +375,9 @@ def main(argv=None):
                     help="route through the .env proxy pool, or a given URL")
     ap.add_argument("--timestamps", metavar="A-B",
                     help="download only this section (MM:SS-MM:SS)")
+    ap.add_argument("--client", choices=PLAYER_CLIENTS,
+                    help="pin one player client instead of walking the ladder "
+                         "(android_vr when tv_simply lands at 640x360)")
     a = ap.parse_args(argv)
 
     vid = video_id(a.source)
@@ -411,7 +416,8 @@ def main(argv=None):
         if label != "direct":
             print("  egress  : %s" % label)
         try:
-            fetch_youtube(vid, out_dir, proxy=url, timestamps=a.timestamps)
+            fetch_youtube(vid, out_dir, proxy=url, timestamps=a.timestamps,
+                          client=a.client)
             return 0
         except RuntimeError as e:
             last = e
