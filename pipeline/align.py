@@ -1,6 +1,11 @@
 """pipeline/align.py -- forced word timing for a reel config.
 
     tools/align-venv/bin/python pipeline/align.py sources/<id>/<reel>.yaml
+    tools/align-venv/bin/python pipeline/align.py sources/<id>/*.yaml
+
+Several configs in one invocation share the torch import and the model load,
+which is the whole start-up cost; each is otherwise aligned exactly as it
+would be alone.
 
 Reads the reel config's verse span and gets the KNOWN mushaf text for it
 from quran.py -- never the whisper transcript's own words. A CTC forced
@@ -308,6 +313,24 @@ def trim_note(out_path, trim, tol=0.01):
     return "stale (trim %s -> %s), re-aligning" % (fmt(was), fmt(now))
 
 
+_ALIGNER = None
+
+
+def aligner():
+    """(model, tokenizer) for the MMS aligner, loaded once per process.
+
+    The import alone pulls in torch and the weights are ~1.2GB off disk, so
+    every config in one invocation shares them: a source with three reels cut
+    from it paid both three times when each config was its own run."""
+    global _ALIGNER
+    if _ALIGNER is None:
+        import torch
+        from ctc_forced_aligner import load_alignment_model
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        _ALIGNER = load_alignment_model(device, MODEL, dtype=torch.float32)
+    return _ALIGNER
+
+
 def align(config_path, force=False):
     cfg = generate.load_config(config_path)
     cfg = generate.resolve_paths(cfg, config_path)
@@ -353,16 +376,14 @@ def align(config_path, force=False):
              os.path.relpath(cfg["input"], generate.ROOT)))
 
     from ctc_forced_aligner import (
-        generate_emissions, get_alignments, get_spans, load_alignment_model,
-        load_audio, postprocess_results, preprocess_text,
+        generate_emissions, get_alignments, get_spans, load_audio,
+        postprocess_results, preprocess_text,
     )
-    import torch
 
+    model, tokenizer = aligner()
     with tempfile.TemporaryDirectory(prefix="quran-align-") as tmp:
         wav = os.path.join(tmp, "audio.wav")
         extract_window(cfg["input"], wav, t0, t1)
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model, tokenizer = load_alignment_model(device, MODEL, dtype=torch.float32)
         audio_waveform = load_audio(wav, model.dtype, model.device)
         emissions, stride = generate_emissions(model, audio_waveform)
 
@@ -441,12 +462,19 @@ def align(config_path, force=False):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="forced word timing for a reel config, via Meta's MMS CTC model")
-    ap.add_argument("config", help="sources/<id>/<reel>.yaml")
+        description="forced word timing for reel configs, via Meta's MMS CTC "
+                    "model")
+    ap.add_argument("config", nargs="+",
+                    help="sources/<id>/<reel>.yaml (several are aligned in "
+                         "one process, sharing the model load)")
     ap.add_argument("--force", action="store_true",
                     help="re-align even if <reel>.align.json exists")
     a = ap.parse_args(argv)
-    align(a.config, force=a.force)
+    for i, path in enumerate(a.config):
+        if len(a.config) > 1:
+            print("%s[%d/%d] %s" % ("\n" if i else "", i + 1, len(a.config),
+                                    os.path.relpath(path, generate.ROOT)))
+        align(path, force=a.force)
     return 0
 
 

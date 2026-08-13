@@ -787,14 +787,19 @@ def apply_nudges(arabic, english, nudges):
 # concentric rings: UthmanicHafs-v22 auto-encloses bare digits.
 FONT_NEEDS_AYAH_MARK = {"uthmanic_hafs": False, "thuluth": False}
 
-_ARABIC_DIGITS = str.maketrans("0123456789", "٠١٢٣٤"
-                                             "٥٦٧٨٩")
+# Escapes, not literals -- invariant 1: no Arabic is retyped in source.
+# U+0660..U+0669 ARABIC-INDIC DIGIT ZERO..NINE, and U+06DD ARABIC END OF AYAH
+# for the fonts whose shaping does not enclose bare digits on its own.
+_ARABIC_DIGITS = str.maketrans(
+    "0123456789",
+    "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669")
+_AYAH_MARK = "\u06DD"
 
 
 def verse_end_marker(ayah_num, arabic_font):
     digits = str(ayah_num).translate(_ARABIC_DIGITS)
-    return ("۝" + digits) if FONT_NEEDS_AYAH_MARK.get(arabic_font, True) \
-        else digits
+    return ((_AYAH_MARK + digits)
+            if FONT_NEEDS_AYAH_MARK.get(arabic_font, True) else digits)
 
 
 def append_verse_numbers(arabic, verses, arabic_font):
@@ -904,7 +909,7 @@ def resolve_paths(cfg, config_path, output_override=None):
 HEAT_BAKE_RATE = 9.3
 
 
-def warn_heat_bake(cfg, dur, tmp):
+def warn_heat_bake(cfg, dur):
     """Announce a pending heat bake instead of going silent for many minutes.
 
     Only a reel longer than every cached map pays this, and paying it once
@@ -1032,7 +1037,7 @@ def run_config(config_path, output_override=None, vertical=False):
             "tmp": tmp, "out": cfg["output"]}
 
     if cfg["style"] == "bars":
-        warn_heat_bake(cfg, info["duration"], tmp)
+        warn_heat_bake(cfg, info["duration"])
 
     print("[6/6] Rendering (%s style)..." % cfg["style"])
     if cfg["style"] == "bars":

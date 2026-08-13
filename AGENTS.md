@@ -30,7 +30,8 @@ carry their own `.env` reader so every script stays independently runnable.
   floors `silencedetect`); tail keeps `TAIL_PAD`. Whisper needed only for
   verse discovery and ibtidāʾ repeats (`find_repeats` needs Whisper to have
   split the two utterances, and only scans the trim window). Auto-trim is
-  only sound when the source is roughly the reel.
+  only sound when the source is roughly the reel. Takes several configs per
+  run, which is how the reels cut from one source share the model load.
 - **`crop.py`** — authoring-time framing for EVERY style: `crop:` plus
   `x_offset:` (bars, horizontal) or `face_bottom:` (vertical). Shells out to
   `claude -p` (local auth); arithmetic decides the window. Column styles use
@@ -122,7 +123,8 @@ carry their own `.env` reader so every script stays independently runnable.
 - **ffmpeg:** bound every `-loop 1` with `-t`; keep `THREAD_QUEUE_SIZE`;
   loudnorm floats stay floats (`-14.0`); `heat` needs `perlin` (>= 7.1).
 - **Verify:** end-to-end on a cached source, decode-check, verification
-  block, golden parity for bars; for `quran.py`, whole-mushaf vs legacy.
+  block, golden parity for bars, `tests/wrap_parity.py` for the English wrap;
+  for `quran.py`, whole-mushaf vs legacy.
 - **Docs travel with code:** `DEFAULTS`, `config_schema()`,
   `pipeline/README.md`, `skills/make-post/SKILL.md`.
 

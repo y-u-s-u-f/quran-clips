@@ -68,6 +68,8 @@ Saheeh + Taqi.
 
 `trim:` head is measured (0.12s before first word); hand-set trim is reported,
 never moved; tail keeps 0.30s. Auto-trim only when the source is roughly the reel.
+`align.py` takes several configs at once (`sources/<id>/*.yaml`), which is how
+the reels cut from one source share the model load.
 
 `crop.py` (every style): framing from a vision model, cached in `crop.json`.
 Column styles (bars, horizontal) get the equal-gap rule and `x_offset`;

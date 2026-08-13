@@ -31,7 +31,6 @@ reel re-renders identically on a machine with no vision model at all):
 
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
-import itertools
 import json
 import math
 import os
@@ -223,50 +222,119 @@ def en_tokens(text, stroke_macron=True, caps=True):
     return toks
 
 
+_ADVANCE = {}
+
+
+def advance(font, ch):
+    """font.getlength for ONE character, cached per (font, character).
+
+    Every width here is a sum of per-character advances over an alphabet of a
+    few dozen glyphs, and the same characters are re-measured for every line
+    of every card -- the wrap solves against a whole width table, and
+    backing_ellipse re-measures every line again afterwards."""
+    key = (font, ch)
+    w = _ADVANCE.get(key)
+    if w is None:
+        w = _ADVANCE[key] = font.getlength(ch)
+    return w
+
+
 def en_width(toks, font, tracking_px):
-    return sum(font.getlength(ch) + tracking_px for ch, _ in toks)
+    return sum(advance(font, ch) + tracking_px for ch, _ in toks)
 
 
 def wrap_english(text, font, tracking_px, max_w, stroke_macron=True,
                  caps=True):
     """Wrap into the FEWEST lines that fit max_w, then BALANCE the split
     (min-raggedness): among all splits with that line count whose every line
-    fits, pick the one minimising the widest line (tie-break: min spread).
-    Greedy first-fit alone leaves orphan last lines (a lone 'ME.')."""
+    fits, the one minimising the widest line, then the spread, then the
+    earliest break. Greedy first-fit alone leaves orphan last lines (a lone
+    'ME.').
+
+    That answer is SOLVED, not searched: enumerating the splits is
+    C(words-1, lines-1) and stops returning at all past about six lines,
+    which a draft render reaches on its own (generate.auto_group puts a whole
+    verse on one card when the reciter did not pause inside it, and 2:164 is
+    2.4e12 candidates). Two bottleneck passes give the same split -- minimise
+    the widest line at the fixed line count, then maximise the narrowest
+    subject to that -- because the optimum is exactly the set of splits whose
+    every line falls in the resulting width band, and walking that band from
+    the left picks the earliest break the enumeration would have kept.
+
+    en_tokens emits one token per CHARACTER, so any line's tokens are a
+    contiguous run of the whole text's, and every width below is the same
+    left-to-right sum of the same advances en_width would have made: the
+    table is a memoisation of the enumeration's measurements, not an
+    approximation of them."""
     if not text.strip():
         return []
     words = text.split(" ")
+    n = len(words)
+    adv = [advance(font, ch) + tracking_px
+           for ch, _ in en_tokens(" ".join(words), stroke_macron, caps)]
+    at = [0] * (n + 1)                   # token index each word starts at
+    for i, wd in enumerate(words):
+        at[i + 1] = at[i] + len(wd) + 1
 
-    def width_of(ws):
-        return en_width(en_tokens(" ".join(ws), stroke_macron, caps), font,
-                        tracking_px)
+    def row(i):
+        """[(j, width of words[i:j])], j ascending, stopping at the width cap.
+        The first entry is always present: a word wider than the column still
+        occupies a line of its own, as first-fit gives it one."""
+        out, w, k = [], 0, at[i]
+        for j in range(i + 1, n + 1):
+            while k < at[j] - 1:
+                w += adv[k]
+                k += 1
+            if w > max_w and j > i + 1:
+                break
+            out.append((j, w))
+        return out
 
-    greedy, cur = [], []                 # greedy = the minimal feasible count
-    for wd in words:
-        if not cur or width_of(cur + [wd]) <= max_w:
-            cur.append(wd)
-        else:
-            greedy.append(cur)
-            cur = [wd]
-    if cur:
-        greedy.append(cur)
-    n = len(greedy)
-    if n <= 1:
-        return [" ".join(ln) for ln in greedy]
+    tab = [row(i) for i in range(n)]
+    lines, i = [], 0
+    while i < n:                         # first-fit = the minimal line count
+        fits = [j for j, w in tab[i] if w <= max_w]
+        j = fits[-1] if fits else i + 1
+        lines.append((i, j))
+        i = j
+    nl = len(lines)
+    if nl <= 1 or any(t[0][1] > max_w for t in tab):
+        return [" ".join(words[i:j]) for i, j in lines]   # nothing to balance
 
-    best, best_key = None, None
-    for cuts in itertools.combinations(range(1, len(words)), n - 1):
-        bounds = (0,) + cuts + (len(words),)
-        cand = [words[bounds[i]:bounds[i + 1]] for i in range(n)]
-        ws = [width_of(ln) for ln in cand]
-        if max(ws) > max_w:
-            continue
-        key = (max(ws), max(ws) - min(ws))
-        if best_key is None or key < best_key:
-            best_key, best = key, cand
-    if best is None:                     # no balanced split fits; keep greedy
-        best = greedy
-    return [" ".join(ln) for ln in best]
+    INF = float("inf")
+    widest = [INF] * (n + 1)             # min widest line, words[i:] in k
+    for i, t in enumerate(tab):
+        if t[-1][0] == n:
+            widest[i] = t[-1][1]
+    for _k in range(2, nl + 1):
+        widest = [min(max(w, widest[j]) for j, w in tab[i])
+                  for i in range(n)] + [INF]
+    cap = widest[0]
+
+    narrow = [-INF] * (n + 1)            # max narrowest line, under that cap
+    for i, t in enumerate(tab):
+        if t[-1][0] == n and t[-1][1] <= cap:
+            narrow[i] = t[-1][1]
+    for _k in range(2, nl + 1):
+        narrow = [max([min(w, narrow[j]) for j, w in tab[i] if w <= cap]
+                      or [-INF])
+                  for i in range(n)] + [-INF]
+    floor = narrow[0]
+
+    # Every split whose lines all fall in [floor, cap] is optimal, so the one
+    # the enumeration returned is the one that breaks earliest each time.
+    ok = [[False] * (n + 1) for _ in range(nl + 1)]
+    ok[0][n] = True
+    for k in range(1, nl + 1):
+        for i in range(n):
+            ok[k][i] = any(ok[k - 1][j] for j, w in tab[i]
+                           if floor <= w <= cap)
+    out, i = [], 0
+    for k in range(nl, 0, -1):
+        j = next(j for j, w in tab[i] if floor <= w <= cap and ok[k - 1][j])
+        out.append(" ".join(words[i:j]))
+        i = j
+    return out
 
 
 def draw_en_line(layer, x0, baseline, toks, font, tracking_px, fill):
@@ -276,7 +344,7 @@ def draw_en_line(layer, x0, baseline, toks, font, tracking_px, fill):
     x = x0
     for ch, mac in toks:
         d.text((x, baseline), ch, font=font, fill=fill, anchor="ls")
-        adv = font.getlength(ch)
+        adv = advance(font, ch)
         if mac:
             # the glyph actually being set, not a hardcoded "A": with
             # `english_caps: false` the bar has to sit on an x-height "a".

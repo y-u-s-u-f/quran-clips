@@ -144,8 +144,15 @@ def model_for(name):
     return os.path.expanduser(override) if override else MODELS[name]
 
 
+# Locate the backend without importing it: mlx-whisper and faster-whisper
+# each cost seconds and hundreds of MB to import, and the probe would pay
+# that for every candidate before the snippet that transcribes pays it again.
+_FIND_SPEC = ("import importlib.util, sys;"
+              "sys.exit(0 if importlib.util.find_spec(sys.argv[1]) else 1)")
+
+
 def _can_import(py, module):
-    return subprocess.run([py, "-c", "import " + module],
+    return subprocess.run([py, "-c", _FIND_SPEC, module],
                           capture_output=True).returncode == 0
 
 

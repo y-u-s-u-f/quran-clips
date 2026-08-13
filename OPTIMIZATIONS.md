@@ -1,38 +1,56 @@
 # Pipeline render cost profile
 
 Read the rejected list before proposing anything. Numbers:
-`sources/gt9y-QGgMsA/hadid-16-16-bars.yaml` (27.5s, 8 cards, 4P+4E) unless
-noted; also `sources/hajri-23-taraweeh/hujurat-4-5-*.yaml` (26.2s, 5 cards,
-1920x1080 source) for the current per-style comparison.
+`sources/hajri-23-taraweeh/hujurat-4-5-*.yaml` (26.2s, 5 cards, 1920x1080
+source) -- the one source with all three styles cut from it, so the rows below
+are one reel three ways. `sources/gt9y-QGgMsA/hadid-16-16-bars.yaml` (27.5s, 8
+cards, 4P+4E) where noted; its media is not on this machine, which is why the
+`bars` row is measured on hujurat now.
 
 ## Current cost
 
 | | wall | CPU |
 |---|---|---|
-| `bars`, full fx, heat maps cached | **~75s** | ~560s |
-| `bars`, first run on a machine (heat bake) | ~460s | ~1200s |
-| `horizontal` | ~11s | ~107s |
-| `vertical` | ~12s | ~121s |
+| `bars`, full fx, heat + snow cached | **~75s** | ~552s |
+| `bars`, first run on a machine | ~850s | ~1830s |
+| `horizontal` | ~12s | ~105s |
+| `vertical` | ~14s | ~119s |
+
+ffmpeg 9.0.1, 14 cores. MEASURE THESE COOLED AND ALONE. Rendered back to back
+they read 10-25% high -- a bars render is 550s of CPU across 14 cores, and the
+next one starts on a hot machine -- which reads as a regression that is not
+there. These are the medians of alternating runs with the machine idle between
+them; each style was rendered the same way at HEAD and the two agree within
+the run-to-run spread, in both directions. They must: the two trees emit the
+same filtergraph and the same argv apart from the snow input's path, and the
+streams they produce are byte-identical (`framemd5` over video and audio).
+
+The first-run row is one 60s perlin bake per axis (761s wall / 1237s CPU
+together) plus the snow bake (~12s / ~45s) plus the render, paid once per
+machine and never per reel.
 
 `bars` is 3.16x the pixels of the other two styles per frame and carries the
-whole FX stack, which is where the gap comes from. The perlin heat maps are
-cached in `tools/cache/heat/`, outside `/tmp` so a sweep cannot bill the bake
-twice, and any map at least as long as the reel is reused verbatim — perlin
-is a deterministic field over (x, y, t) where `-t` only decides where to stop
-reading, so a long map's opening frames are bit-identical to a short bake
-(framemd5, and a whole reel re-rendered off a 60s map instead of a 30s one
-hashes the same). Only a reel longer than every cached map pays perlin, at
-~9.3s of wall per second of map per axis. Pin `fx: {heat: false}` for timing
-previews (~27% cheaper, and never judge LOOK without the full stack).
+whole FX stack, which is where the gap comes from. Both baked layers live
+under `tools/cache/` -- perlin heat maps in `heat/`, the snow loop in `snow/`
+-- outside `/tmp` so a sweep cannot bill either bake twice, and any heat map
+at least as long as the reel is reused verbatim: perlin is a deterministic
+field over (x, y, t) where `-t` only decides where to stop reading, so a long
+map's opening frames are bit-identical to a short bake (framemd5, and a whole
+reel re-rendered off a 60s map instead of a 30s one hashes the same). Only a
+reel longer than every cached map pays perlin, at ~6.3s of wall per second of
+map per axis -- `warn_heat_bake` quotes 9.3, so its ETA over-states. Pin
+`fx: {heat: false}` for timing previews (~27% cheaper, and never judge LOOK
+without the full stack).
 
 `generate.py --vertical` adds one x264 pass (`veryfast`, crf 18, audio
-stream-copied) over the finished file: **~3s wall / ~11s CPU** on a 21.2s
-1920x1080 reel.
+stream-copied) over the finished file: **~1.6s wall / ~13s CPU** on the 26.2s
+1920x1080 bars reel.
 
 ## Techniques in place
 
-Changing these needs PSNR; bars graph edits also need
-`tests/graph_parity.py --bless`.
+Changing one of these needs the guard it was verified with: PSNR for anything
+that moves a pixel, `tests/graph_parity.py --bless` for a bars graph edit,
+`tests/wrap_parity.py` for the English wrap.
 
 - **Ink-cropped + `enable`-gated overlays** (bars + text captions/signature).
   Bit-identical vs full canvas. Text style isolated: 4.08→1.64s wall,
@@ -56,8 +74,54 @@ Changing these needs PSNR; bars graph edits also need
   writing a re-encoded 9:16 intermediate first, so that whole decode+encode
   pass is gone. No OpenCV/ONNX at render time either: the framing is a
   committed number.
+- **The balanced English wrap is SOLVED, not enumerated** (`wrap_english`).
+  Two bottleneck passes over one width table -- minimise the widest line at
+  the first-fit line count, then maximise the narrowest -- give the split the
+  enumeration gave, because the optimum is exactly the splits whose every line
+  falls in the resulting band and walking it from the left takes the earliest
+  break. Identical on 36 336 real cards, 305.5s → 2.2s over that corpus. The
+  enumeration was `C(words-1, lines-1)` and did not return AT ALL past about
+  six lines, which the documented draft path reaches on its own: `auto_group`
+  puts a whole verse on one card when the reciter did not pause inside it, and
+  2:164 as one card is 2.4e12 candidates.
+- **`font.getlength` cached per (font, character)** — every English width in
+  render_text is a sum of per-character advances over an alphabet of a few
+  dozen glyphs, re-measured for every line of every card by the wrap, by
+  `draw_en_line` and again by `backing_ellipse`.
+- **`render_bars.layout` splits each phrase once** — `phrase_lines` shapes
+  every candidate split to measure it, and it was called twice per phrase,
+  with the width bbox measured twice on top: 362 → 180 shaping calls.
 
-    tools/render-venv/bin/python tests/graph_parity.py
+The last three are NOT why a render is fast. `layout` costs the hujurat reels
+1.8ms (bars), 4.3ms (horizontal) and 3.8ms (vertical), down from 2.4, 9.2 and
+11.5 -- single-digit milliseconds against 12 to 75 seconds of ffmpeg, and the
+table above cannot see them. What the wrap solve actually buys is that a card
+the enumeration could not finish now returns at all; the rest is the cost of a
+draft loop and of anything that calls layout in bulk.
+
+      tools/render-venv/bin/python tests/graph_parity.py
+      tools/render-venv/bin/python tests/wrap_parity.py
+
+## Start-up cost, outside the render
+
+What the stages around the render pay before any pixel moves.
+
+- **`fetch.py`** — a source that is already complete (a usable `source.mp4`
+  and a `captions.srt`) never calls yt-dlp at all, so a re-fetch costs no
+  network round trip and cannot fail the bot check for nothing.
+- **`transcribe.py`** — the interpreter probe asks
+  `importlib.util.find_spec` instead of importing the backend: 0.02s per
+  candidate against 0.9s warm and 3.1s cold for `import mlx_whisper`, and it
+  paid that for every candidate before the snippet that transcribes paid it
+  again.
+- **`align.py`** — takes several configs per invocation, so the 7.1s of
+  start-up (1.0s torch, 4.9s the aligner package, 1.3s the MMS weights) is
+  paid once for every reel cut from one source rather than once per reel.
+- **`publish.py`** — one `ffprobe` for the tags, the frame size and the
+  duration `clamp_cover` needs.
+- **`quran.from_flat`** — bisect over the surah offsets, not a 114-step scan.
+  It runs once per candidate ayah inside `search(boost=...)`, which is why
+  that was 2.04x `search()` (3.7ms vs 7.5ms per call).
 
 ## Rejected
 
@@ -87,70 +151,26 @@ unmeasured.
 # Audit, 2026-08-13
 
 Whole-repo read of the eleven `pipeline/` scripts, `tests/`, `install.sh` and
-the docs. Nothing below is applied; every number is measured on this machine
-unless marked as read off the source. Ordered by leverage inside each list.
-
-The layout numbers come from `tools/render-venv/bin/python` against
-`Albertus MT Lt Regular` at 33pt and the committed `en.sahih` edition, which
-is what a render actually shapes.
-
-## Efficiency and optimization
-
-| # | Change | Impact |
-|---|---|---|
-| 1 | `render_text.wrap_english`: replace the exhaustive split search with a two-stage bottleneck DP | 21.5s -> under 1ms on one 33-word card, and removes an unbounded case (below) |
-| 2 | Memoise `font.getlength` per (font, char) in `en_width` | folds into 1; also cuts `backing_ellipse`, which re-tokenises and re-measures every line of every card |
-| 3 | `render_bars.layout`: `bbox_ls` is called twice per line building `raw`, and `phrase_lines` is recomputed per phrase after the `all_lines` pass | 362 -> ~180 shaping calls, 0.131s -> ~0.06s on 3 phrases. Pure memoisation, so bit-identical |
-| 4 | Move the snow cache from `dirname(tmp_dir)` to `tools/cache/snow` | the shader pass is re-paid after every `/tmp` sweep, for the same reason `HEAT_CACHE` already lives in `tools/` |
-| 5 | `fetch.py`: skip the `-J` metadata call when `source.mp4` is usable and `captions.srt` exists | a re-fetch of a cached source stops costing a network round trip, and stops being able to fail the bot check for nothing |
-| 6 | `align.py`: accept several configs per invocation | the torch import and the ~1.2GB MMS load are paid once per config; a source with three reels pays them three times |
-| 7 | `transcribe.interpreter()`: stop probing candidates with `python -c "import <backend>"` | up to three interpreter starts, each importing mlx/faster-whisper, before any audio is read |
-| 8 | `quran.from_flat`: replace the 114-step scan with a flat lookup | `search(boost=...)` is 2.04x `search()` because `from_flat` runs per vote (3.7ms vs 7.5ms per call) |
-| 9 | `publish.py`: fold `clamp_cover`'s duration probe into `probe()` | one `ffprobe` instead of two on the same file |
-
-**1 is the headline and it is not only a speed number.** `wrap_english`
-enumerates `C(words-1, lines-1)` splits and measures every line of each one.
-That is fine on an authored card and unbounded on a long one:
-
-| card English | words | lines | candidate splits | measured |
-|---|---|---|---|---|
-| authored, typical | 10 | 2 | 9 | 2.6ms |
-| 33:56 as ONE card | 34 | 5 | 40 920 | 21.5s |
-| 2:164 as ONE card | 84 | 11 | 2.4e12 | does not return |
-| 2:282 as ONE card | 256 | 32 | 7.3e39 | does not return |
-
-A config with no `groups:` is the documented draft path
-(`generate.auto_group`), and it splits a verse's translation across however
-many cards the pauses produced -- one card for a verse the reciter did not
-pause inside. So a draft render of a long ayah hangs with no output and no
-message. `--print-schema` offers that path, so this is reachable from the
-documented workflow, not only from a hand-written config.
-
-The replacement has to reproduce the current answer, not merely a good one.
-The objective is lexicographic (fewest lines, then narrowest widest line,
-then smallest spread), and a single-value DP ties differently -- measured, 1
-mismatch in 440 real translations. Two bottleneck DPs give it exactly:
-minimise the widest line at the fixed line count, then maximise the narrowest
-line subject to that bound. Both are O(n^2 x lines), and the same 440 cases
-run in 0.0006s each against 1.4-7.7s for the current code.
+the docs. The efficiency findings are applied and are recorded above; what is
+left below is not. Every number is measured on this machine unless marked as
+read off the source. Ordered by leverage inside each list.
 
 ## Bugs
 
 | # | Where | Trigger and symptom | Mitigation |
 |---|---|---|---|
-| 1 | `render_text.wrap_english` | any card whose English needs more than ~6 lines; no output, no message | the DP above; independently, cap the balanced search and fall back to greedy |
-| 2 | `generate.auto_group` | two cards with equal text and equal times: `arabic.index(ph)` matches by value, so one `english` slot stays `None` and `_fill_gaps` raises `TypeError: 'NoneType' object does not support item assignment` | carry the index through `by_verse` instead of looking the dict back up |
-| 3 | `render_text.schedule` | no sequential guard: at every changeover the outgoing card is still fading (to +0.47s) while the incoming one is fully opaque (from +0.21s), in the SAME block position, so the two Arabic lines strike over each other for ~0.26s | port `render_bars.schedule`'s shrink: serialise both fades into the gap the recitation leaves, floored at `min_fade_s` |
-| 4 | `generate.load_config` | invariant 5 says loud validation at config time. `groups` with no `n_words` raises a bare `KeyError`, `nudge` with no `group` the same, `bar_color: 'ZZZZZZ'` a bare `ValueError`, `trim: 12.0` is accepted and fails at `list(12.0)`, and `crop: {x, y}` is accepted and refused only after `trim_media` has re-encoded the window | validate shape in `load_config` beside the unknown-key check |
-| 5 | `publish.reel_facts` | `--surah` without `--ayat` gives `ValueError: invalid literal for int() with base 10: 'None'` | require the pair in `argparse`, or name the missing flag |
-| 6 | `render_bars.phrase_lines` | `line_split` on a one-word group returns `['<word>', '']`, and the empty line still gets a pill `2 x pad_x` wide | refuse `line_split` when it cannot split, at config time |
-| 7 | `transcribe.transcribe` | the backend writes `out_json` directly, so a crash mid-write leaves a partial `whisper.json` that the next run reads and skips | write to a temp file and `os.replace` |
-| 8 | `letterbox.letterbox` | run standalone twice it letterboxes the letterbox; AGENTS.md documents this and the code has no guard | probe and refuse when the input is already 1080x1920 |
-| 9 | `fetch.fetch_local` | keeps the source's own extension, but `generate.resolve_paths` and `transcribe.find_source` only look for seven names, so a local `.avi`/`.m4v` fetches and is then invisible | share one extension list, or always land on `source.mp4` |
-| 10 | `fetch.fetch_local` | never runs `ensure_aac`, so a local mp4 carrying Opus hits the deadlock `ensure_aac` exists to prevent | probe the local file and transcode into the source folder |
-| 11 | `publish.main` | Instagram publishes first; a Facebook failure leaves the reel live on Instagram, unmarked in Finder and with nothing recording the partial post | tag after each platform succeeds, and report which one went out |
-| 12 | `publish.api` | no retry, so a transient Graph 5xx after the bytes have landed kills the publish | retry 5xx and rate-limit codes with a backoff |
-| 13 | `generate.run_config` | `_fill_gaps` runs AFTER `clip_to_speech` and re-extends every clipped caption by up to `MAX_HOLD`: a caption clipped to a rest at 10.00s ends at 13.00s. `MAX_HOLD` is also `detect_silences`'s `min_len`, so the shortest detectable rest is exactly cancelled | decide which is intended. If the frame should go clean, clip after filling; if the hold is intended, the two docstrings should say so |
+| 1 | `generate.auto_group` | two cards with equal text and equal times: `arabic.index(ph)` matches by value, so one `english` slot stays `None` and `_fill_gaps` raises `TypeError: 'NoneType' object does not support item assignment` | carry the index through `by_verse` instead of looking the dict back up |
+| 2 | `render_text.schedule` | no sequential guard: at every changeover the outgoing card is still fading (to +0.47s) while the incoming one is fully opaque (from +0.21s), in the SAME block position, so the two Arabic lines strike over each other for ~0.26s | port `render_bars.schedule`'s shrink: serialise both fades into the gap the recitation leaves, floored at `min_fade_s` |
+| 3 | `generate.load_config` | invariant 5 says loud validation at config time. `groups` with no `n_words` raises a bare `KeyError`, `nudge` with no `group` the same, `bar_color: 'ZZZZZZ'` a bare `ValueError`, `trim: 12.0` is accepted and fails at `list(12.0)`, and `crop: {x, y}` is accepted and refused only after `trim_media` has re-encoded the window | validate shape in `load_config` beside the unknown-key check |
+| 4 | `publish.reel_facts` | `--surah` without `--ayat` gives `ValueError: invalid literal for int() with base 10: 'None'` | require the pair in `argparse`, or name the missing flag |
+| 5 | `render_bars.phrase_lines` | `line_split` on a one-word group returns `['<word>', '']`, and the empty line still gets a pill `2 x pad_x` wide | refuse `line_split` when it cannot split, at config time |
+| 6 | `transcribe.transcribe` | the backend writes `out_json` directly, so a crash mid-write leaves a partial `whisper.json` that the next run reads and skips | write to a temp file and `os.replace` |
+| 7 | `letterbox.letterbox` | run standalone twice it letterboxes the letterbox; AGENTS.md documents this and the code has no guard | probe and refuse when the input is already 1080x1920 |
+| 8 | `fetch.fetch_local` | keeps the source's own extension, but `generate.resolve_paths` and `transcribe.find_source` only look for seven names, so a local `.avi`/`.m4v` fetches and is then invisible | share one extension list, or always land on `source.mp4` |
+| 9 | `fetch.fetch_local` | never runs `ensure_aac`, so a local mp4 carrying Opus hits the deadlock `ensure_aac` exists to prevent | probe the local file and transcode into the source folder |
+| 10 | `publish.main` | Instagram publishes first; a Facebook failure leaves the reel live on Instagram, unmarked in Finder and with nothing recording the partial post | tag after each platform succeeds, and report which one went out |
+| 11 | `publish.api` | no retry, so a transient Graph 5xx after the bytes have landed kills the publish | retry 5xx and rate-limit codes with a backoff |
+| 12 | `generate.run_config` | `_fill_gaps` runs AFTER `clip_to_speech` and re-extends every clipped caption by up to `MAX_HOLD`: a caption clipped to a rest at 10.00s ends at 13.00s. `MAX_HOLD` is also `detect_silences`'s `min_len`, so the shortest detectable rest is exactly cancelled | decide which is intended. If the frame should go clean, clip after filling; if the hold is intended, the two docstrings should say so |
 
 ## UX and quality of life
 
@@ -174,7 +194,6 @@ run in 0.0006s each against 1.4-7.7s for the current code.
 - **`crop.py --annotate` shows one frame** (the middle one), while `report`
   warns about spread across all of them. A contact sheet of every sampled
   frame would show what the warning is about.
-- **`warn_heat_bake(cfg, dur, tmp)`** never uses `tmp`.
 
 ## Code quality
 
@@ -187,27 +206,12 @@ run in 0.0006s each against 1.4-7.7s for the current code.
   `render_common.py` does not weaken it. `tests/graph_parity.py` is the guard.
 - **`norm_ar` is defined in both renderers with different strip sets.** Same
   name, different behaviour, one import away from each other.
-- **Invariant 1 is broken in two files.** `generate._ARABIC_DIGITS` and
-  `verse_end_marker`'s `"۝"` are typed Arabic, as are
-  `render_bars.STRIP_MARKS` and `TASHKEEL`. `render_text.DISPLAY_STRIP_CHARS`
-  and `publish.caption` do it right with escapes. The digit table also splits
-  its literal mid-string for no reason.
 - **`.env` readers.** `_dotenv`/`envvar` appear in `fetch.py`,
   `transcribe.py` and `crop.py`; `publish.load_env` is a fourth shape that
   handles neither `export ` nor a trailing ` #` comment, so the four are not
   equivalent to each other.
-- **`fx.Heat.apply` defaults `supersample` to 3** while `FX_CFG` sets 2 and
-  this file records 2 as the measured value, so the default is dead and
-  points the wrong way.
-- **`fx._snow_tile` calls `__import__("random")` inline**, and
-  `fx.TextGlow.plate`'s comment block drops to column 0 mid-docstring.
-- **`render_bars.heat_map_paths` assigns a lambda to `paths`**, carrying a
-  `# noqa: E731` that a `def` would not need.
 - **`render_text.render` re-checks `info["width"]`** after
   `generate.run_config` has already refused an input without a video stream.
-- **`quran._offsets()` caches by writing `_offsets`/`_counts` into the loaded
-  JSON dict**, and `surah_name_ar` indexes `surahs[n-1]` while `_offsets`
-  keys off `s["number"]`.
-- **`.env.example` names `pipeline/render_default.py`**, which does not
-  exist; the file is `render_text.py`. `install.sh`'s header numbers its
-  steps 1, 2, 3, 3b, 5, 6.
+- **`quran.surah_name_ar` indexes `surahs[n-1]`** while `_offsets` keys off
+  `s["number"]`; the two disagree on any edition whose array is not in surah
+  order.

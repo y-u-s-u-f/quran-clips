@@ -29,6 +29,7 @@ CLI:
     python3 pipeline/quran.py --search "نص"    locate Arabic text in the mushaf
     python3 pipeline/quran.py --words 2:255    word-by-word English glosses
 """
+import bisect
 import json
 import math
 import os
@@ -55,22 +56,32 @@ def _load(edition):
     return _DATA[edition]
 
 
+_OFFSETS = None    # surah -> flat index of its first ayah
+_COUNTS = None     # surah -> ayah count
+_STARTS = None     # the offsets in surah order, for from_flat's bisect
+
+
 def _offsets():
-    """Cumulative flat index of the first ayah of each surah (1-based surah)."""
-    d = _load("uthmani")
-    if "_offsets" not in d:
-        offs, n = {}, 0
-        for s in d["surahs"]:
+    """Cumulative flat index of the first ayah of each surah (1-based surah).
+
+    Cached in this module, never back into the loaded edition: the JSON dicts
+    _load hands out are the mushaf, and a derived table does not belong among
+    its keys."""
+    global _OFFSETS, _COUNTS, _STARTS
+    if _OFFSETS is None:
+        offs, counts, n = {}, {}, 0
+        for s in _load("uthmani")["surahs"]:
             offs[s["number"]] = n
+            counts[s["number"]] = s["ayahs"]
             n += s["ayahs"]
-        d["_offsets"] = offs
-        d["_counts"] = {s["number"]: s["ayahs"] for s in d["surahs"]}
-    return d["_offsets"]
+        _OFFSETS, _COUNTS = offs, counts
+        _STARTS = [offs[s] for s in sorted(offs)]
+    return _OFFSETS
 
 
 def ayah_count(surah):
     _offsets()
-    return _load("uthmani")["_counts"][int(surah)]
+    return _COUNTS[int(surah)]
 
 
 def flat_index(surah, num):
@@ -86,12 +97,15 @@ def flat_index(surah, num):
 
 
 def from_flat(idx):
-    """Inverse of flat_index: 0-based flat index -> (surah, ayah)."""
-    offs = _offsets()
-    for s in _pyrange(114, 0, -1):
-        if idx >= offs[s]:
-            return s, idx - offs[s] + 1
-    raise IndexError(idx)
+    """Inverse of flat_index: 0-based flat index -> (surah, ayah).
+
+    Hot: search() calls it once per candidate ayah whenever a surah boost is
+    in play, which is every call that a video title fed a hint to."""
+    _offsets()
+    s = bisect.bisect_right(_STARTS, idx)      # surahs starting at or before
+    if not s:
+        raise IndexError(idx)
+    return s, idx - _STARTS[s - 1] + 1
 
 
 def surah_name(n):

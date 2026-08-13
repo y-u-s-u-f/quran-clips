@@ -274,6 +274,16 @@ def parse_ts(spec):
 def fetch_youtube(vid, out_dir, proxy=None, timestamps=None, client=None):
     url = "https://www.youtube.com/watch?v=%s" % vid
     dst = os.path.join(out_dir, "source.mp4")
+    srt = os.path.join(out_dir, "captions.srt")
+
+    # Nothing left to fetch: this source is already complete, so it never
+    # reaches the network at all. The metadata call is a player-API request
+    # like any other and can fail the bot check -- failing it for a fetch
+    # that would have downloaded nothing is a re-fetch that fails for free.
+    if usable(dst) and os.path.exists(srt):
+        print("  video   : %s  (reused)" % os.path.relpath(dst, ROOT))
+        print("  captions: %s  (reused)" % os.path.relpath(srt, ROOT))
+        return
 
     # metadata first: title/duration are worth having on screen before minutes
     # of download, and a bot check fires here, before any bytes move.
@@ -307,7 +317,6 @@ def fetch_youtube(vid, out_dir, proxy=None, timestamps=None, client=None):
         print("  video   : %s  [audio %s]"
               % (os.path.relpath(dst, ROOT), audio_codec(dst) or "none"))
 
-    srt = os.path.join(out_dir, "captions.srt")
     if os.path.exists(srt):
         print("  captions: %s  (reused)" % os.path.relpath(srt, ROOT))
         return

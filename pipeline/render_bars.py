@@ -135,14 +135,14 @@ ENCODE = {"crf": 18, "preset": "slow", "audio_bitrate": "192k"}
 # House normalisation of the caption text (see legacy/qc/arabic.py):
 # U+06DF renders ZERO WIDTH in AM_Thulth (silent width corruption) and
 # U+06ED reads as a stray floating meem.
-STRIP_MARKS = {"۟", "ۭ"}
+STRIP_MARKS = {"\u06DF", "\u06ED"}
 # Combining marks, for the tashkeel-stripped "letter body" band the pill must
 # sit inside -- the marks overshoot the em box, so the full ink bbox would
 # place it wrong.
-TASHKEEL = set("ًٌٍَُِّْٓ"
-               "ٰٕٔۖۗۘۙۚۛ"
-               "ۣۜ۟۠ۡۢۤۧۨ"
-               "۪ۭ۫۬")
+TASHKEEL = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0653"
+               "\u0670\u0655\u0654\u06D6\u06D7\u06D8\u06D9\u06DA\u06DB"
+               "\u06E3\u06DC\u06DF\u06E0\u06E1\u06E2\u06E4\u06E7\u06E8"
+               "\u06EA\u06ED\u06EB\u06EC")
 
 
 def norm_ar(s):
@@ -345,10 +345,12 @@ def layout(phrases, x_offset, y_offset):
     base_off = BAR["baseline_below_center_px"]
 
     probe_font = truetype(TEXT["nominal_pt"])
-    all_lines = [ln for ph in phrases
-                 for ln in phrase_lines(ph, probe_font, max_w)]
-    raw = [bbox_ls(ln, probe_font)[2] - bbox_ls(ln, probe_font)[0]
-           for ln in all_lines]
+    # Split once and keep it: phrase_lines shapes every candidate split to
+    # measure it, so asking twice for the same phrase re-shapes the lot.
+    split = [phrase_lines(ph, probe_font, max_w) for ph in phrases]
+    raw = [b[2] - b[0]
+           for b in (bbox_ls(ln, probe_font) for lines in split
+                     for ln in lines)]
     widest = max(1.0, max(raw))
     pt = fit_pt(TEXT["nominal_pt"], TEXT["min_pt"], max_w, widest)
     font = truetype(pt)
@@ -359,8 +361,7 @@ def layout(phrases, x_offset, y_offset):
 
     out = {"pt": pt, "font": font, "cx": cx, "widest": widest,
            "max_w": max_w, "phrases": []}
-    for idx, ph in enumerate(phrases, start=1):
-        lines = phrase_lines(ph, probe_font, max_w)
+    for idx, lines in enumerate(split, start=1):
         centers = [y_single] if len(lines) == 1 else y_line[:len(lines)]
         rows = []
         for n, (ln, cyb) in enumerate(zip(lines, centers), start=1):
@@ -489,12 +490,15 @@ def scrim_plate(tmp):
     return path
 
 
-# Heat maps are machine-level, not reel-level: pure geometry from FX_CFG
-# constants, identical for every reel. They live outside any reel's tmp and
-# outside /tmp entirely -- macOS sweeps /private/tmp, and re-buying a bake
-# this expensive on a timer is the whole problem. tools/ is already the
-# repo's home for heavy machine-local artefacts and is gitignored wholesale.
+# Baked layers are machine-level, not reel-level: a heat map is pure geometry
+# from FX_CFG constants, and a snow loop is pinned by its own tag down to the
+# tint, so any two reels that agree on those agree on the file. Both live
+# outside any reel's tmp and outside /tmp entirely -- macOS sweeps
+# /private/tmp, and re-buying a bake this expensive on a timer is the whole
+# problem. tools/ is already the repo's home for heavy machine-local
+# artefacts and is gitignored wholesale.
 HEAT_CACHE = os.path.join(ROOT, "tools", "cache", "heat")
+SNOW_CACHE = os.path.join(ROOT, "tools", "cache", "snow")
 
 # `perlin` is a deterministic field over (x, y, t) and -t only decides where
 # to stop reading it: frames 0..N of a long bake are bit-identical to a bake
@@ -532,10 +536,11 @@ def heat_map_paths(dur):
     author at a silent terminal."""
     c = FX_CFG["heat"]
     seeds = (("x", int(c.get("seed_x", 11))), ("y", int(c.get("seed_y", 77))))
-    paths = lambda span: [                                        # noqa: E731
-        os.path.join(HEAT_CACHE, "heat%s_%s_s%d.mp4"
-                     % (axis, heat_map_tag(span), seed))
-        for axis, seed in seeds]
+
+    def paths(span):
+        return [os.path.join(HEAT_CACHE, "heat%s_%s_s%d.mp4"
+                             % (axis, heat_map_tag(span), seed))
+                for axis, seed in seeds]
     for span in sorted(cached_heat_spans()):
         if span >= dur and all(os.path.exists(p) for p in paths(span)):
             return span, paths(span)
@@ -609,7 +614,7 @@ def heat_layers(dur):
     return out
 
 
-def snow_layer(tmp, tint_rgb):
+def snow_layer(tint_rgb):
     """The seamlessly-looping snow mp4, cached by parameter tag.
     Expensive to evaluate (one shader pass per frame), so it is only built
     when the effect is on.
@@ -626,9 +631,8 @@ def snow_layer(tmp, tint_rgb):
     tag = "%dx%d_%02X%02X%02X_%s" % (
         BAND_W, BAND_H, *tint_rgb,
         "_".join(str(c[k]) for k in sorted(c)))
-    cache = os.path.dirname(os.path.normpath(tmp)) or tmp
-    os.makedirs(cache, exist_ok=True)
-    path = os.path.join(cache, "snow_%s.mp4" % tag)
+    os.makedirs(SNOW_CACHE, exist_ok=True)
+    path = os.path.join(SNOW_CACHE, "snow_%s.mp4" % tag)
     if not os.path.exists(path):
         part = "%s.%d.part.mp4" % (os.path.splitext(path)[0], os.getpid())
         try:
@@ -922,7 +926,7 @@ def render(plan):
               % (p["i"], p["i"], r["lines"], r["x0"], r["x1"],
                  r["x1"] - r["x0"]))
 
-    snow_path = snow_layer(tmp, target_rgb) if on["snow"] else None
+    snow_path = snow_layer(target_rgb) if on["snow"] else None
     heat_paths = heat_layers(dur) if on["heat"] else None
     scrim = scrim_plate(tmp) if on["scrim"] else None
     if cfg["signature"]:

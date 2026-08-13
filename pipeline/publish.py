@@ -108,21 +108,26 @@ def need(env, *keys):
 
 # --- the reel --------------------------------------------------------------
 def probe(path):
+    """-> (tags, width, height, duration_ms). One ffprobe: the duration is
+    asked for here rather than by clamp_cover, which needs it on the same
+    file a moment later."""
     out = subprocess.run(
         [os.environ.get("QC_FFPROBE", "ffprobe"), "-v", "error",
-         "-show_entries", "format_tags:stream=width,height",
+         "-show_entries", "format=duration:format_tags:stream=width,height",
          "-select_streams", "v:0", "-of", "json", path],
         capture_output=True, text=True, check=True).stdout
     d = json.loads(out)
-    tags = {k.lower(): v for k, v in
-            (d.get("format", {}).get("tags") or {}).items()}
+    fmt = d.get("format") or {}
+    tags = {k.lower(): v for k, v in (fmt.get("tags") or {}).items()}
     stream = (d.get("streams") or [{}])[0]
-    return tags, stream.get("width"), stream.get("height")
+    return (tags, stream.get("width"), stream.get("height"),
+            float(fmt.get("duration") or 0.0) * 1000)
 
 
 def reel_facts(path, surah=None, ayat=None, reciter=None):
-    """-> (surah, ayah_start, ayah_end, reciter). Tags unless overridden."""
-    tags, w, h = probe(path)
+    """-> (surah, ayah_start, ayah_end, reciter, duration_ms). Tags unless
+    overridden."""
+    tags, w, h, dur_ms = probe(path)
     if w and h and int(w) > int(h):
         print("  ! %sx%s is landscape. Reels are 9:16 on both platforms; "
               "this will be padded or cropped by them." % (w, h))
@@ -143,7 +148,7 @@ def reel_facts(path, surah=None, ayat=None, reciter=None):
                 "%s carries no reciter. Set `reciter:` in its config and "
                 "re-render, or pass --reciter with his Arabic name."
                 % os.path.basename(path))
-    return int(surah), a0, a1, reciter
+    return int(surah), a0, a1, reciter, dur_ms
 
 
 # --- the caption -----------------------------------------------------------
@@ -238,16 +243,13 @@ def rupload(url, token, path):
         raise SystemExit("upload failed:\n%s" % e.read().decode()[:1500])
 
 
-def clamp_cover(path, ms):
+def clamp_cover(dur, ms):
     """A cover offset past the end of the reel is not an error on either
     platform -- Instagram just falls back to frame 0 and says nothing -- so
-    it is caught here, where it can still be reported."""
-    dur = float(subprocess.run(
-        [os.environ.get("QC_FFPROBE", "ffprobe"), "-v", "error",
-         "-show_entries", "format=duration", "-of",
-         "default=nw=1:nk=1", path],
-        capture_output=True, text=True, check=True).stdout.strip()) * 1000
-    if ms >= dur:
+    it is caught here, where it can still be reported. `dur` is the
+    milliseconds reel_facts already probed; a file that reported none is left
+    alone rather than clamped against a zero."""
+    if dur and ms >= dur:
         ms = int(dur / 2)
         print("  ! cover offset is past the end of a %.1fs reel; using "
               "%.2fs instead" % (dur / 1000, ms / 1000))
@@ -440,7 +442,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     a.reel = find_reel(a.reel)
-    surah, a0, a1, reciter = reel_facts(a.reel, a.surah, a.ayat, a.reciter)
+    surah, a0, a1, reciter, dur_ms = reel_facts(a.reel, a.surah, a.ayat,
+                                                a.reciter)
     print("%s -- %s %d:%d-%d, %s" % (os.path.basename(a.reel),
                                      quran.surah_name(surah), surah, a0, a1,
                                      reciter))
@@ -465,7 +468,7 @@ def main(argv=None):
 
     env = load_env()
     if a.cover_ms:
-        a.cover_ms = clamp_cover(a.reel, a.cover_ms)
+        a.cover_ms = clamp_cover(dur_ms, a.cover_ms)
     if not a.fb_only:
         publish_instagram(env, a.reel, ig_text, publish=not a.draft,
                           cover_ms=a.cover_ms)

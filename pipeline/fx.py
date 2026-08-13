@@ -18,6 +18,7 @@ Contents:
 """
 import math
 import os
+import random
 import subprocess
 import sys
 
@@ -323,10 +324,10 @@ class TextGlow(Effect):
     layer = "text"
 
     def plate(self, g, ctx):
-        # Band-sized, not canvas-sized: this plate is cropped to the band before the
-# blur, so glyph ink outside the band never contributes. Accumulating at band
-# size is the same pixels for a third of the plate and a third of every
-# overlay onto it.
+        # Band-sized, not canvas-sized: this plate is cropped to the band
+        # before the blur, so glyph ink outside the band never contributes.
+        # Accumulating at band size is the same pixels for a third of the
+        # plate and a third of every overlay onto it.
         g.chain(None,
                 f"color=c=black:s={ctx.BW}x{ctx.BH}:r={ctx.fps}:d={ctx.dur:.3f}",
                 "tg0")
@@ -417,7 +418,7 @@ class Heat(Effect):
 
     def apply(self, g, band, ctx):
         ht = self.cfg
-        S = int(ht.get("supersample", 3))
+        S = int(ht.get("supersample", 2))     # 2 is the measured value
         rms = float(ht["rms_frac_w"]) * ctx.W       # RMS displacement in px
         ctr = float(ht.get("perlin_centre", 130.26))
         sdp = float(ht.get("perlin_sd", 18.4))
@@ -491,7 +492,7 @@ SNOW_NX = 256               # noise tile width, texels (as shipped by the app)
 
 
 def _snow_tile(nx, ny, seed):
-    rnd = __import__("random").Random(seed)
+    rnd = random.Random(seed)
     return Image.frombytes("L", (nx, ny),
                            bytes(rnd.randrange(256) for _ in range(nx * ny)))
 

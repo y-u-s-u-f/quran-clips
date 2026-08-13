@@ -13,6 +13,7 @@
 #   3. builds tools/asr-venv    -- mlx-whisper on Apple silicon,
 #      faster-whisper everywhere else (override with QC_ASR_BACKEND in .env)
 #   3b. builds tools/align-venv -- ctc-forced-aligner (torch) for align.py
+#   4. resolves the framing model for pipeline/crop.py (optional)
 #   5. copies .env.example -> .env when absent
 #   6. prints a doctor-style summary of what resolved and what is missing
 #

@@ -20,7 +20,7 @@ python3 pipeline/fetch.py <url-or-path> [--name SLUG] [--proxy] [--timestamps A-
 python3 pipeline/transcribe.py sources/<id>
 python3 pipeline/quran.py --search "<arabic>"     # -> surah:ayah
 # write sources/<id>/<reel>.yaml   (see Config)
-tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml
+tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml   # several configs: one model load
 tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml [--vertical]
 ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate, always
