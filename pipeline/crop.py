@@ -130,7 +130,6 @@ CTX = 1000000
 GRID = 1000.0                  # prompt asks for 0-1000, not fractions
 TIMEOUT = 180.0                # ~7.5s for 4 frames measured; headroom
 RETRIES = 3                    # transient CLI / malformed parse; never silent
-PASSES = 1
 PROMPT = """You are framing a Qur'an recitation video for a vertical social \
 media reel. I am showing you %d frames sampled from one continuous shot of the \
 same recitation, in time order. Report, PER FRAME and in that same order, where \
@@ -608,12 +607,11 @@ def horizontal(W, w, m, side, cap_cx, cap_w):
     lo, hi = 0.0, float(W - w)
     head_l = (m["head_cx"] - m["head_w"] / 2.0) * W
     head_r = (m["head_cx"] + m["head_w"] / 2.0) * W
-    if cap_w is None:
-        pass
-    elif side == "left":              # caption LEFT: his head must stay right
-        hi = min(hi, head_l - (cap_cx + cap_w / 2.0) * w)
-    else:                             # caption RIGHT: his head must stay left
-        lo = max(lo, head_r - (cap_cx - cap_w / 2.0) * w)
+    if cap_w is not None:
+        if side == "left":            # caption LEFT: his head must stay right
+            hi = min(hi, head_l - (cap_cx + cap_w / 2.0) * w)
+        else:                         # caption RIGHT: his head must stay left
+            lo = max(lo, head_r - (cap_cx - cap_w / 2.0) * w)
     lo = max(0.0, min(lo, float(W - w)))
     hi = max(lo, min(hi, float(W - w)))
     c_lo, c_hi = br - w, bl           # contain right edge / contain left edge
@@ -1180,11 +1178,9 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
 
     # Frames come from the reel's OWN window: how the reciter sits during these
     # 30 seconds is the question, not how he sits across a 20-minute upload.
-    t0, t1 = 0.0, info["duration"]
-    if cfg.get("trim"):
-        t0 = float(cfg["trim"][0])
-        t1 = float(cfg["trim"][1]) if len(cfg["trim"]) > 1 and \
-            cfg["trim"][1] is not None else info["duration"]
+    t0, t1 = generate.trim_window(cfg)
+    if t1 is None:
+        t1 = info["duration"]
     cap = max(1, (CTX - 8192) // EST_TOKENS_PER_FRAME)
     if frames > cap:
         print("      --frames %d would not fit %s's %d-token context at ~%d "
@@ -1215,20 +1211,15 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
                 "--dry-run and nothing cached for these frames. Pass "
                 "--measurements FILE with a {\"frames\": [...]} object, or drop "
                 "--dry-run to ask the model.")
-        pooled, usage, cost_usd = [], {}, 0.0
-        for p in range(PASSES):
-            parsed, envelope = ask(paths, dims, tmp_dir)
-            pooled.extend(parsed["frames"])
-            cost_usd += float(envelope.get("total_cost_usd") or 0.0)
-            for k, v in (envelope.get("usage") or {}).items():
-                if isinstance(v, (int, float)):
-                    usage[k] = usage.get(k, 0) + v
-            print("      pass %d/%d: %d frame reading(s)"
-                  % (p + 1, PASSES, len(parsed["frames"])))
-        entry = {"parsed": {"frames": pooled}, "usage": usage,
-                 "cost_usd": cost_usd, "model": MODEL,
-                 "when": datetime.date.today().isoformat(), "times": times,
-                 "frame_size": list(dims), "grid": True, "passes": PASSES}
+        parsed, envelope = ask(paths, dims, tmp_dir)
+        print("      %d frame reading(s)" % len(parsed["frames"]))
+        usage = {k: v for k, v in (envelope.get("usage") or {}).items()
+                 if isinstance(v, (int, float))}
+        entry = {"parsed": {"frames": parsed["frames"]}, "usage": usage,
+                 "cost_usd": float(envelope.get("total_cost_usd") or 0.0),
+                 "model": MODEL, "times": times,
+                 "when": datetime.date.today().isoformat(),
+                 "frame_size": list(dims), "grid": True}
         cache_write(cache_path(config_path), key, entry)
     if entry.get("grid"):
         to_fractions(entry["parsed"])
@@ -1238,9 +1229,7 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
         # pass measures $0.09-0.13 total_cost_usd (Claude Code reports it in
         # the --output-format json envelope).
         print("usage   : %s  ->  $%.5f"
-              % (json.dumps({k: v for k, v in usage.items()
-                             if isinstance(v, (int, float))}),
-                 entry.get("cost_usd") or 0.0))
+              % (json.dumps(usage), entry.get("cost_usd") or 0.0))
 
     m = median(entry["parsed"]["frames"])
     m["_W"], m["_H"] = W, H

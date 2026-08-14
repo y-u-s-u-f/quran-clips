@@ -197,21 +197,16 @@ read off the source. Ordered by leverage inside each list.
 
 ## Code quality
 
-- **Duplication between the two renderers.** `measure_loudness` and
-  `loudnorm_filter` are byte-identical in `render_text.py` and
-  `render_bars.py`; `fit_pt`, `trim_to_ink`, `_PROBE`, `AUDIO`, `ENCODE`,
-  `VIDEO_FADE_IN_S/OUT_S` and `THREAD_QUEUE_SIZE` are duplicated too. The
-  no-shared-module rule is about the standalone CLI stages; both of these are
-  imported by `generate.py` and neither is runnable alone, so a
-  `render_common.py` does not weaken it. `tests/graph_parity.py` is the guard.
+- **`THREAD_QUEUE_SIZE` is 4096 in both `render_text.py` and `fx.Graph`.**
+  `render_common.py` holds every other constant the two renderers share; this
+  one sits outside it because `fx.Graph` owns the argv it goes into, and
+  nothing else in that port reaches out of the file.
 - **`norm_ar` is defined in both renderers with different strip sets.** Same
   name, different behaviour, one import away from each other.
 - **`.env` readers.** `_dotenv`/`envvar` appear in `fetch.py`,
   `transcribe.py` and `crop.py`; `publish.load_env` is a fourth shape that
   handles neither `export ` nor a trailing ` #` comment, so the four are not
   equivalent to each other.
-- **`render_text.render` re-checks `info["width"]`** after
-  `generate.run_config` has already refused an input without a video stream.
 - **`quran.surah_name_ar` indexes `surahs[n-1]`** while `_offsets` keys off
   `s["number"]`; the two disagree on any edition whose array is not in surah
   order.

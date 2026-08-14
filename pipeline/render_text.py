@@ -31,11 +31,9 @@ reel re-renders identically on a machine with no vision model at all):
 
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
-import json
 import math
 import os
 import re
-import subprocess
 import sys
 
 from PIL import Image, ImageChops, ImageDraw, ImageFont, features
@@ -43,8 +41,11 @@ from PIL import Image, ImageChops, ImageDraw, ImageFont, features
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 FONT_DIR = os.path.join(ROOT, "assets", "fonts")
+sys.path.insert(0, HERE)
 
-FFMPEG = os.environ.get("QC_FFMPEG") or "ffmpeg"
+from render_common import (FPS, PROBE, VIDEO_FADE_IN_S,  # noqa: E402
+                           VIDEO_FADE_OUT_S, audio_fades, encode, fit_pt,
+                           loudnorm_filter, measure_loudness, trim_to_ink)
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
@@ -56,7 +57,6 @@ if not features.check("raqm"):
 # hold on both canvases is keyed by orientation and carries its reason.
 # ---------------------------------------------------------------------------
 CANVAS = {"vertical": (1080, 1920), "horizontal": (1920, 1080)}
-FPS = 30
 
 ARABIC_FONTS = {
     "uthmanic_hafs": os.path.join(FONT_DIR, "uthmanic_hafs_v22.ttf"),
@@ -134,11 +134,6 @@ BLOCK_BOTTOM_FRAC = 0.90
 # outgoing fade-out. No slide, no scale, no per-word reveal.
 CROSSFADE_S = 0.45
 
-VIDEO_FADE_IN_S, VIDEO_FADE_OUT_S = 0.3, 0.5
-AUDIO = {"lufs": -14.0, "tp": -1.0, "lra": 11.0,
-         "fade_in_s": 0.3, "fade_out_s": 0.5}
-ENCODE = {"crf": 18, "preset": "slow", "audio_bitrate": "192k"}
-
 # ffmpeg's default 8-packet input queue deadlocks a many-input filtergraph
 # (one looped PNG per card, plus the grade plate and the signature).
 THREAD_QUEUE_SIZE = 4096
@@ -170,20 +165,11 @@ def truetype(path, pt):
 # ---------------------------------------------------------------------------
 # measurement
 # ---------------------------------------------------------------------------
-_PROBE = ImageDraw.Draw(Image.new("L", (1, 1)))
-
 
 def ar_bbox(text, font, xy=(0, 0)):
     """Ink bbox of one shaped Arabic line CENTRED on xy -> (l, top, r, bot)."""
-    return _PROBE.textbbox(xy, text, font=font, anchor="mm",
-                           direction="rtl", language="ar")
-
-
-def fit_pt(nominal_pt, min_pt, max_width, widest):
-    """One shared point size for every phrase (a caption swap never changes the
-    type size), shrunk only far enough that the WIDEST line fits. Never scaled
-    UP, never below min_pt."""
-    return max(int(min_pt), int(nominal_pt * min(1.0, max_width / widest)))
+    return PROBE.textbbox(xy, text, font=font, anchor="mm",
+                          direction="rtl", language="ar")
 
 
 # ---------------------------------------------------------------------------
@@ -423,8 +409,8 @@ def layout(orientation, phrases, english, cfg, face_bottom):
         knob for that kind of nudge anyway."""
         bot = bb[3]
         for ln, y in base:
-            bot = max(bot, _PROBE.textbbox((cx, y), ln, font=en_font,
-                                           anchor="ls")[3])
+            bot = max(bot, PROBE.textbbox((cx, y), ln, font=en_font,
+                                          anchor="ls")[3])
         return bb[1], bot
 
     trial = 0.5 * H
@@ -481,29 +467,6 @@ def with_shadow(ink, W, H):
     sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     sh.paste(solid, (off, off), ink.getchannel("A"))
     return Image.alpha_composite(sh, ink)
-
-
-def trim_to_ink(card):
-    """A full-canvas card cropped to its non-transparent pixels -> (img, x, y).
-
-    The compositor pays for the whole overlay every frame a card is up, and a
-    card's ink -- one Arabic line plus one or two English lines -- runs 6-7% of
-    the canvas on real cards; what is cropped away is (0,0,0,0), which
-    `overlay` composites to nothing. The box is snapped OUTWARD to even
-    coordinates because `overlay` blends in yuv420 by default: on an odd edge
-    the overlay's 2x2 chroma/alpha blocks would straddle a different grid than
-    the full-canvas card's and the result would shift.
-
-    Worth 33.8s -> 10.5s CPU and 1618 -> 633 MB peak RSS on the caption stage
-    of a 6-card 1080p reel at 11%, measured against full-canvas overlays with
-    the same gates build_graph adds."""
-    box = card.getbbox()
-    if box is None:                       # an empty card composites to nothing
-        return card, 0, 0
-    x0, y0 = box[0] - box[0] % 2, box[1] - box[1] % 2
-    x1 = min(card.width, box[2] + box[2] % 2)
-    y1 = min(card.height, box[3] + box[3] % 2)
-    return card.crop((x0, y0, x1, y1)), x0, y0
 
 
 def draw_layers(lay, W, H, out_dir):
@@ -609,7 +572,7 @@ def signature_card(text, font_path, W, H, tmp, offset=0):
     MB peak RSS on a 23s reel."""
     font = ImageFont.truetype(font_path,
                               max(12, int(min(W, H) * SIGNATURE_SIZE_FRAC)))
-    bbox = _PROBE.textbbox((0, 0), text, font=font)
+    bbox = PROBE.textbbox((0, 0), text, font=font)
     ink = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(ink).text(
         (W // 2 - (bbox[2] - bbox[0]) // 2 - bbox[0],
@@ -651,34 +614,6 @@ def schedule(phrases, dur):
                  else ph["end"] + 0.02)
         out.append((t_in, xf, t_out, xf))
     return out
-
-
-# ---------------------------------------------------------------------------
-# audio (two-pass loudnorm + fades)
-# ---------------------------------------------------------------------------
-
-def measure_loudness(src, dur):
-    # -vn: without it the null muxer still pulls the video stream, so pass 1
-    # decodes the whole clip's picture to measure its audio.
-    cmd = [FFMPEG, "-hide_banner", "-nostats", "-t", "%.3f" % dur, "-i", src,
-           "-vn", "-af", "loudnorm=I=%s:TP=%s:LRA=%s:print_format=json"
-           % (AUDIO["lufs"], AUDIO["tp"], AUDIO["lra"]),
-           "-f", "null", "-"]
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    out = p.stderr
-    start, end = out.rfind("{"), out.rfind("}")
-    if start == -1 or end == -1:
-        raise RuntimeError("loudnorm pass-1 produced no JSON:\n" + out[-2000:])
-    return json.loads(out[start:end + 1])
-
-
-def loudnorm_filter(st):
-    return ("loudnorm=I=%s:TP=%s:LRA=%s:measured_I=%s:measured_TP=%s:"
-            "measured_LRA=%s:measured_thresh=%s:offset=%s:linear=true:"
-            "print_format=summary"
-            % (AUDIO["lufs"], AUDIO["tp"], AUDIO["lra"], st["input_i"],
-               st["input_tp"], st["input_lra"], st["input_thresh"],
-               st["target_offset"]))
 
 
 # ---------------------------------------------------------------------------
@@ -786,9 +721,6 @@ def render(plan):
     orientation = cfg["style"]
     W, H = CANVAS[orientation]
     dur = info["duration"]
-    if not info["width"]:
-        raise SystemExit("this style needs footage: the input has no video "
-                         "stream and there is no still-photo mode")
 
     crop, note = reframe(orientation, info, cfg.get("crop"))
     face_bottom = cfg.get("face_bottom")
@@ -829,24 +761,13 @@ def render(plan):
 
     print("      loudnorm pass 1...")
     ln = loudnorm_filter(measure_loudness(src, dur))
-    afade = ("afade=t=in:st=0:d=%s,afade=t=out:st=%.3f:d=%s"
-             % (AUDIO["fade_in_s"], dur - AUDIO["fade_out_s"],
-                AUDIO["fade_out_s"]))
 
     fc, in_argv = build_graph(src, dur, crop, W, H, grade_png, rep, sched, ln,
-                              afade, sig)
+                              audio_fades(dur), sig)
 
     out = plan["out"]
-    cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv
-    cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
-            "-t", "%.3f" % dur,
-            "-c:v", "libx264", "-crf", str(ENCODE["crf"]),
-            "-preset", ENCODE["preset"], "-pix_fmt", "yuv420p",
-            "-r", str(FPS), "-c:a", "aac", "-b:a", ENCODE["audio_bitrate"],
-            "-movflags", "+faststart", out]
     print("      " + " | ".join(
         "P%d in@%.2f out@%.2f" % (i + 1, ti, to)
         for i, (ti, _, to, _) in enumerate(sched)))
-    if subprocess.run(cmd).returncode != 0:
-        raise SystemExit("ffmpeg render failed")
+    encode(in_argv, fc, dur, out)
     print("      %s | %dx%d | %s" % (os.path.relpath(out, ROOT), W, H, note))

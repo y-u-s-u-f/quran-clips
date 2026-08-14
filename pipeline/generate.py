@@ -455,6 +455,17 @@ def require_whisper(cfg):
     return cfg["whisper"]
 
 
+def trim_window(cfg):
+    """The config's `trim:` as (start, end) seconds -- (0.0, None) when it has
+    none, and end None for "to the end of the source". Every stage that cuts
+    or measures this reel's window reads it through here, so a config that
+    spells the end out and one that leaves it open resolve the same way."""
+    if not cfg.get("trim"):
+        return 0.0, None
+    t0, t1 = (list(cfg["trim"]) + [None])[:2]
+    return float(t0), None if t1 is None else float(t1)
+
+
 def format_window(w):
     return "[%.2f, %s]" % (w[0], "end" if w[1] is None else "%.2f" % w[1])
 
@@ -783,8 +794,9 @@ def apply_nudges(arabic, english, nudges):
 
 # Whether a font's shaping rules already draw the ayah ornament around bare
 # Arabic-Indic digits, or need an explicit U+06DD ARABIC END OF AYAH prefix.
-# These behave OPPOSITELY per font and getting it wrong renders two
-# concentric rings: UthmanicHafs-v22 auto-encloses bare digits.
+# Both shipped faces enclose them on their own, and a face that does it while
+# the table says otherwise renders two concentric rings, so a new one is
+# measured before it goes in ARABIC_FONTS.
 FONT_NEEDS_AYAH_MARK = {"uthmanic_hafs": False, "thuluth": False}
 
 # Escapes, not literals -- invariant 1: no Arabic is retyped in source.
@@ -945,16 +957,13 @@ def run_config(config_path, output_override=None, vertical=False):
     if not info["width"]:
         raise SystemExit("%s has no video stream -- every style renders over "
                          "footage" % os.path.basename(cfg["input"]))
-    t0w = 0.0
-    window = (0.0, None)
+    window = trim_window(cfg)
+    t0w = window[0]
     if cfg.get("trim"):
-        t0, t1 = (list(cfg["trim"]) + [None])[:2]
-        t0w = float(t0)
-        window = (t0w, None if t1 is None else float(t1))
         trimmed = os.path.join(tmp, "trimmed.mp4")
-        print("      trimming to %s-%ss" % (t0, t1 if t1 is not None else "end"))
-        source = trim_media(source, trimmed, float(t0),
-                            None if t1 is None else float(t1))
+        print("      trimming to %s-%ss"
+              % (window[0], "end" if window[1] is None else window[1]))
+        source = trim_media(source, trimmed, window[0], window[1])
         info = get_video_info(source)
     print("      %sx%s, %.1fs" % (info["width"], info["height"],
                                   info["duration"]))

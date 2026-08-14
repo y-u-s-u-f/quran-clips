@@ -395,8 +395,8 @@ def heat_perlin_src(cfg, bw, bh, fps, seed):
     baked map cannot drift from what a live one would have produced: change a
     parameter here and the cache tag changes with it."""
     return (f"perlin=size={bw}x{bh}:rate={fps}"
-            f":octaves={int(cfg.get('octaves', 6))}"
-            f":persistence={cfg.get('persistence', 0.6)}"
+            f":octaves={int(cfg['octaves'])}"
+            f":persistence={cfg['persistence']}"
             f":xscale={cfg['xscale']}:yscale={cfg['xscale']}"
             f":tscale={cfg['tscale']}:random_mode=seed:seed={int(seed)}")
 
@@ -418,10 +418,10 @@ class Heat(Effect):
 
     def apply(self, g, band, ctx):
         ht = self.cfg
-        S = int(ht.get("supersample", 2))     # 2 is the measured value
+        S = int(ht["supersample"])                  # 2 is the measured value
         rms = float(ht["rms_frac_w"]) * ctx.W       # RMS displacement in px
-        ctr = float(ht.get("perlin_centre", 130.26))
-        sdp = float(ht.get("perlin_sd", 18.4))
+        ctr = float(ht["perlin_centre"])
+        sdp = float(ht["perlin_sd"])
         k = round(rms * S / sdp, 5)                 # px -> 8-bit map slope
         SW, SH = ctx.BW * S, ctx.BH * S
         pmap = (f"scroll=vertical={ht['scroll_v']},"

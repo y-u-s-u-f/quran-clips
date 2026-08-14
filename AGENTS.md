@@ -8,6 +8,8 @@ To *produce a reel*, invoke the `make-post` skill
 Eleven standalone scripts under `pipeline/`; each owns one stage, reads/writes
 plain files. No shared util module — `fetch.py` and `transcribe.py` each
 carry their own `.env` reader so every script stays independently runnable.
+The one non-stage file is `render_common.py`, which the two renderers share:
+neither of them is runnable alone, so it costs the rule nothing.
 
 - **`fetch.py`** — URL/local -> `sources/<id>/`. yt-dlp (proxy pool,
   `PLAYER_CLIENTS` ladder, `ensure_aac`, stub gate). Caps at `MAX_FPS` 30 at
@@ -78,6 +80,9 @@ carry their own `.env` reader so every script stays independently runnable.
   NEVER burns a signature — the only place for one is over the picture, which
   is not this look.
 - **`fx.py`** — bars effects. Ported from `legacy/qc/`; do not re-derive.
+- **`render_common.py`** — what both styles DELIVER with: crf 18 / `slow` /
+  AAC 192k, -14 LUFS two-pass loudnorm, the head and tail fades, `PROBE`,
+  `fit_pt` and `trim_to_ink`. The LOOK stays in the renderer that owns it.
 - **`docs/asr-and-alignment.md`** — measured ASR comparison; read before a
   model swap. Whisper kept only because it is autoregressive (ibtidāʾ).
 - **`OPTIMIZATIONS.md`** — render cost profile + rejected ideas; read

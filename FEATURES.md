@@ -220,9 +220,8 @@ keeps the distortion. A high-pass would also be the honest place to deal with
 Haram hall rumble, which `align.py` already documents as the reason
 `silencedetect` is unusable on these sources.
 
-**Touches.** `AUDIO` in both renderers becomes config-merged (see the
-`render_common.py` note in OPTIMIZATIONS.md -- do this after that merge, not
-twice), `DEFAULTS`, `config_schema()`.
+**Touches.** `AUDIO` in `render_common.py` becomes config-merged, plus
+`DEFAULTS` and `config_schema()`.
 
 **Invariants.** 4 -- in the config, not `.env`.
 

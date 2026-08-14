@@ -13,7 +13,6 @@ Cost: OPTIMIZATIONS.md. `fx: {heat: false}` for timing previews.
 Called by generate.py; not a standalone CLI.
 """
 import colorsys
-import json
 import math
 import os
 import subprocess
@@ -27,8 +26,9 @@ FONT_DIR = os.path.join(ROOT, "assets", "fonts")
 sys.path.insert(0, HERE)
 
 import fx as FX  # noqa: E402
-
-FFMPEG = os.environ.get("QC_FFMPEG") or "ffmpeg"
+from render_common import (FFMPEG, FPS, PROBE, VIDEO_FADE_IN_S,  # noqa: E402
+                           VIDEO_FADE_OUT_S, audio_fades, encode, fit_pt,
+                           loudnorm_filter, measure_loudness, trim_to_ink)
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
@@ -39,7 +39,6 @@ if not features.check("raqm"):
 # measurements of the two reference reels (720x1280 refs x1.5 -> 1080).
 # ---------------------------------------------------------------------------
 CANVAS_W, CANVAS_H = 1920, 1080
-FPS = 30
 
 # The picture is the whole canvas. BAND_* exist because fx.py's Ctx is a
 # ported contract that names them, and every effect sizes itself off BW/BH, so
@@ -101,7 +100,7 @@ BAR_AUTO = {"lightness_gain": 1.78, "lightness_min": 0.34, "lightness_max": 0.48
 # shrink (anchor `end`): it keeps its full duration, mirrors its wipe-in, and
 # eats the outgoing caption's tail instead of snapping.
 TRANSITIONS = {"first": "wipe", "rest": "crossfade", "wipe_target": "bar",
-               "sequential": True, "min_fade_s": 0.20, "crossfade_s": 0.95,
+               "min_fade_s": 0.20, "crossfade_s": 0.95,
                "wipe_in_s": 1.02, "wipe_out_s": 1.02,
                "wipe_out_anchor": "end", "wipe_feather_px": 20}
 
@@ -122,11 +121,6 @@ FX_CFG = {
              "seed_x": 11, "seed_y": 77},
 }
 SWITCHES = ("grade", "scrim") + FX.BAND_ORDER
-
-VIDEO_FADE_IN_S, VIDEO_FADE_OUT_S = 0.3, 0.5
-AUDIO = {"lufs": -14.0, "tp": -1.0, "lra": 11.0,
-         "fade_in_s": 0.3, "fade_out_s": 0.5}
-ENCODE = {"crf": 18, "preset": "slow", "audio_bitrate": "192k"}
 
 # NO SIGNATURE. This style never burns one, whatever the config says: the only
 # place for a handle here is over the picture, and that is not this look.
@@ -173,8 +167,6 @@ def switches(clip_fx):
 # ---------------------------------------------------------------------------
 # measurement
 # ---------------------------------------------------------------------------
-_PROBE = ImageDraw.Draw(Image.new("L", (1, 1)))
-
 
 def truetype(pt):
     return ImageFont.truetype(TEXT["font"], pt,
@@ -184,15 +176,8 @@ def truetype(pt):
 def bbox_ls(text, font):
     """Ink bbox with the pen at (0,0) ON THE BASELINE -> (l, top, r, bot),
     top negative (above baseline), bot positive (below)."""
-    return _PROBE.textbbox((0, 0), text, font=font, anchor="ls",
-                           direction="rtl", language="ar")
-
-
-def fit_pt(nominal_pt, min_pt, max_width, widest):
-    """One shared point size for every phrase (a caption swap never changes
-    the type size), shrunk only far enough that the WIDEST line fits. Never
-    scaled UP, never below min_pt."""
-    return max(int(min_pt), int(nominal_pt * min(1.0, max_width / widest)))
+    return PROBE.textbbox((0, 0), text, font=font, anchor="ls",
+                          direction="rtl", language="ar")
 
 
 # ---------------------------------------------------------------------------
@@ -414,28 +399,6 @@ def with_shadow(ink, cfg, W, H):
     return Image.alpha_composite(sh, ink)
 
 
-def trim_to_ink(card):
-    """A full-canvas card cropped to its non-transparent pixels -> (img, x, y).
-
-    The same idea and the same outward even-coordinate snap as
-    render_text.trim_to_ink: `overlay` blends in yuv420 by default,
-    so on an odd edge the overlay's 2x2 chroma/alpha blocks would straddle a
-    different grid than the full-canvas card's and the result would shift.
-
-    Worth it here because bars pays for a caption card THREE times -- the
-    composite, the barglow accumulator and the textglow accumulator -- and
-    the ink is ~1210x480 against a 1920x1080 canvas, 3.6x smaller. Measured by
-    differencing a 1-card against a 4-card render: 7.7s CPU and ~280 MB RSS
-    per card, linear in card count, spent compositing (0,0,0,0)."""
-    box = card.getbbox()
-    if box is None:                       # an empty card composites to nothing
-        return card, 0, 0
-    x0, y0 = box[0] - box[0] % 2, box[1] - box[1] % 2
-    x1 = min(card.width, box[2] + box[2] % 2)
-    y1 = min(card.height, box[3] + box[3] % 2)
-    return card.crop((x0, y0, x1, y1)), x0, y0
-
-
 def draw_layers(lay, bar_rgb_drawn, out_dir):
     """TWO layers per phrase, so the compositor can animate them
     independently (the pill wipes, the text always cross-fades):
@@ -519,8 +482,14 @@ def heat_map_tag(span):
     throw away a valid 164s bake every time one of them is tuned."""
     c = FX_CFG["heat"]
     return "%dx%d_%d_%ds_o%s_p%s_x%s_t%s" % (
-        BAND_W, BAND_H, FPS, span, c.get("octaves", 6),
-        c.get("persistence", 0.6), c["xscale"], c["tscale"])
+        BAND_W, BAND_H, FPS, span, c["octaves"], c["persistence"],
+        c["xscale"], c["tscale"])
+
+
+def heat_axes():
+    """(axis, seed) per displacement map, in the order `displace` reads them."""
+    c = FX_CFG["heat"]
+    return (("x", int(c["seed_x"])), ("y", int(c["seed_y"])))
 
 
 def heat_map_paths(dur):
@@ -534,13 +503,11 @@ def heat_map_paths(dur):
     Reads the cache directory but writes nothing, so generate.py can warn
     about a pending bake before a render starts rather than leaving the
     author at a silent terminal."""
-    c = FX_CFG["heat"]
-    seeds = (("x", int(c.get("seed_x", 11))), ("y", int(c.get("seed_y", 77))))
 
     def paths(span):
         return [os.path.join(HEAT_CACHE, "heat%s_%s_s%d.mp4"
                              % (axis, heat_map_tag(span), seed))
-                for axis, seed in seeds]
+                for axis, seed in heat_axes()]
     for span in sorted(cached_heat_spans()):
         if span >= dur and all(os.path.exists(p) for p in paths(span)):
             return span, paths(span)
@@ -551,10 +518,10 @@ def heat_map_paths(dur):
 def cached_heat_spans():
     """Lengths, in seconds, of every complete x-map already on disk."""
     c = FX_CFG["heat"]
-    head = "heatx_%dx%d_%d_" % (BAND_W, BAND_H, FPS)
+    axis, seed = heat_axes()[0]
+    head = "heat%s_%dx%d_%d_" % (axis, BAND_W, BAND_H, FPS)
     tail = "_o%s_p%s_x%s_t%s_s%d.mp4" % (
-        c.get("octaves", 6), c.get("persistence", 0.6), c["xscale"],
-        c["tscale"], int(c.get("seed_x", 11)))
+        c["octaves"], c["persistence"], c["xscale"], c["tscale"], seed)
     out = []
     for name in sorted(os.listdir(HEAT_CACHE)) if os.path.isdir(
             HEAT_CACHE) else []:
@@ -583,8 +550,7 @@ def heat_layers(dur):
     os.makedirs(os.path.dirname(paths[0]), exist_ok=True)
     c = FX_CFG["heat"]
     out = []
-    for axis, seed, path in zip("xy", (int(c.get("seed_x", 11)),
-                                       int(c.get("seed_y", 77))), paths):
+    for (axis, seed), path in zip(heat_axes(), paths):
         if not os.path.exists(path):
             print("      heat map %s: baking %ds of perlin (once per machine, "
                   "reused by every reel)" % (axis, span))
@@ -650,7 +616,7 @@ def snow_layer(tint_rgb):
 # transition schedule
 # ---------------------------------------------------------------------------
 
-def schedule(phrases, dur, kinds=None):
+def schedule(phrases, dur):
     """One (kind, t_in, d_in, t_out, d_out) per phrase, plus the indices
     whose changeover had no room left to fade at all (hard cuts).
 
@@ -665,9 +631,8 @@ def schedule(phrases, dur, kinds=None):
     frames of tail beats a 0.2s snap-out."""
     tr = TRANSITIONS
     n_ph = len(phrases)
-    if kinds is None:
-        kinds = [str(tr["first"] if i == 0 else tr["rest"]).lower()
-                 for i in range(n_ph)]
+    kinds = [str(tr["first"] if i == 0 else tr["rest"]).lower()
+             for i in range(n_ph)]
     xf = float(tr["crossfade_s"])
     wipe_in_s, wipe_out_s = float(tr["wipe_in_s"]), float(tr["wipe_out_s"])
     minf = float(tr["min_fade_s"])
@@ -714,35 +679,6 @@ def schedule(phrases, dur, kinds=None):
         sched[i + 1][2], sched[i + 1][1] = d_in, t_in
         sched[i][4], sched[i][3] = d_out, t_out
     return [tuple(x) for x in sched], cuts
-
-
-# ---------------------------------------------------------------------------
-# audio (two-pass loudnorm + fades)
-# ---------------------------------------------------------------------------
-
-def measure_loudness(src, dur):
-    # -vn: without it the null muxer still pulls the video stream, so pass 1
-    # decodes the whole clip's picture to measure its audio (measured 2.07s ->
-    # 0.60s CPU on a 23s 1080p source; the JSON is byte-identical).
-    cmd = [FFMPEG, "-hide_banner", "-nostats", "-t", "%.3f" % dur, "-i", src,
-           "-vn", "-af", "loudnorm=I=%s:TP=%s:LRA=%s:print_format=json"
-           % (AUDIO["lufs"], AUDIO["tp"], AUDIO["lra"]),
-           "-f", "null", "-"]
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    out = p.stderr
-    start, end = out.rfind("{"), out.rfind("}")
-    if start == -1 or end == -1:
-        raise RuntimeError("loudnorm pass-1 produced no JSON:\n" + out[-2000:])
-    return json.loads(out[start:end + 1])
-
-
-def loudnorm_filter(st):
-    return ("loudnorm=I=%s:TP=%s:LRA=%s:measured_I=%s:measured_TP=%s:"
-            "measured_LRA=%s:measured_thresh=%s:offset=%s:linear=true:"
-            "print_format=summary"
-            % (AUDIO["lufs"], AUDIO["tp"], AUDIO["lra"], st["input_i"],
-               st["input_tp"], st["input_lra"], st["input_thresh"],
-               st["target_offset"]))
 
 
 # ---------------------------------------------------------------------------
@@ -895,8 +831,6 @@ def render(plan):
     src, tmp = plan["src"], plan["tmp"]
     phrases = plan["arabic"]
     dur = info["duration"]
-    if not info["width"]:
-        raise SystemExit("bars style needs footage; it has no still-photo mode")
 
     crop = cfg.get("crop")
     if crop and not all(k in crop for k in ("x", "y", "w", "h")):
@@ -940,28 +874,17 @@ def render(plan):
 
     print("      loudnorm pass 1...")
     ln = loudnorm_filter(measure_loudness(src, dur))
-    afade = ("afade=t=in:st=0:d=%s,afade=t=out:st=%.3f:d=%s"
-             % (AUDIO["fade_in_s"], dur - AUDIO["fade_out_s"],
-                AUDIO["fade_out_s"]))
 
-    fc, in_argv = build_graph(src, dur, crop, rep, sched, tint, on,
-                              snow_path, scrim, ln, afade, heat_paths, grade)
+    fc, in_argv = build_graph(src, dur, crop, rep, sched, tint, on, snow_path,
+                              scrim, ln, audio_fades(dur), heat_paths, grade)
 
     out = plan["out"]
-    cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv
-    cmd += ["-filter_complex", fc, "-map", "[vout]", "-map", "[aout]",
-            "-t", "%.3f" % dur,
-            "-c:v", "libx264", "-crf", str(ENCODE["crf"]),
-            "-preset", ENCODE["preset"], "-pix_fmt", "yuv420p",
-            "-r", str(FPS), "-c:a", "aac", "-b:a", ENCODE["audio_bitrate"],
-            "-movflags", "+faststart", out]
     print("      fx: " + " ".join(("+" if on[n] else "-") + n
                                   for n in SWITCHES))
     print("      " + " | ".join(
         "P%d %s in@%.2f+%.2f out@%.2f+%.2f" % (i + 1, k, ti, di, to, do)
         for i, (k, ti, di, to, do) in enumerate(sched)))
-    if subprocess.run(cmd).returncode != 0:
-        raise SystemExit("ffmpeg render failed")
+    encode(in_argv, fc, dur, out)
     print("      %s | %dx%d | bar #%02X%02X%02X (drawn #%02X%02X%02X)"
           % ((os.path.relpath(out, ROOT), CANVAS_W, CANVAS_H)
              + target_rgb + drawn_rgb))

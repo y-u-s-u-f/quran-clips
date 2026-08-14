@@ -348,12 +348,8 @@ def align(config_path, force=False):
     # off the alignment. The <star> token between words lets the CTC path
     # absorb whatever is not recitation, so the first and last mushaf word
     # land on their real onsets instead of being guessed off an envelope.
-    t0, t1 = 0.0, None
     auto_trim = not cfg.get("trim")
-    if not auto_trim:
-        t0, t1 = (list(cfg["trim"]) + [None])[:2]
-        t0 = float(t0)
-        t1 = float(t1) if t1 is not None else None
+    t0, t1 = generate.trim_window(cfg)
 
     surah, a0, a1 = cfg["surah"], cfg["ayah_start"], cfg["ayah_end"]
     if surah is None:
