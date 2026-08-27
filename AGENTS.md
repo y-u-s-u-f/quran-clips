@@ -16,7 +16,8 @@ neither of them is runnable alone, so it costs the rule nothing.
   intake. No third-party imports. The bot check fires per exit IP AND per
   player client, so recovery walks `PLAYER_CLIENTS` and pins whichever one
   resolved metadata; the measured order and the PO-token caveat that costs
-  1080p are in the file.
+  1080p are in the file. A complete source — usable media plus `captions.srt`
+  or the `captions.none` sentinel — never reaches the network on a re-fetch.
 - **`transcribe.py`** — `source.*` -> `whisper.json` + `.srt`. Backend
   subprocess against `tools/asr-venv` via `_SNIPPETS` (strings so they run
   under an interpreter that cannot import this package). Contract:
@@ -33,7 +34,8 @@ neither of them is runnable alone, so it costs the rule nothing.
   verse discovery and ibtidāʾ repeats (`find_repeats` needs Whisper to have
   split the two utterances, and only scans the trim window). Auto-trim is
   only sound when the source is roughly the reel. Takes several configs per
-  run, which is how the reels cut from one source share the model load.
+  run, which is how the reels cut from one source share the model load; a
+  failed config is reported and the batch continues (exit non-zero).
 - **`crop.py`** — authoring-time framing for EVERY style: `crop:` plus
   `x_offset:` (bars, horizontal) or `face_bottom:` (vertical). Shells out to
   `claude -p` (local auth); arithmetic decides the window. Column styles use
@@ -51,16 +53,18 @@ neither of them is runnable alone, so it costs the rule nothing.
 - **`generate.py`** — YAML -> render. `load_config` / `align_words` /
   groups / silences / `suppress`/`nudge` (nudge last) /
   `print_verification`. Dispatches on `style:` with plan dict
-  (`cfg/src/info/arabic/english/verses/tmp/out`).
-- **`letterbox.py`** — finished 1920x1080 mp4 -> 1080x1920, black above and
-  below. One x264 pass (crf 18, `veryfast`), audio stream-copied, and no
-  decision of its own past the scale/pad. `bars` is the style that needs it:
-  the 16:9 picture IS its canvas. `generate.py --vertical` calls it after the
-  render and BEFORE tagging, so the tags survive. Standalone
-  (`letterbox.py <reel.mp4> [out.mp4]`, replacing in place) it is not
-  idempotent — a second pass letterboxes the letterbox to a postage stamp;
-  under `--vertical` that cannot happen because generate renders 1920x1080
-  fresh each time.
+  (`cfg/src/info/arabic/english/verses/tmp/out/portrait/meta`).
+  `--vertical` sets `portrait`, which the renderer folds into its own graph
+  (`PORTRAIT_PAD`); `meta` (title/comment/artist) is written by the delivery
+  encode, so the finished file needs no remux. `--verify-only` stops after
+  the verification block — a split check costs seconds, not a render.
+- **`letterbox.py`** — standalone only: finished 1920x1080 mp4 -> 1080x1920,
+  black above and below, one x264 pass (crf 18, `veryfast`), audio
+  stream-copied (`letterbox.py <reel.mp4> [out.mp4]`, replacing in place).
+  `generate.py --vertical` does NOT call it — the same scale/pad runs inside
+  the render's single encode, which is a whole lossy generation cheaper.
+  Not idempotent — a second pass letterboxes the letterbox to a postage
+  stamp.
 - **`publish.py`** — mp4 -> Instagram + Facebook. Tags from the file
   (`--surah/--ayat/--reciter` if missing). Caption from `tafsir()` + ayat +
   hashtags. Cover at `COVER_MS` 1550. Credentials in `.env`; no pixels
@@ -81,8 +85,9 @@ neither of them is runnable alone, so it costs the rule nothing.
   is not this look.
 - **`fx.py`** — bars effects. Ported from `legacy/qc/`; do not re-derive.
 - **`render_common.py`** — what both styles DELIVER with: crf 18 / `slow` /
-  AAC 192k, -14 LUFS two-pass loudnorm, the head and tail fades, `PROBE`,
-  `fit_pt` and `trim_to_ink`. The LOOK stays in the renderer that owns it.
+  AAC 192k, -14 LUFS two-pass loudnorm, the head and tail fades, the mp4
+  tags, `PORTRAIT_PAD`, `PROBE`, `fit_pt` and `trim_to_ink`. The LOOK stays
+  in the renderer that owns it.
 - **`docs/asr-and-alignment.md`** — measured ASR comparison; read before a
   model swap. Whisper kept only because it is autoregressive (ibtidāʾ).
 - **`OPTIMIZATIONS.md`** — render cost profile + rejected ideas; read

@@ -1192,7 +1192,6 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
           % (os.path.basename(config_path), W, H, style, len(times), t0, t1))
 
     tmp_dir = os.path.join(cfg["tmp_dir"], "crop")
-    paths, dims = extract(src, times, tmp_dir, W, H)
     key = cache_key(times)
     entry = None
     if measurements:
@@ -1205,6 +1204,10 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
         if entry:
             print("      cached solve (%s) -- --force re-queries"
                   % entry.get("when", "?"))
+    # Frames cost one ffmpeg seek each and only ask() and --annotate look at
+    # them, so a cached geometry re-solve extracts nothing.
+    paths, dims = ((None, None) if entry is not None and not annotate_path
+                   else extract(src, times, tmp_dir, W, H))
     if entry is None:
         if dry_run:
             raise SystemExit(

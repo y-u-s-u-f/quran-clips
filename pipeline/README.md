@@ -90,10 +90,15 @@ All 30fps and fixed-size; a weak source is upscaled, never delivered small.
   then sequential crossfades, full FX (`fx.py`). Never burns a signature.
   Golden: `tests/graph_parity.py`. `fx: {heat: false}` for timing previews.
 
-`--vertical` (`letterbox.py`) delivers a 1920×1080 render as 1080×1920, black
-above and below — 1080×608 of picture, about a third of the frame, so bars'
-213pt Arabic arrives on the phone nearer 120pt-equivalent. The native
-`vertical` style is what avoids that trade.
+`--vertical` delivers a 1920×1080 render as 1080×1920, black above and below —
+the scale/pad runs inside the render's own graph, one encode, no second
+generation (`letterbox.py` stays for letterboxing an already-finished file).
+The picture is 1080×608, about a third of the frame, so bars' 213pt Arabic
+arrives on the phone nearer 120pt-equivalent. The native `vertical` style is
+what avoids that trade.
+
+`--verify-only` stops after the verification block: a split or timing check
+costs seconds instead of a render.
 
 Design rationale lives in each renderer's module docstring.
 

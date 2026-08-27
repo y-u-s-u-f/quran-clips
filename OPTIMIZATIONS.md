@@ -25,9 +25,11 @@ the run-to-run spread, in both directions. They must: the two trees emit the
 same filtergraph and the same argv apart from the snow input's path, and the
 streams they produce are byte-identical (`framemd5` over video and audio).
 
-The first-run row is one 60s perlin bake per axis (761s wall / 1237s CPU
-together) plus the snow bake (~12s / ~45s) plus the render, paid once per
-machine and never per reel.
+The first-run row is one 60s perlin bake per axis (1237s CPU together) plus
+the snow bake (~12s / ~45s) plus the render, paid once per machine and never
+per reel. The two axis bakes run CONCURRENTLY (`perlin` is single-threaded;
+1.93x measured on a 4s-span pair), so the wall for the pair is one bake's,
+~380s, not the 761s two sequential bakes cost.
 
 `bars` is 3.16x the pixels of the other two styles per frame and carries the
 whole FX stack, which is where the gap comes from. Both baked layers live
@@ -42,9 +44,15 @@ map per axis -- `warn_heat_bake` quotes 9.3, so its ETA over-states. Pin
 `fx: {heat: false}` for timing previews (~27% cheaper, and never judge LOOK
 without the full stack).
 
-`generate.py --vertical` adds one x264 pass (`veryfast`, crf 18, audio
-stream-copied) over the finished file: **~1.6s wall / ~13s CPU** on the 26.2s
-1920x1080 bars reel.
+`generate.py --vertical` adds NO pass: the scale/pad runs inside the style's
+own graph (`render_common.PORTRAIT_PAD`), so the portrait file is the same
+single encode. Measured on the 26.2s hujurat `horizontal` reel: 11.5s -> 7.9s
+wall, 115s -> 70s CPU against the old render+letterbox+remux chain -- the
+final x264 also gets cheaper because two thirds of the portrait canvas is
+black -- at 51.0 dB against the letterboxed file it replaces, one lossy
+generation closer to the render. The mp4 tags are written by the delivery
+encode too, so the remux `tag_output` used to pay is gone and the finished
+file is never rewritten.
 
 ## Techniques in place
 
@@ -107,8 +115,17 @@ draft loop and of anything that calls layout in bulk.
 What the stages around the render pay before any pixel moves.
 
 - **`fetch.py`** — a source that is already complete (a usable `source.mp4`
-  and a `captions.srt`) never calls yt-dlp at all, so a re-fetch costs no
-  network round trip and cannot fail the bot check for nothing.
+  plus `captions.srt` OR the `captions.none` sentinel) never calls yt-dlp at
+  all, so a re-fetch costs no network round trip and cannot fail the bot
+  check for nothing. The sentinel is what makes the gate reachable: most
+  recitations have no Arabic auto-captions, and before it every re-fetch
+  re-walked the player-client ladder for captions that were not there.
+- **`crop.py`** — the cache is read BEFORE any frame is extracted, so a
+  cached geometry re-solve runs no ffmpeg at all: 0.65s -> 0.13s on a
+  4-frame solve. Frames are extracted only for `ask()` and `--annotate`.
+- **`generate.py --verify-only`** — the verification block without the
+  render: 2.2s against a 12s `vertical` render, and the block is the only
+  thing a split check reads.
 - **`transcribe.py`** — the interpreter probe asks
   `importlib.util.find_spec` instead of importing the backend: 0.02s per
   candidate against 0.9s warm and 3.1s cold for `import mlx_whisper`, and it

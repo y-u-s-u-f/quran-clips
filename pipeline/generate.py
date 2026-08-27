@@ -2,6 +2,7 @@
 
     tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml
     tools/render-venv/bin/python pipeline/generate.py --print-schema
+    tools/render-venv/bin/python pipeline/generate.py <reel>.yaml --verify-only
 
 This file owns everything the styles share: config validation, verse
 resolution, aligning the Whisper word timings against the known-correct
@@ -10,7 +11,10 @@ and verse-number ornaments. Rendering and compositing are the style files'
 job -- render_text.py (Arabic + English over graded footage, at either
 1080x1920 `vertical` or 1920x1080 `horizontal`) and render_bars.py (1920x1080,
 Arabic-only pills over the full picture), dispatched on the config's `style:`
-key. `--vertical` then letterboxes the result onto 1080x1920 (letterbox.py).
+key. `--vertical` delivers a landscape render letterboxed onto 1080x1920
+inside the style's own graph -- one encode, no second generation.
+`--verify-only` stops after the verification block: a split or timing check
+costs seconds instead of a render.
 
     TEXT INTEGRITY. Caption Arabic is built by slicing the word list of
     `quran.ayah()` -- the committed Uthmani text -- never from the Whisper
@@ -410,31 +414,21 @@ def _enforce_monotonic(stamps):
         t = st["end"]
 
 
-def tag_output(path, surah, a0, a1, reciter):
-    """Write the reel's identity into the mp4's own tags.
+def output_meta(surah, a0, a1, reciter):
+    """The reel's identity, written into the mp4's own tags by the delivery
+    encode (render_common.encode).
 
     pipeline/publish.py builds a post's caption from these and nothing else,
     so a reel stays publishable with no config beside it, no filename
-    convention to honour and no memory of which source it came from.
-
-    A stream-copy remux: ffmpeg cannot rewrite metadata in place, and the
-    alternative -- passing -metadata through three different renderers'
-    output calls -- would put the same four lines in three files. Costs about
-    a second on a 6 MB reel and touches no pixel.
-    """
-    tmp = path + ".tags.mp4"
-    cmd = [FFMPEG, "-y", "-v", "error", "-i", path, "-map", "0", "-c", "copy",
-           "-movflags", "+faststart+use_metadata_tags",
-           "-metadata", "title=%s %d:%d-%d" % (quran.surah_name(surah),
-                                               surah, a0, a1),
-           "-metadata", "comment=Quran %d:%d-%d" % (surah, a0, a1)]
+    convention to honour and no memory of which source it came from."""
+    meta = {"title": "%s %d:%d-%d" % (quran.surah_name(surah), surah, a0, a1),
+            "comment": "Quran %d:%d-%d" % (surah, a0, a1)}
     if reciter:
-        cmd += ["-metadata", "artist=%s" % reciter]
-    run(cmd + [tmp])
-    os.replace(tmp, path)
-    if not reciter:
+        meta["artist"] = reciter
+    else:
         print("      no `reciter:` in the config -- publish.py will refuse "
               "this reel until one is set (or passed with --reciter)")
+    return meta
 
 
 def align_path_for(config_path):
@@ -916,8 +910,9 @@ def resolve_paths(cfg, config_path, output_override=None):
 
 
 # Wall seconds of bake per second of heat map, measured at 1920x1080/30
-# (46.5s for a 5s map). `perlin` is single-threaded, and a reel that spills
-# into a fresh 30s bucket pays this once per axis.
+# (46.5s for a 5s map). `perlin` is single-threaded and the two axis maps
+# bake concurrently, so a reel that spills into a fresh 30s bucket pays this
+# once, not once per axis.
 HEAT_BAKE_RATE = 9.3
 
 
@@ -938,13 +933,14 @@ def warn_heat_bake(cfg, dur):
         return
     hint = " Every later reel up to %ds then reuses it." % span
     print("      heat: %.1fs reel, no cached map covers it -- baking %ds, "
-          "%d of 2 maps missing. Expect ~%dmin of perlin first.%s Set "
-          "fx: {heat: false} to skip it."
+          "%d of 2 maps missing (missing maps bake concurrently). Expect "
+          "~%dmin of perlin first.%s Set fx: {heat: false} to skip it."
           % (dur, span, len(missing),
-             round(HEAT_BAKE_RATE * span * len(missing) / 60.0), hint))
+             round(HEAT_BAKE_RATE * span / 60.0), hint))
 
 
-def run_config(config_path, output_override=None, vertical=False):
+def run_config(config_path, output_override=None, vertical=False,
+               verify_only=False):
     cfg = load_config(config_path)
     cfg = resolve_paths(cfg, config_path, output_override)
     tmp = cfg["tmp_dir"]
@@ -1041,9 +1037,16 @@ def run_config(config_path, output_override=None, vertical=False):
     print("      %d captions, %d pause gap(s) left clean" % (len(arabic), gaps))
     print_verification(arabic, english, verses)
 
+    if verify_only:
+        print("      --verify-only: stopping before the render")
+        return {"surah": int(surah), "ayah_start": a0, "ayah_end": a1,
+                "captions": len(arabic), "output": None,
+                "style": cfg["style"], "signature": cfg["signature"]}
+
     plan = {"cfg": cfg, "src": source, "info": info,
             "arabic": arabic, "english": english, "verses": verses,
-            "tmp": tmp, "out": cfg["output"]}
+            "tmp": tmp, "out": cfg["output"], "portrait": vertical,
+            "meta": output_meta(int(surah), a0, a1, cfg["reciter"])}
 
     if cfg["style"] == "bars":
         warn_heat_bake(cfg, info["duration"])
@@ -1055,11 +1058,6 @@ def run_config(config_path, output_override=None, vertical=False):
     else:
         import render_text
         render_text.render(plan)
-    if vertical:
-        import letterbox
-        print("      letterboxing to %dx%d" % (letterbox.W, letterbox.H))
-        letterbox.letterbox(cfg["output"])
-    tag_output(cfg["output"], int(surah), a0, a1, cfg["reciter"])
     print("Done: %s" % cfg["output"])
     return {"surah": int(surah), "ayah_start": a0, "ayah_end": a1,
             "captions": len(arabic), "output": cfg["output"],
@@ -1074,7 +1072,10 @@ def main(argv=None):
     ap.add_argument("-o", "--output", help="override the output path")
     ap.add_argument("--print-schema", action="store_true")
     ap.add_argument("--vertical", action="store_true",
-                    help="letterbox the finished reel to 1080x1920")
+                    help="deliver 1080x1920: the letterbox is folded into "
+                         "the render's own encode")
+    ap.add_argument("--verify-only", action="store_true",
+                    help="stop after the verification block; nothing rendered")
     # These runs are long and normally watched: line-buffer so progress reaches
     # a pipe or a log as it happens, not all at once at exit.
     sys.stdout.reconfigure(line_buffering=True)
@@ -1084,7 +1085,7 @@ def main(argv=None):
         return 0
     if not a.config:
         ap.error("config path required (or --print-schema)")
-    result = run_config(a.config, a.output, a.vertical)
+    result = run_config(a.config, a.output, a.vertical, a.verify_only)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

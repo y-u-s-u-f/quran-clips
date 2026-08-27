@@ -22,6 +22,14 @@ AUDIO = {"lufs": -14.0, "tp": -1.0, "lra": 11.0,
          "fade_in_s": 0.3, "fade_out_s": 0.5}
 ENCODE = {"crf": 18, "preset": "slow", "audio_bitrate": "192k"}
 
+# `--vertical` delivery: the landscape picture onto a 1080x1920 portrait
+# canvas, black above and below. Appended inside the style's own graph before
+# format=yuv420p, so the portrait file is the SAME single encode -- letterboxing
+# the finished mp4 afterwards (letterbox.py) costs a whole second lossy
+# generation. letterbox.py keeps its own copy of this string: it stays
+# standalone and must not import Pillow through this module.
+PORTRAIT_PAD = "scale=1080:-2,pad=1080:1920:0:(oh-ih)/2:black"
+
 # ---------------------------------------------------------------------------
 # type + ink
 # ---------------------------------------------------------------------------
@@ -100,15 +108,21 @@ def audio_fades(dur):
 # the delivery encode
 # ---------------------------------------------------------------------------
 
-def encode(in_argv, filter_complex, dur, out):
+def encode(in_argv, filter_complex, dur, out, meta=None):
     """Run the style's finished graph out to `out`. `in_argv` is the input
-    list its build_graph returned, and the graph must end on [vout] + [aout]."""
+    list its build_graph returned, and the graph must end on [vout] + [aout].
+
+    `meta` ({title, comment, artist}) is written here, in the same pass:
+    publish.py captions a reel from these tags alone, and a separate remux
+    afterwards is one more read and write of the delivered file."""
     cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv
     cmd += ["-filter_complex", filter_complex, "-map", "[vout]", "-map",
             "[aout]", "-t", "%.3f" % dur,
             "-c:v", "libx264", "-crf", str(ENCODE["crf"]),
             "-preset", ENCODE["preset"], "-pix_fmt", "yuv420p",
-            "-r", str(FPS), "-c:a", "aac", "-b:a", ENCODE["audio_bitrate"],
-            "-movflags", "+faststart", out]
+            "-r", str(FPS), "-c:a", "aac", "-b:a", ENCODE["audio_bitrate"]]
+    for k, v in (meta or {}).items():
+        cmd += ["-metadata", "%s=%s" % (k, v)]
+    cmd += ["-movflags", "+faststart", out]
     if subprocess.run(cmd).returncode != 0:
         raise SystemExit("ffmpeg render failed")

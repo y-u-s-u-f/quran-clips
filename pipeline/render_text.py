@@ -43,9 +43,10 @@ ROOT = os.path.dirname(HERE)
 FONT_DIR = os.path.join(ROOT, "assets", "fonts")
 sys.path.insert(0, HERE)
 
-from render_common import (FPS, PROBE, VIDEO_FADE_IN_S,  # noqa: E402
-                           VIDEO_FADE_OUT_S, audio_fades, encode, fit_pt,
-                           loudnorm_filter, measure_loudness, trim_to_ink)
+from render_common import (FPS, PORTRAIT_PAD, PROBE,  # noqa: E402
+                           VIDEO_FADE_IN_S, VIDEO_FADE_OUT_S, audio_fades,
+                           encode, fit_pt, loudnorm_filter, measure_loudness,
+                           trim_to_ink)
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
@@ -660,7 +661,7 @@ def source_chain(crop, W, H):
 
 
 def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
-                sig=None):
+                sig=None, portrait=False):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1]=grade plate,
     [2..]=one card per phrase, then the signature (last, so dropping it cannot
     shift any other index).
@@ -702,10 +703,11 @@ def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
                      "format=auto[sig]" % (sidx, base, sig[1], sig[2]))
         base = "sig"
     # whole-frame fade from/to black, mirroring the audio fades (all 3 refs)
-    parts.append(";[%s]fade=t=in:st=0:d=%s,fade=t=out:st=%.3f:d=%s,"
+    parts.append(";[%s]fade=t=in:st=0:d=%s,fade=t=out:st=%.3f:d=%s%s,"
                  "format=yuv420p[vout]"
                  % (base, VIDEO_FADE_IN_S, dur - VIDEO_FADE_OUT_S,
-                    VIDEO_FADE_OUT_S))
+                    VIDEO_FADE_OUT_S,
+                    "," + PORTRAIT_PAD if portrait else ""))
     parts.append(";[0:a]%s,%s[aout]" % (ln, afade))
     return "".join(parts), argv
 
@@ -759,15 +761,21 @@ def render(plan):
            if cfg["signature"] else None)
     sched = schedule(phrases, dur)
 
+    # A portrait delivery of a landscape canvas pads inside this one graph;
+    # the `vertical` canvas is already 1080x1920 and needs nothing.
+    portrait = bool(plan.get("portrait")) and W > H
+    if portrait:
+        print("      portrait delivery: %s (in-graph)" % PORTRAIT_PAD)
+
     print("      loudnorm pass 1...")
     ln = loudnorm_filter(measure_loudness(src, dur))
 
     fc, in_argv = build_graph(src, dur, crop, W, H, grade_png, rep, sched, ln,
-                              audio_fades(dur), sig)
+                              audio_fades(dur), sig, portrait)
 
     out = plan["out"]
     print("      " + " | ".join(
         "P%d in@%.2f out@%.2f" % (i + 1, ti, to)
         for i, (ti, _, to, _) in enumerate(sched)))
-    encode(in_argv, fc, dur, out)
+    encode(in_argv, fc, dur, out, plan.get("meta"))
     print("      %s | %dx%d | %s" % (os.path.relpath(out, ROOT), W, H, note))

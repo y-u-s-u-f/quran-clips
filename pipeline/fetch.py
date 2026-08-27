@@ -12,6 +12,8 @@ Produces sources/<id>/:
     source.mp4      the video (downloaded, or a symlink to the local file --
                     re-encoded instead when the local file is above 30fps)
     captions.srt    YouTube's Arabic auto-captions, only when YouTube has them
+    captions.none   sentinel: captions resolved and YouTube has none, so a
+                    re-fetch of a complete source never touches the network
 
 Everything is held to 30fps at intake: the reels render at 30, so surplus
 frames only cost decode and filter time in every stage downstream.
@@ -275,14 +277,20 @@ def fetch_youtube(vid, out_dir, proxy=None, timestamps=None, client=None):
     url = "https://www.youtube.com/watch?v=%s" % vid
     dst = os.path.join(out_dir, "source.mp4")
     srt = os.path.join(out_dir, "captions.srt")
+    # "Captions resolved, none exist" is also complete: most recitations have
+    # no Arabic auto-captions, and without the sentinel every re-fetch of such
+    # a source re-walks the player-client ladder for captions that are not
+    # there -- the exact request the bot check kills.
+    none = os.path.join(out_dir, "captions.none")
 
     # Nothing left to fetch: this source is already complete, so it never
     # reaches the network at all. The metadata call is a player-API request
     # like any other and can fail the bot check -- failing it for a fetch
     # that would have downloaded nothing is a re-fetch that fails for free.
-    if usable(dst) and os.path.exists(srt):
+    if usable(dst) and (os.path.exists(srt) or os.path.exists(none)):
         print("  video   : %s  (reused)" % os.path.relpath(dst, ROOT))
-        print("  captions: %s  (reused)" % os.path.relpath(srt, ROOT))
+        print("  captions: %s  (reused)"
+              % os.path.relpath(srt if os.path.exists(srt) else none, ROOT))
         return
 
     # metadata first: title/duration are worth having on screen before minutes
@@ -320,17 +328,26 @@ def fetch_youtube(vid, out_dir, proxy=None, timestamps=None, client=None):
     if os.path.exists(srt):
         print("  captions: %s  (reused)" % os.path.relpath(srt, ROOT))
         return
-    _with_fallback(["--no-playlist", "--skip-download", "--write-auto-subs",
-                    "--sub-lang", "ar-orig", "--convert-subs", "srt",
-                    "-o", os.path.join(out_dir, "source.%(ext)s"), url],
-                   proxy, client=client)
+    rc, _, _, _ = _with_fallback(
+        ["--no-playlist", "--skip-download", "--write-auto-subs",
+         "--sub-lang", "ar-orig", "--convert-subs", "srt",
+         "-o", os.path.join(out_dir, "source.%(ext)s"), url],
+        proxy, client=client)
     got = os.path.join(out_dir, "source.ar-orig.srt")
     if os.path.exists(got):
         os.replace(got, srt)
         print("  captions: %s" % os.path.relpath(srt, ROOT))
+    elif rc == 0:
+        # The fetch resolved and YouTube has no ar-orig track: record that, so
+        # the completeness gate above fires and a re-fetch never touches the
+        # network. A FAILED caption fetch records nothing -- it must retry.
+        with open(none, "w", encoding="utf-8") as fh:
+            fh.write("no ar-orig auto-captions on YouTube "
+                     "(recorded by fetch.py; delete to re-check)\n")
+        print("  captions: none on YouTube (recorded -- a re-fetch now skips "
+              "the network; transcribe.py covers it)")
     else:
-        print("  captions: none (no Arabic auto-captions on this video; "
-              "transcribe.py covers it)")
+        print("  captions: fetch failed; the next run retries")
 
 
 # --- local files -----------------------------------------------------------

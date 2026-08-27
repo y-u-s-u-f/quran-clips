@@ -17,6 +17,7 @@ import math
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, features
 
@@ -26,9 +27,10 @@ FONT_DIR = os.path.join(ROOT, "assets", "fonts")
 sys.path.insert(0, HERE)
 
 import fx as FX  # noqa: E402
-from render_common import (FFMPEG, FPS, PROBE, VIDEO_FADE_IN_S,  # noqa: E402
-                           VIDEO_FADE_OUT_S, audio_fades, encode, fit_pt,
-                           loudnorm_filter, measure_loudness, trim_to_ink)
+from render_common import (FFMPEG, FPS, PORTRAIT_PAD, PROBE,  # noqa: E402
+                           VIDEO_FADE_IN_S, VIDEO_FADE_OUT_S, audio_fades,
+                           encode, fit_pt, loudnorm_filter, measure_loudness,
+                           trim_to_ink)
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
@@ -549,35 +551,43 @@ def heat_layers(dur):
     span, paths = heat_map_paths(dur)
     os.makedirs(os.path.dirname(paths[0]), exist_ok=True)
     c = FX_CFG["heat"]
-    out = []
-    for (axis, seed), path in zip(heat_axes(), paths):
-        if not os.path.exists(path):
-            print("      heat map %s: baking %ds of perlin (once per machine, "
-                  "reused by every reel)" % (axis, span))
-            src = FX.heat_perlin_src(c, BAND_W, BAND_H, FPS, seed)
-            # Bake to a pid-tagged temp and rename only on success: the cache
-            # is keyed by name alone, so a file that exists must be complete.
-            # Deleting on a bad returncode is not enough -- a bake killed from
-            # outside (^C, a timeout, the OOM killer) never reaches that line,
-            # and the truncated map it leaves behind then loads as a valid
-            # short input and fails the render on every later run.
-            # The pid goes BEFORE the extension: ffmpeg picks its muxer off
-            # the suffix, and a file ending .part has no format to infer.
-            _b, _e = os.path.splitext(path)
-            part = "%s.%d.part%s" % (_b, os.getpid(), _e)
-            try:
-                r = subprocess.run(
-                    [FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", src,
-                     "-t", str(span), "-an", "-c:v", "libx264", "-crf", "8",
-                     "-preset", "medium", "-pix_fmt", "yuv420p", part])
-                if r.returncode:
-                    sys.exit("ffmpeg heat-map bake failed")
-                os.replace(part, path)
-            finally:
-                if os.path.exists(part):
-                    os.remove(part)
-        out.append(path)
-    return out
+
+    def bake(axis, seed, path):
+        print("      heat map %s: baking %ds of perlin (once per machine, "
+              "reused by every reel)" % (axis, span))
+        src = FX.heat_perlin_src(c, BAND_W, BAND_H, FPS, seed)
+        # Bake to a pid-tagged temp and rename only on success: the cache
+        # is keyed by name alone, so a file that exists must be complete.
+        # Deleting on a bad returncode is not enough -- a bake killed from
+        # outside (^C, a timeout, the OOM killer) never reaches that line,
+        # and the truncated map it leaves behind then loads as a valid
+        # short input and fails the render on every later run.
+        # The pid goes BEFORE the extension: ffmpeg picks its muxer off
+        # the suffix, and a file ending .part has no format to infer.
+        _b, _e = os.path.splitext(path)
+        part = "%s.%d.part%s" % (_b, os.getpid(), _e)
+        try:
+            r = subprocess.run(
+                [FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", src,
+                 "-t", str(span), "-an", "-c:v", "libx264", "-crf", "8",
+                 "-preset", "medium", "-pix_fmt", "yuv420p", part])
+            if r.returncode:
+                sys.exit("ffmpeg heat-map bake failed")
+            os.replace(part, path)
+        finally:
+            if os.path.exists(part):
+                os.remove(part)
+
+    todo = [(axis, seed, path)
+            for (axis, seed), path in zip(heat_axes(), paths)
+            if not os.path.exists(path)]
+    if todo:
+        # `perlin` is single-threaded, so the two axis bakes overlap almost
+        # perfectly (measured 1.93x on a 4s-span pair); each thread only
+        # waits on its own ffmpeg.
+        with ThreadPoolExecutor(len(todo)) as ex:
+            list(ex.map(lambda job: bake(*job), todo))
+    return paths
 
 
 def snow_layer(tint_rgb):
@@ -686,7 +696,7 @@ def schedule(phrases, dur):
 # ---------------------------------------------------------------------------
 
 def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
-                ln, afade, heat_paths=None, grade=None):
+                ln, afade, heat_paths=None, grade=None, portrait=False):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1..2n]=bar,text
     per phrase, then snow, then scrim (last of the legacy set, so dropping it
     cannot shift any other index), then the two heat maps. The heat pair goes
@@ -816,7 +826,8 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
         band_lbl = eff.apply(g_, band_lbl, ctx)
     fades = [f"fade=t=in:st=0:d={VIDEO_FADE_IN_S}",
              f"fade=t=out:st={dur - VIDEO_FADE_OUT_S:.3f}:"
-             f"d={VIDEO_FADE_OUT_S}", "format=yuv420p"]
+             f"d={VIDEO_FADE_OUT_S}"] \
+        + ([PORTRAIT_PAD] if portrait else []) + ["format=yuv420p"]
     g_.chain(band_lbl, fades, "vout")
     g_.chain(vin.a, [f for f in (ln, afade) if f], "aout")
     return g_.render()
@@ -872,11 +883,16 @@ def render(plan):
         print("      ! HARD CUT at changeover(s): %s"
               % ", ".join("P%d->P%d" % (c, c + 1) for c in cuts))
 
+    portrait = bool(plan.get("portrait"))
+    if portrait:
+        print("      portrait delivery: %s (in-graph)" % PORTRAIT_PAD)
+
     print("      loudnorm pass 1...")
     ln = loudnorm_filter(measure_loudness(src, dur))
 
     fc, in_argv = build_graph(src, dur, crop, rep, sched, tint, on, snow_path,
-                              scrim, ln, audio_fades(dur), heat_paths, grade)
+                              scrim, ln, audio_fades(dur), heat_paths, grade,
+                              portrait)
 
     out = plan["out"]
     print("      fx: " + " ".join(("+" if on[n] else "-") + n
@@ -884,7 +900,7 @@ def render(plan):
     print("      " + " | ".join(
         "P%d %s in@%.2f+%.2f out@%.2f+%.2f" % (i + 1, k, ti, di, to, do)
         for i, (k, ti, di, to, do) in enumerate(sched)))
-    encode(in_argv, fc, dur, out)
+    encode(in_argv, fc, dur, out, plan.get("meta"))
     print("      %s | %dx%d | bar #%02X%02X%02X (drawn #%02X%02X%02X)"
           % ((os.path.relpath(out, ROOT), CANVAS_W, CANVAS_H)
              + target_rgb + drawn_rgb))

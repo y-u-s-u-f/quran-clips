@@ -465,13 +465,28 @@ def main(argv=None):
                          "one process, sharing the model load)")
     ap.add_argument("--force", action="store_true",
                     help="re-align even if <reel>.align.json exists")
+    # Long runs, normally watched: line-buffer so progress (and the failure
+    # summary's ordering against stderr) survives a pipe or a log.
+    sys.stdout.reconfigure(line_buffering=True)
     a = ap.parse_args(argv)
+    failed = []
     for i, path in enumerate(a.config):
         if len(a.config) > 1:
             print("%s[%d/%d] %s" % ("\n" if i else "", i + 1, len(a.config),
                                     os.path.relpath(path, generate.ROOT)))
-        align(path, force=a.force)
-    return 0
+        # One bad config must not forfeit the shared model load for the
+        # configs after it -- sharing that 7.1s start-up is why the batch
+        # form exists.
+        try:
+            align(path, force=a.force)
+        except (SystemExit, RuntimeError, ValueError) as e:
+            failed.append(path)
+            print("  ! FAILED: %s" % e, file=sys.stderr)
+    if failed:
+        print("\n%d of %d config(s) failed:\n  %s"
+              % (len(failed), len(a.config), "\n  ".join(failed)),
+              file=sys.stderr)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

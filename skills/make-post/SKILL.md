@@ -77,9 +77,11 @@ Requirements:
 Per style: `vertical` (1080×1920) needs `crop:` + `face_bottom:` — generate
 refuses a landscape source without a crop rather than centre-crop him blind.
 `horizontal` and `bars` (1920×1080) need `x_offset:`. `--vertical` letterboxes a
-1920×1080 render onto 1080×1920, leaving the picture about a third of the frame,
-so bars' Arabic arrives nearer 120pt-equivalent; native `vertical` avoids that
-trade. Safe to re-run through generate.
+1920×1080 render onto 1080×1920 inside the render's own encode, leaving the
+picture about a third of the frame, so bars' Arabic arrives nearer
+120pt-equivalent; native `vertical` avoids that trade. Safe to re-run through
+generate. `generate.py --verify-only` prints the verification block and stops —
+use it to check a split before paying a render.
 
 ## Verify English against BOTH translations
 
