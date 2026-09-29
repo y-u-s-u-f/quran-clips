@@ -9,17 +9,18 @@ case because it exercises a wipe card, crossfade cards, a two-line card and a
 single-line card in one graph -- and diffs it filter by filter against
 tests/golden/bars-filtergraph.txt.
 
-Only the FILTERGRAPH is fixtured, not the argv: the graph text carries every
-number that decides a pixel (geometry, sigmas, gains, fade times, each
-caption layer's ink box and enable window), while the argv is just the input
-paths, which differ per machine.
+The graph text carries every number that decides a pixel (geometry, sigmas,
+gains, fade times, each caption layer's ink box and enable window). The input
+argv is fixtured beside it in tests/golden/bars-argv.txt, one argument per
+line with the per-run overlay directory written as TMP: it decides no pixel,
+but it is where the ffmpeg rules live -- every `-loop 1` input bounded,
+`-thread_queue_size` on every input -- and a refactor can drop one silently.
 
     NO ARABIC IS TYPED HERE. The caption text is read out of
-    legacy/clips/at-tawbah-128-128/clip.yaml, the archived recipe. legacy/ is
-    reference material: this READS a data file from it and never imports or
-    runs any of its code.
+    tests/golden/at-tawbah-128-128.yaml, the recipe the golden was recorded
+    against (a first-generation clip config, kept verbatim as data).
 
-The recipe (from OPTIMIZATIONS.md, recovered from the golden):
+The recipe, recovered from the golden:
 x_offset -384 (0.30 W of the 1920 canvas), dur 23.720, crop 48,30,1280x720,
 tint (191,140,54) recovered from the golden's glow scalars via rr/0.35*255,
 every switch on, and the golden's own loudnorm chain so the audio leg is fixed
@@ -54,8 +55,9 @@ except ImportError:
 
 import render_bars as RB  # noqa: E402
 
-CLIP = os.path.join(ROOT, "legacy", "clips", "at-tawbah-128-128", "clip.yaml")
+CLIP = os.path.join(HERE, "golden", "at-tawbah-128-128.yaml")
 FIXTURE = os.path.join(HERE, "golden", "bars-filtergraph.txt")
+ARGV_FIXTURE = os.path.join(HERE, "golden", "bars-argv.txt")
 
 DUR = 23.720
 X_OFFSET = -384
@@ -74,7 +76,7 @@ AFADE = "afade=t=in:st=0:d=0.3,afade=t=out:st=23.220:d=0.5"
 def phrases_from_clip():
     """The archived recipe's cards, in this pipeline's phrase shape.
 
-    ar1/ar2 are the two caption lines as the legacy config spelled them, so
+    ar1/ar2 are the two caption lines as that config spelled them, so
     the split is carried over as `line_split` (words on line 1) rather than
     left to the auto balancer -- the fixture must pin the layout it recorded,
     not re-derive it."""
@@ -94,18 +96,18 @@ def phrases_from_clip():
 
 
 def build():
-    """-> the filtergraph string for the fixture clip."""
+    """-> (filtergraph, argv text) for the fixture clip."""
     phrases = phrases_from_clip()
     on = {n: True for n in RB.SWITCHES}
     lay = RB.layout(phrases, X_OFFSET, 0)
-    tmp = tempfile.mkdtemp(prefix="graph-parity-")
-    rep = RB.draw_layers(lay, RB.predraw_color(TINT_RGB),
-                         os.path.join(tmp, "overlays"))
-    sched, _cuts = RB.schedule(phrases, DUR)
-    fc, _argv = RB.build_graph(
-        "SOURCE", DUR, CROP, rep, sched, [c / 255.0 for c in TINT_RGB], on,
-        "SNOW", "SCRIM", LOUDNORM, AFADE, ["HEATX", "HEATY"])
-    return fc
+    with tempfile.TemporaryDirectory(prefix="graph-parity-") as tmp:
+        rep = RB.draw_layers(lay, RB.predraw_color(TINT_RGB),
+                             os.path.join(tmp, "overlays"))
+        sched, _cuts = RB.schedule(phrases, DUR)
+        fc, argv = RB.build_graph(
+            "SOURCE", DUR, CROP, rep, sched, [c / 255.0 for c in TINT_RGB],
+            on, "SNOW", "SCRIM", LOUDNORM, AFADE, ["HEATX", "HEATY"])
+        return fc, "\n".join(a.replace(tmp, "TMP") for a in argv)
 
 
 def main(argv=None):
@@ -115,33 +117,31 @@ def main(argv=None):
                          "decision: it declares the look change intended.")
     a = ap.parse_args(argv)
 
-    got = build()
-    os.makedirs(os.path.dirname(FIXTURE), exist_ok=True)
-
-    if a.bless or not os.path.exists(FIXTURE):
-        why = "blessed" if os.path.exists(FIXTURE) else "recorded (was missing)"
-        with open(FIXTURE, "w", encoding="utf-8") as fh:
-            fh.write(got + "\n")
-        print("%s %s (%d chars)"
-              % (why, os.path.relpath(FIXTURE, ROOT), len(got)))
-        return 0
-
-    want = open(FIXTURE, encoding="utf-8").read().rstrip("\n")
-    if got == want:
-        print("OK  filtergraph matches %s (%d chars)"
-              % (os.path.relpath(FIXTURE, ROOT), len(got)))
-        return 0
-
-    # One filter per line so the diff points at the stage that moved; the
+    fc, args = build()
+    ok = True
+    # One filter per line so a diff points at the stage that moved; the
     # emitted graph is a single ';'-joined line and would diff as "everything".
-    print("FAIL  the emitted filtergraph no longer matches the fixture.\n"
-          "      If the change was intended, re-render a reel, check the "
-          "PSNR, then --bless.\n", file=sys.stderr)
-    for ln in difflib.unified_diff(want.split(";"), got.split(";"),
-                                   "fixture", "emitted", lineterm=""):
-        print(ln, file=sys.stderr)
-    return 1
-
+    for path, got, sep, what in ((FIXTURE, fc, ";", "filtergraph"),
+                                 (ARGV_FIXTURE, args, "\n", "input argv")):
+        rel = os.path.relpath(path, ROOT)
+        if a.bless or not os.path.exists(path):
+            why = "blessed" if os.path.exists(path) else "recorded (was missing)"
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(got + "\n")
+            print("%s %s (%d chars)" % (why, rel, len(got)))
+            continue
+        want = open(path, encoding="utf-8").read().rstrip("\n")
+        if got == want:
+            print("OK  %s matches %s (%d chars)" % (what, rel, len(got)))
+            continue
+        ok = False
+        print("FAIL  the emitted %s no longer matches %s.\n"
+              "      If the change was intended, re-render a reel, check the "
+              "PSNR, then --bless.\n" % (what, rel), file=sys.stderr)
+        for ln in difflib.unified_diff(want.split(sep), got.split(sep),
+                                       "fixture", "emitted", lineterm=""):
+            print(ln, file=sys.stderr)
+    return 0 if ok else 1
 
 if __name__ == "__main__":
     sys.exit(main())

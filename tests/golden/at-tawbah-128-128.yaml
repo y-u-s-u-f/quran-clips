@@ -1,12 +1,9 @@
 source_url: "https://www.youtube.com/watch?v=YkXjYyKwHJ4"
-# Shared source (downloaded once): sources/YkXjYyKwHJ4.mp4  (1920x1080,
-# 30fps, 1031.27s). work/source.mp4 symlinks to it. THIS clip = Surah at-Tawbah
-# ayah 128 ("There has certainly come to you a Messenger from among yourselves"),
-# recited immediately before 9:129 in rak'ah 2 at abs ~11:16-11:40.
-#
-# FIRST clip on the new vertical "bars" style (templates/bars.yaml): 1080x1920,
-# 16:9 footage band on black, two centre-anchored lines of Thuluth Arabic each
-# struck through by an opaque rounded pill. Arabic only, no translation.
+# The recipe tests/graph_parity.py builds the bars golden from: a
+# first-generation clip config kept as data (the test reads only
+# `phrases:`; the rest is not this pipeline's schema). Same source as
+# sources/YkXjYyKwHJ4/. Surah at-Tawbah ayah 128, recited immediately
+# before 9:129 in rak'ah 2 at abs ~11:16-11:40.
 style: bars
 reciter:
   name_en: "Badr al-Turki"
