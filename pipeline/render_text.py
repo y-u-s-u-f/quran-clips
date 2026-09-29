@@ -43,9 +43,10 @@ ROOT = os.path.dirname(HERE)
 FONT_DIR = os.path.join(ROOT, "assets", "fonts")
 sys.path.insert(0, HERE)
 
-from render_common import (FPS, PORTRAIT_PAD, PROBE,  # noqa: E402
-                           VIDEO_FADE_IN_S, VIDEO_FADE_OUT_S, audio_fades,
-                           encode, fit_pt, loudnorm_filter, measure_loudness,
+from render_common import (FADE_IN_S, FADE_OUT_S, FPS,  # noqa: E402
+                           PORTRAIT_PAD, PROBE, THREAD_QUEUE_SIZE,
+                           audio_fades, encode, fit_pt, loudnorm_filter,
+                           measure_loudness, norm_ar, source_chain,
                            trim_to_ink)
 
 if not features.check("raqm"):
@@ -53,9 +54,9 @@ if not features.check("raqm"):
              "laid out unjoined, left to right. Use tools/render-venv/bin/python.")
 
 # ---------------------------------------------------------------------------
-# Style constants -- legacy/templates/style.yaml, derived from pixel
-# measurements of the three landscape reference reels. A constant that cannot
-# hold on both canvases is keyed by orientation and carries its reason.
+# Style constants, derived from pixel measurements of the three landscape
+# reference reels. A constant that cannot hold on both canvases is keyed by
+# orientation and carries its reason.
 # ---------------------------------------------------------------------------
 CANVAS = {"vertical": (1080, 1920), "horizontal": (1920, 1080)}
 
@@ -88,10 +89,10 @@ EN_WIDTH_FRAC = {"horizontal": 0.55, "vertical": 0.82}
 
 ENGLISH = {"color": (245, 243, 237),     # #F5F3ED
            "alpha": 240,                 # a hair behind the Arabic
-           # ALL-CAPS at ONE size: Albertus has no true small-caps
-           # (style.yaml `smallcaps: false`). 33 against the 72pt Arabic is
-           # style.yaml's own pairing -- below it the English reads as a
-           # footnote to the ayah rather than its other half.
+           # ALL-CAPS at ONE size: Albertus has no true small-caps. 33
+           # against the 72pt Arabic is the reference reels' own pairing --
+           # below it the English reads as a footnote to the ayah rather than
+           # its other half.
            "cap_pt": 33,
            "tracking_pct": 3,            # of the point size, per character
            "line_height_mult": 1.62,
@@ -135,10 +136,6 @@ BLOCK_BOTTOM_FRAC = 0.90
 # outgoing fade-out. No slide, no scale, no per-word reveal.
 CROSSFADE_S = 0.45
 
-# ffmpeg's default 8-packet input queue deadlocks a many-input filtergraph
-# (one looped PNG per card, plus the grade plate and the signature).
-THREAD_QUEUE_SIZE = 4096
-
 # Signature: the SIZE is of the short side (28px on either canvas); the
 # POSITION is of the height.
 SIGNATURE_SIZE_FRAC = 0.026
@@ -153,10 +150,6 @@ SIGNATURE_ALPHA = 0.87
 # aligner never sees display text and no letter or pronunciation diacritic is
 # lost. Escapes, not literals -- invariant 1: no Arabic is retyped in source.
 DISPLAY_STRIP_CHARS = {"\u06DF", "\u06ED", "\u0640"}
-
-
-def norm_ar(s):
-    return "".join(c for c in s if c not in DISPLAY_STRIP_CHARS)
 
 
 def truetype(path, pt):
@@ -359,7 +352,7 @@ def layout(orientation, phrases, english, cfg, face_bottom):
     The anchor is a pure translation of the whole block, so ONE measurement at
     a trial anchor solves it exactly. Phrase blocks differ in height (a
     two-line English hangs ~0.02 H lower than a one-line one), so the MEDIAN
-    phrase is the one placed, as the legacy solver does.
+    phrase is the one placed.
 
     What it is solved AGAINST is the difference between the two shapes:
     landscape centres the block's MIDDLE on the frame; portrait puts its TOP
@@ -373,7 +366,7 @@ def layout(orientation, phrases, english, cfg, face_bottom):
     en_spec = ENGLISH_FONTS[cfg["english_font"]]
     stroke = en_spec["stroke_macron"]
 
-    texts = [norm_ar(p["text"]) for p in phrases]
+    texts = [norm_ar(p["text"], DISPLAY_STRIP_CHARS) for p in phrases]
     width_frac = cfg["text_width_frac"]
     max_ar_w = (width_frac or AR_WIDTH_FRAC[orientation]) * W
     nominal = ARABIC["nominal_pt"] * cfg["arabic_scale"]
@@ -598,7 +591,7 @@ def schedule(phrases, dur):
     0.45s and a later card comes up early enough that its fade-in straddles the
     outgoing card's fade-out -> a fixed-position dissolve, not a blink.
 
-    The offsets were tuned once on the reference reels (legacy/qc/timeline.py):
+    The offsets were tuned once on the reference reels:
       0.05  the FIRST card is up a hair before its own first word, so the frame
             is never empty on the word onset;
       0.24  a later card comes up early enough to straddle the outgoing fade;
@@ -631,8 +624,6 @@ def reframe(orientation, info, crop):
     has to come from anyway.
     """
     if crop:
-        if not all(k in crop for k in ("x", "y", "w", "h")):
-            raise SystemExit("crop must carry x, y, w, h")
         return crop, "crop %dx%d+%d+%d" % (crop["w"], crop["h"],
                                            crop["x"], crop["y"])
     portrait = info["height"] >= info["width"]
@@ -649,17 +640,6 @@ def reframe(orientation, info, crop):
         "portrait" if portrait else "landscape")
 
 
-def source_chain(crop, W, H):
-    """[0:v] -> exactly WxH of footage. `crop` is the authored window in SOURCE
-    pixels (pipeline/crop.py solves it); without one the footage is
-    cover-scaled, never distorted."""
-    if crop:
-        return ("crop=%d:%d:%d:%d,scale=%d:%d:flags=lanczos"
-                % (crop["w"], crop["h"], crop["x"], crop["y"], W, H))
-    return ("scale=%d:%d:flags=lanczos:force_original_aspect_ratio=increase,"
-            "crop=%d:%d" % (W, H, W, H))
-
-
 def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
                 sig=None, portrait=False):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1]=grade plate,
@@ -672,15 +652,22 @@ def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
     enable can only ever switch on frames the card was already fully
     transparent for.
 
-    Every looped PNG input is bounded by the output's `-t`: a `-loop 1` input
-    never EOFs, and overlay's default eof_action would leave the graph with no
-    end at all -- the encode runs forever into a file with no moov atom.
+    Only the cards are looped, because only they fade: `fade` needs a frame
+    at every timestamp to ramp over. The grade plate and the signature never
+    change, so each is ONE decoded frame that overlay's default
+    eof_action=repeat holds for the whole reel -- same pixels, no per-frame
+    PNG decode. Every looped input is bounded by the output's `-t`: a
+    `-loop 1` input never EOFs, and overlay's default eof_action would leave
+    the graph with no end at all -- the encode runs forever into a file with
+    no moov atom.
     """
     tqs = ["-thread_queue_size", str(THREAD_QUEUE_SIZE)]
     argv = ["-ss", "0.000", "-t", "%.3f" % dur] + tqs + ["-i", src]
-    for png in ([grade_png] + [c["path"] for c in cards]
-                + ([sig[0]] if sig else [])):
-        argv += ["-framerate", str(FPS), "-loop", "1"] + tqs + ["-i", png]
+    argv += tqs + ["-i", grade_png]
+    for c in cards:
+        argv += ["-framerate", str(FPS), "-loop", "1"] + tqs + ["-i", c["path"]]
+    if sig:
+        argv += tqs + ["-i", sig[0]]
 
     parts = ["[0:v]%s,setsar=1,fps=%d,format=rgba[bg];"
              "[1:v]format=rgba[grd];[bg][grd]overlay=0:0:format=auto[b0]"
@@ -705,8 +692,7 @@ def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
     # whole-frame fade from/to black, mirroring the audio fades (all 3 refs)
     parts.append(";[%s]fade=t=in:st=0:d=%s,fade=t=out:st=%.3f:d=%s%s,"
                  "format=yuv420p[vout]"
-                 % (base, VIDEO_FADE_IN_S, dur - VIDEO_FADE_OUT_S,
-                    VIDEO_FADE_OUT_S,
+                 % (base, FADE_IN_S, dur - FADE_OUT_S, FADE_OUT_S,
                     "," + PORTRAIT_PAD if portrait else ""))
     parts.append(";[0:a]%s,%s[aout]" % (ln, afade))
     return "".join(parts), argv

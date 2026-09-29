@@ -4,23 +4,32 @@ The look lives in the renderer that owns it (invariant 4): fonts, colours,
 pill geometry and every measured constant behind them stay in render_text.py
 and render_bars.py. This is the other half -- the FILE every style hands to
 publish.py (1080p30 h264 crf 18, AAC 192k, two-pass loudnorm to -14 LUFS, one
-pair of head and tail fades) and the ink helpers both of them measure with.
+pair of head and tail fades) and the plumbing both of them build with: the
+source reframe, the input queue size, the ink helpers.
 
-Imported by render_text.py and render_bars.py; not a standalone CLI.
+Imported by render_text.py, render_bars.py and fx.py; not a standalone CLI.
 """
 import json
-import os
 import subprocess
 
 from PIL import Image, ImageDraw
 
-FFMPEG = os.environ.get("QC_FFMPEG") or "ffmpeg"
+from generate import FFMPEG
 
 FPS = 30
-VIDEO_FADE_IN_S, VIDEO_FADE_OUT_S = 0.3, 0.5
-AUDIO = {"lufs": -14.0, "tp": -1.0, "lra": 11.0,
-         "fade_in_s": 0.3, "fade_out_s": 0.5}
+# One pair for picture and sound: the frame fades from/to black exactly as
+# the audio fades in and out (all three reference reels).
+FADE_IN_S, FADE_OUT_S = 0.3, 0.5
+AUDIO = {"lufs": -14.0, "tp": -1.0, "lra": 11.0}
 ENCODE = {"crf": 18, "preset": "slow", "audio_bitrate": "192k"}
+
+# ffmpeg's per-input packet queue defaults to 8. Both styles feed ONE
+# filtergraph from many inputs (source + a looped PNG per caption layer +
+# plates/maps), and past roughly a dozen the graph DEADLOCKS: one input's
+# queue fills, blocking the demuxer in tq_send, while the filter and encoder
+# threads sit in tq_receive on a DIFFERENT input -- 0% CPU forever, no moov
+# atom. Costs memory only; changes no output byte.
+THREAD_QUEUE_SIZE = 4096
 
 # `--vertical` delivery: the landscape picture onto a 1080x1920 portrait
 # canvas, black above and below. Appended inside the style's own graph before
@@ -36,6 +45,23 @@ PORTRAIT_PAD = "scale=1080:-2,pad=1080:1920:0:(oh-ih)/2:black"
 PROBE = ImageDraw.Draw(Image.new("L", (1, 1)))
 
 
+def norm_ar(s, strip):
+    """Caption text with the renderer's own display-strip set removed. Each
+    style passes its own: the marks a face cannot draw differ per face."""
+    return "".join(c for c in s if c not in strip)
+
+
+def source_chain(crop, W, H):
+    """[0:v] -> exactly WxH of footage. `crop` is the authored window in SOURCE
+    pixels (pipeline/crop.py solves it); without one the footage is
+    cover-scaled, never distorted."""
+    if crop:
+        return ("crop=%d:%d:%d:%d,scale=%d:%d:flags=lanczos"
+                % (crop["w"], crop["h"], crop["x"], crop["y"], W, H))
+    return ("scale=%d:%d:flags=lanczos:force_original_aspect_ratio=increase,"
+            "crop=%d:%d" % (W, H, W, H))
+
+
 def fit_pt(nominal_pt, min_pt, max_width, widest):
     """One shared point size for every phrase (a caption swap never changes
     the type size), shrunk only far enough that the WIDEST line fits. Never
@@ -48,10 +74,10 @@ def trim_to_ink(card):
 
     The compositor pays for the whole overlay every frame a card is up, and
     what is cropped away is (0,0,0,0), which `overlay` composites to nothing.
-    The box is snapped OUTWARD to even coordinates because `overlay` blends in
-    yuv420 by default: on an odd edge the overlay's 2x2 chroma/alpha blocks
-    would straddle a different grid than the full-canvas card's and the result
-    would shift.
+    The box is snapped OUTWARD to even coordinates so a card stays on the 2x2
+    chroma grid if it is ever blended in yuv420. Both renderers composite onto
+    rgba today, where `format=auto` blends in RGB and the snap changes no
+    pixel; the boxes are pinned by the bars golden, so it stays.
 
     Worth 33.8s -> 10.5s CPU and 1618 -> 633 MB peak RSS on the caption stage
     of a 6-card 1080p `vertical` reel at 11%, measured against full-canvas
@@ -100,8 +126,7 @@ def loudnorm_filter(st):
 
 def audio_fades(dur):
     return ("afade=t=in:st=0:d=%s,afade=t=out:st=%.3f:d=%s"
-            % (AUDIO["fade_in_s"], dur - AUDIO["fade_out_s"],
-               AUDIO["fade_out_s"]))
+            % (FADE_IN_S, dur - FADE_OUT_S, FADE_OUT_S))
 
 
 # ---------------------------------------------------------------------------

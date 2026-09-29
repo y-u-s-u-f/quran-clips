@@ -1,13 +1,11 @@
 """pipeline/fx.py -- the bars FX stack: filtergraph builder + effects + snow.
 
-Ported VERBATIM from legacy/qc/ffgraph.py, legacy/qc/fx/ and the snow shader
-in legacy/scripts/render_bars.py. Nothing here is a re-derivation: the
-sigma/knee/tint algebra, the Rec.601 luma mixer, the perlin centre/sd ->
-slope conversion and the literal `split=2`s are the same expressions in the
-same order, so with all stages enabled the emitted filtergraph is
-byte-identical to the legacy one (verified against the frozen golden
-fixture). The measurement notes justifying every number live in
-legacy/templates/bars.yaml and legacy/style/refs2/FX_RECIPE.md.
+Ported verbatim from the first-generation pipeline (in git history). Nothing
+here is a re-derivation: the sigma/knee/tint algebra, the Rec.601 luma mixer,
+the perlin centre/sd -> slope conversion and the literal `split=2`s are the
+same expressions in the same order, and tests/graph_parity.py holds the
+emitted filtergraph byte-identical to the frozen golden. The measurement notes
+justifying every number (bars.yaml, FX_RECIPE.md) are in git history.
 
 Contents:
   Graph            a small chain/label builder for -filter_complex
@@ -17,14 +15,13 @@ Contents:
                    Pillow into a seamlessly-looping mp4
 """
 import math
-import os
 import random
 import subprocess
 import sys
 
 from PIL import Image, ImageChops
 
-FFMPEG = os.environ.get("QC_FFMPEG") or "ffmpeg"
+from render_common import FFMPEG, THREAD_QUEUE_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -33,10 +30,6 @@ FFMPEG = os.environ.get("QC_FFMPEG") or "ffmpeg"
 
 class Ref(str):
     """An input pad reference such as "0:v"."""
-
-    @property
-    def v(self):
-        return Ref(str(self).split(":")[0] + ":v")
 
     @property
     def a(self):
@@ -77,14 +70,6 @@ class Graph(object):
     with the [N:v] labels; tap() defers a split's degree to the number of
     consumers that actually asked."""
 
-    # ffmpeg's per-input packet queue defaults to 8. A bars clip feeds ONE
-    # filtergraph from many inputs (source + a bar/text pair per phrase +
-    # snow + scrim), and past roughly a dozen the graph DEADLOCKS: one
-    # input's queue fills, blocking the demuxer in tq_send, while the filter
-    # and encoder threads sit in tq_receive on a DIFFERENT input -- 0% CPU
-    # forever, no moov atom. Costs memory only; changes no output byte.
-    THREAD_QUEUE_SIZE = 4096
-
     def __init__(self):
         self._nodes = []
         self._argv = []
@@ -98,7 +83,7 @@ class Graph(object):
         self._ninputs += 1
         for k, val in kw.items():
             self._argv += ["-" + k, str(val)]
-        self._argv += ["-thread_queue_size", str(self.THREAD_QUEUE_SIZE),
+        self._argv += ["-thread_queue_size", str(THREAD_QUEUE_SIZE),
                        "-i", path]
         return Ref("%d:v" % idx)
 
@@ -257,9 +242,9 @@ class BarGlow(Effect):
         the band, so 3 sigma of the FAR gaussian either side already holds
         every pixel whose blur can land inside it; past that the source is
         black, and gblur's edge replication of black is what more black would
-        have contributed anyway. Accumulating at this height rather than the
-        full 1920 makes the plate and every overlay onto it 40% smaller, and
-        the slice is exact, so nothing downstream can tell."""
+        have contributed anyway. The slice is exact, so nothing downstream can
+        tell. On the 1920x1080 canvas the band IS the frame, so the slice is
+        the full height and saves nothing; the golden graph pins it."""
         mrg = 2 * int(math.ceil(1.5 * round(float(self.cfg["sigma_far_px"]), 2)))
         y0 = max(0, ctx.BY - mrg)
         return y0, min(ctx.H - y0, ctx.BH + 2 * mrg)
@@ -324,10 +309,8 @@ class TextGlow(Effect):
     layer = "text"
 
     def plate(self, g, ctx):
-        # Band-sized, not canvas-sized: this plate is cropped to the band
-        # before the blur, so glyph ink outside the band never contributes.
-        # Accumulating at band size is the same pixels for a third of the
-        # plate and a third of every overlay onto it.
+        # Band-sized: glyph ink outside the band never contributes to the
+        # blur. On the 1920x1080 canvas the band is the whole frame.
         g.chain(None,
                 f"color=c=black:s={ctx.BW}x{ctx.BH}:r={ctx.fps}:d={ctx.dur:.3f}",
                 "tg0")
@@ -412,7 +395,7 @@ class Heat(Effect):
     (real 66.2s vs user 65.2s -- one core of eight), 132s of a 372s render,
     while depending on nothing but its own constants. Baked once per machine
     it is reused by every reel forever. What stays live is scroll/scale/lut,
-    which is where the remaining cost of this stage is: the 3x supersample
+    which is where the remaining cost of this stage is: the 2x supersample
     around integer-pixel `displace`. `fx: {heat: false}` for a fast preview."""
     name = "heat"
 
@@ -485,7 +468,7 @@ def by_layer(chain):
 # power leaves only the rare coincidences of two near-white samples -- the
 # "snowflakes". Seamless loop: each layer's travel over one loop is exactly
 # its own tile height, the sway is a whole sinusoid, so frame N == frame 0.
-# Calibration against the reference reels is in legacy/style/refs2/SNOW_SPEC.md.
+# Calibration against the reference reels (SNOW_SPEC.md) is in git history.
 # ---------------------------------------------------------------------------
 SNOW_REF_H = 405.0          # band height the forensics were measured at
 SNOW_NX = 256               # noise tile width, texels (as shipped by the app)

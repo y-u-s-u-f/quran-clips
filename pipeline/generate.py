@@ -47,13 +47,42 @@ sys.path.insert(0, HERE)
 
 import quran  # noqa: E402
 
-try:
-    import yaml
-except ImportError:
-    sys.exit("PyYAML not available -- run with tools/render-venv/bin/python")
 
-FFMPEG = os.environ.get("QC_FFMPEG") or "ffmpeg"
-FFPROBE = os.environ.get("QC_FFPROBE") or "ffprobe"
+def envvar(name, default=None):
+    """Process environment, then ROOT/.env, then `default` -- the precedence
+    .env.example documents. Every script reads .env through this one. Machine
+    config only: nothing read here may reach a pixel (invariant 4)."""
+    if os.environ.get(name):
+        return os.environ[name]
+    path = os.path.join(ROOT, ".env")
+    if os.path.exists(path):
+        for raw in open(path, encoding="utf-8"):
+            line = raw.strip()
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            k, sep, v = line.partition("=")
+            if sep and k.strip() == name:
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+                    v = v[1:-1]
+                elif " #" in v:
+                    v = v.split(" #", 1)[0].rstrip()
+                if v:
+                    return v
+    return default
+
+
+# The one resolution every render-side script uses: the renderers, fx.py,
+# publish.py and letterbox.py all import these rather than read QC_* again.
+FFMPEG = envvar("QC_FFMPEG", "ffmpeg")
+FFPROBE = envvar("QC_FFPROBE", "ffprobe")
+
+# What a fetched source may be called; resolve_paths takes the first present.
+SOURCE_NAMES = tuple("source" + e for e in (".mp4", ".mkv", ".webm", ".mov",
+                                           ".m4a", ".mp3", ".wav"))
+
+ARABIC_FONT_NAMES = ("uthmanic_hafs", "thuluth")     # render_text.ARABIC_FONTS
+ENGLISH_FONT_NAMES = ("albertus", "gentium")         # render_text.ENGLISH_FONTS
 
 # A pause longer than this (seconds) is a deliberate rest in the recitation,
 # not a breath: drop the caption and leave the frame clean until the reciter
@@ -91,14 +120,14 @@ DEFAULTS = {
     "x_offset": 0,               # px nudge from the style's own anchor, which
     "y_offset": 0,               # is already solved: +right / +down. 0/0 is
                                  # the anchor itself, not necessarily centre.
-    "signature_offset": 0,       # px, vertical only: + lower / - higher.
+    "signature_offset": 0,       # px, vertical + horizontal (bars burns no
+                                 # signature): + lower / - higher.
                                  # The signature is ALWAYS horizontally
                                  # centered; there is no x knob on purpose.
 
     # every style ---------------------------------------------------------
-    "crop": None,                # {x,y,w,h} source-px window -> the 16:9 band
-                                 # (bars) or the whole canvas (vertical,
-                                 # horizontal). pipeline/crop.py solves it.
+    "crop": None,                # {x,y,w,h} source-px window -> the canvas.
+                                 # pipeline/crop.py solves it.
 
     # vertical + horizontal -----------------------------------------------
     "arabic_font": "uthmanic_hafs",   # uthmanic_hafs | thuluth
@@ -140,8 +169,6 @@ DEFAULTS = {
     "fx": None,                  # per-stage switches, e.g. {heat: false};
                                  # stages: grade scrim glow barglow textglow
                                  # scan snow heat (all on by default)
-
-    "tmp_dir": None,             # default /tmp/quran-pipeline/<reel-name>
 }
 
 
@@ -185,14 +212,15 @@ an error rather than a silent no-op.
                                     # which key.
     y_offset: 0                     # px nudges on the solved anchor, both
                                     # styles (+x right, +y down)
-    signature_offset: 0             # px: + lower / - higher. The signature is
-                                    # ALWAYS horizontally centered.
+    signature_offset: 0             # px: + lower / - higher (vertical and
+                                    # horizontal). The signature is ALWAYS
+                                    # horizontally centered.
 
     verse_numbers: true             # ayah ornament (default: on for vertical
                                     # and horizontal, off for bars)
     suppress: [[33, 58]]            # leave these second-windows uncaptioned
     nudge:                          # per-caption timing fix, applied LAST
-      - {group: 3, start: -1.8}
+      - {group: 3, start: -1.8}     # keys: group (0-based card), start, end
 
     # vertical + horizontal: arabic_font (uthmanic_hafs | thuluth),
     #   english_font (albertus | gentium), arabic_scale, english_scale
@@ -206,7 +234,7 @@ an error rather than a silent no-op.
     #   grade for THIS source only (keys: brightness contrast saturation
     #   gamma; the house numbers target mean luma 0.15-0.32),
     #   fx: {heat: false, ...} to switch stages off (grade scrim glow
-    #   barglow textglow scan snow heat; heat is ~half the render time)
+    #   barglow textglow scan snow heat; heat off is the cheap preview)
 
     input / whisper / output        # only to override the standard layout
 
@@ -257,7 +285,7 @@ def get_video_info(path):
             "duration": float(data.get("format", {}).get("duration", 0))}
 
 
-def trim_media(path, out_path, start, end):
+def trim_media(path, out_path, start, end, thumb=False):
     """Cut [start, end) out of the source and re-encode. Re-encoding rather
     than stream-copying is deliberate: a copy cuts only at the nearest
     keyframe, which shifts the real start by up to a GOP and would offset
@@ -275,12 +303,19 @@ def trim_media(path, out_path, start, end):
 
     so crf 10 is -65% CPU and BETTER than what it replaces. Do not read file
     size as fidelity across presets: crf 14 is the larger file of the first
-    two and the worse picture."""
+    two and the worse picture.
+
+    `thumb=True` is the --verify-only cut: the same frames and the same AAC
+    encode, but the picture 32px wide. The block reads the window's duration
+    and silences, never a pixel -- yet the duration IS the video's frame
+    timing (26.19s against the audio's 26.14s on hujurat-4-5), and it sets
+    the last card's end, so an audio-only cut would print a different block."""
     cmd = [FFMPEG, "-y", "-v", "error", "-ss", "%.3f" % start]
     if end is not None:
         cmd += ["-to", "%.3f" % end]
-    cmd += ["-i", path, "-c:v", "libx264", "-preset", "veryfast", "-crf", "10",
-            "-pix_fmt", "yuv420p"]
+    cmd += ["-i", path, "-c:v", "libx264", "-pix_fmt", "yuv420p"]
+    cmd += (["-vf", "scale=32:-2", "-preset", "ultrafast"] if thumb
+            else ["-preset", "veryfast", "-crf", "10"])
     run(cmd + ["-c:a", "aac", "-b:a", "192k", out_path])
     return out_path
 
@@ -617,17 +652,20 @@ def auto_group(word_timestamps, words, verses, final_end,
 
     word_verse = [v for v in verses
                   for _ in quran.display_words(v["text_uthmani"])]
+    # Card INDICES, not the cards: two cards with equal text and times compare
+    # equal, and a value lookup would fill one slot twice and leave the other
+    # None.
     by_verse, i = {}, 0
-    for ph in arabic:
+    for k, ph in enumerate(arabic):
         v = word_verse[i] if i < len(word_verse) else verses[-1]
-        by_verse.setdefault((v["surah"], v["ayah"]), []).append(ph)
+        by_verse.setdefault((v["surah"], v["ayah"]), []).append(k)
         i += len(ph["text"].split())
 
     english = [None] * len(arabic)
     for v in verses:
         group = by_verse.get((v["surah"], v["ayah"]), [])
-        for ph, chunk in zip(group, _split_ratio(v["translation"], len(group))):
-            english[arabic.index(ph)] = {**ph, "text": chunk}
+        for k, chunk in zip(group, _split_ratio(v["translation"], len(group))):
+            english[k] = {**arabic[k], "text": chunk}
     return _fill_gaps(arabic, english, final_end)
 
 
@@ -712,7 +750,12 @@ def clip_to_speech(arabic, english, silences):
     """Pull any caption end back to the start of a long silence it runs into.
     TRAILING silence (end None, running to EOF) is skipped: the last caption
     stays up through the natural tail rather than vanishing the instant the
-    final word decays."""
+    final word decays.
+
+    run_config re-runs _fill_gaps after this on purpose: what is corrected is
+    where the SPEECH ends, and the hold is then measured from there -- a
+    clipped caption still holds up to MAX_HOLD into the rest, like every other
+    caption, and the frame goes clean for whatever of the rest is left."""
     for cap_a, cap_e in zip(arabic, english):
         for s_start, s_end in silences:
             if s_end is None:
@@ -786,29 +829,21 @@ def apply_nudges(arabic, english, nudges):
 
 # ---------- verse numbers ---------------------------------------------------
 
-# Whether a font's shaping rules already draw the ayah ornament around bare
-# Arabic-Indic digits, or need an explicit U+06DD ARABIC END OF AYAH prefix.
-# Both shipped faces enclose them on their own, and a face that does it while
-# the table says otherwise renders two concentric rings, so a new one is
-# measured before it goes in ARABIC_FONTS.
-FONT_NEEDS_AYAH_MARK = {"uthmanic_hafs": False, "thuluth": False}
-
+# Bare Arabic-Indic digits: both shipped faces' shaping rules draw the ayah
+# ornament around them on their own. A face that does not would need a U+06DD
+# ARABIC END OF AYAH prefix, and one that does renders two concentric rings if
+# given it, so a new face is measured before it goes in ARABIC_FONT_NAMES.
 # Escapes, not literals -- invariant 1: no Arabic is retyped in source.
-# U+0660..U+0669 ARABIC-INDIC DIGIT ZERO..NINE, and U+06DD ARABIC END OF AYAH
-# for the fonts whose shaping does not enclose bare digits on its own.
 _ARABIC_DIGITS = str.maketrans(
     "0123456789",
     "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669")
-_AYAH_MARK = "\u06DD"
 
 
-def verse_end_marker(ayah_num, arabic_font):
-    digits = str(ayah_num).translate(_ARABIC_DIGITS)
-    return ((_AYAH_MARK + digits)
-            if FONT_NEEDS_AYAH_MARK.get(arabic_font, True) else digits)
+def verse_end_marker(ayah_num):
+    return str(ayah_num).translate(_ARABIC_DIGITS)
 
 
-def append_verse_numbers(arabic, verses, arabic_font):
+def append_verse_numbers(arabic, verses):
     """Append each ayah's verse-number ornament to the caption that ends that
     ayah, matching printed Qur'an convention. Display text only, after
     alignment -- the ornament is never spoken."""
@@ -821,7 +856,7 @@ def append_verse_numbers(arabic, verses, arabic_font):
         consumed += len(cap["text"].split())
         if consumed in ends:
             cap["text"] = "%s %s" % (cap["text"],
-                                     verse_end_marker(ends[consumed], arabic_font))
+                                     verse_end_marker(ends[consumed]))
     return arabic
 
 
@@ -856,6 +891,12 @@ def print_verification(arabic, english, verses):
 # ---------- orchestration ---------------------------------------------------
 
 def load_config(path):
+    # Imported here, not at the top: publish.py and letterbox.py import this
+    # module for FFMPEG/FFPROBE and run under a bare python3.
+    try:
+        import yaml
+    except ImportError:
+        sys.exit("PyYAML not available -- run with tools/render-venv/bin/python")
     raw = yaml.safe_load(open(path, encoding="utf-8"))
     if not isinstance(raw, dict):
         raise SystemExit("config %s is not a YAML mapping" % path)
@@ -874,9 +915,85 @@ def load_config(path):
                          "chin and is a `vertical` key; this config is `%s`, "
                          "where the column is placed with `x_offset`."
                          % cfg["style"])
+    check_shapes(cfg, path)
     if cfg["verse_numbers"] is None:
         cfg["verse_numbers"] = cfg["style"] != "bars"
     return cfg
+
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def check_shapes(cfg, path):
+    """The value shapes the stages index into, refused here by name rather
+    than as a bare KeyError / ValueError minutes into a render -- or after
+    trim_media has already paid for the re-encode."""
+    def bad(msg):
+        raise SystemExit("%s: %s" % (path, msg))
+
+    for key, known in (("arabic_font", ARABIC_FONT_NAMES),
+                       ("english_font", ENGLISH_FONT_NAMES)):
+        if cfg[key] not in known:
+            bad("%s must be one of %s, not %r"
+                % (key, " | ".join(known), cfg[key]))
+    trim = cfg["trim"]
+    if trim is not None:
+        if (not isinstance(trim, list) or not 1 <= len(trim) <= 2
+                or not _num(trim[0])
+                or (len(trim) == 2 and trim[1] is not None
+                    and not (_num(trim[1]) and trim[1] > trim[0]))):
+            bad("trim must be [start, end] seconds with end > start (end may "
+                "be null for the end of the source), not %r" % (trim,))
+    crop = cfg["crop"]
+    if crop is not None:
+        if (not isinstance(crop, dict) or set(crop) != {"x", "y", "w", "h"}
+                or not all(_num(v) for v in crop.values())
+                or crop["w"] <= 0 or crop["h"] <= 0):
+            bad("crop must be {x, y, w, h} in source pixels, w and h > 0, "
+                "not %r" % (crop,))
+    if cfg["bar_color"] is not None and not re.fullmatch(
+            r"#?[0-9A-Fa-f]{6}", str(cfg["bar_color"])):
+        bad("bar_color must be \"#RRGGBB\", not %r" % cfg["bar_color"])
+    for key in ("groups", "nudge", "suppress"):
+        if cfg[key] is not None and not isinstance(cfg[key], list):
+            bad("%s must be a list, not %r" % (key, cfg[key]))
+    for i, g in enumerate(cfg["groups"] or []):
+        if not isinstance(g, dict):
+            bad("groups[%d] must be a mapping, not %r" % (i, g))
+        unknown = sorted(set(g) - {"n_words", "english", "line_split"})
+        if unknown:
+            bad("groups[%d]: unknown key(s) %s (known: n_words english "
+                "line_split)" % (i, ", ".join(map(str, unknown))))
+        n = g.get("n_words")
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            bad("groups[%d] needs n_words, a positive integer (got %r)"
+                % (i, n))
+        if "english" in g and not isinstance(g["english"], str):
+            bad("groups[%d].english must be a string" % i)
+        ls = g.get("line_split")
+        if ls is not None and (not isinstance(ls, int) or isinstance(ls, bool)
+                               or not 1 <= ls < n):
+            bad("groups[%d].line_split is the word count on line 1: %s "
+                "(got %r)" % (i, "1..%d for a %d-word card" % (n - 1, n)
+                              if n > 1 else "a 1-word card cannot split", ls))
+    for i, nd in enumerate(cfg["nudge"] or []):
+        if not isinstance(nd, dict):
+            bad("nudge[%d] must be a mapping, not %r" % (i, nd))
+        unknown = sorted(set(nd) - {"group", "start", "end"})
+        if unknown:
+            bad("nudge[%d]: unknown key(s) %s (known: group start end)"
+                % (i, ", ".join(map(str, unknown))))
+        if not isinstance(nd.get("group"), int) or isinstance(nd["group"],
+                                                              bool):
+            bad("nudge[%d] needs group, the card's 0-based index" % i)
+        if not all(_num(nd[k]) for k in ("start", "end") if k in nd):
+            bad("nudge[%d]: start/end are signed seconds" % i)
+    for i, w in enumerate(cfg["suppress"] or []):
+        if (not isinstance(w, list) or len(w) != 2
+                or not all(_num(v) for v in w) or w[1] <= w[0]):
+            bad("suppress[%d] must be [start, end] seconds, end > start, not "
+                "%r" % (i, w))
 
 
 def resolve_paths(cfg, config_path, output_override=None):
@@ -884,8 +1001,7 @@ def resolve_paths(cfg, config_path, output_override=None):
     stem = os.path.splitext(os.path.basename(config_path))[0]
 
     if not cfg["input"]:
-        for name in ("source.mp4", "source.mkv", "source.webm", "source.mov",
-                     "source.m4a", "source.mp3", "source.wav"):
+        for name in SOURCE_NAMES:
             p = os.path.join(src_dir, name)
             if os.path.exists(p):
                 cfg["input"] = p
@@ -904,39 +1020,23 @@ def resolve_paths(cfg, config_path, output_override=None):
     cfg["output"] = os.path.abspath(
         output_override or cfg["output"]
         or os.path.join(ROOT, "reels", stem + ".mp4"))
-    cfg["tmp_dir"] = cfg["tmp_dir"] or os.path.join(
-        "/tmp", "quran-pipeline", stem)
+    cfg["tmp_dir"] = os.path.join("/tmp", "quran-pipeline", stem)
     return cfg
 
 
-# Wall seconds of bake per second of heat map, measured at 1920x1080/30
-# (46.5s for a 5s map). `perlin` is single-threaded and the two axis maps
-# bake concurrently, so a reel that spills into a fresh 30s bucket pays this
-# once, not once per axis.
-HEAT_BAKE_RATE = 9.3
-
-
-def warn_heat_bake(cfg, dur):
-    """Announce a pending heat bake instead of going silent for many minutes.
-
-    Only a reel longer than every cached map pays this, and paying it once
-    buys every shorter reel after it -- so the note is a heads-up, never a
-    reason to re-cut the span."""
-    import render_bars    # Pillow at module level, and pipeline/align.py
-                          # imports this file under an interpreter without it:
-                          # every render_bars import stays inside a function.
-    if not render_bars.switches(cfg.get("fx"))["heat"]:
-        return
-    span, paths = render_bars.heat_map_paths(dur)
-    missing = [p for p in paths if not os.path.exists(p)]
-    if not missing:
-        return
-    hint = " Every later reel up to %ds then reuses it." % span
-    print("      heat: %.1fs reel, no cached map covers it -- baking %ds, "
-          "%d of 2 maps missing (missing maps bake concurrently). Expect "
-          "~%dmin of perlin first.%s Set fx: {heat: false} to skip it."
-          % (dur, span, len(missing),
-             round(HEAT_BAKE_RATE * span / 60.0), hint))
+def resolve_span(cfg, asr_words):
+    """-> (surah, ayah_start, ayah_end): the config's span, or -- with no
+    `surah:` -- the one identified off `asr_words` (the window's Whisper
+    words). An omitted ayah_start is 1 and an omitted ayah_end is the start."""
+    if cfg["surah"] is None:
+        span = identify_verse_span(asr_words)
+        if span is None:
+            raise SystemExit("could not auto-identify the verse span; set "
+                             "surah/ayah_start/ayah_end in the config")
+        return span["surah"], span["ayah_start"], span["ayah_end"]
+    a0 = int(cfg["ayah_start"] if cfg["ayah_start"] is not None else 1)
+    a1 = int(cfg["ayah_end"] if cfg["ayah_end"] is not None else a0)
+    return int(cfg["surah"]), a0, a1
 
 
 def run_config(config_path, output_override=None, vertical=False,
@@ -956,11 +1056,16 @@ def run_config(config_path, output_override=None, vertical=False,
     window = trim_window(cfg)
     t0w = window[0]
     if cfg.get("trim"):
-        trimmed = os.path.join(tmp, "trimmed.mp4")
-        print("      trimming to %s-%ss"
-              % (window[0], "end" if window[1] is None else window[1]))
-        source = trim_media(source, trimmed, window[0], window[1])
-        info = get_video_info(source)
+        trimmed = os.path.join(tmp, "trimmed-verify.mp4" if verify_only
+                               else "trimmed.mp4")
+        print("      trimming to %s-%ss%s"
+              % (window[0], "end" if window[1] is None else window[1],
+                 " (32px proxy)" if verify_only else ""))
+        source = trim_media(source, trimmed, window[0], window[1],
+                            thumb=verify_only)
+        info = {**get_video_info(source),
+                **({"width": info["width"], "height": info["height"]}
+                   if verify_only else {})}
     print("      %sx%s, %.1fs" % (info["width"], info["height"],
                                   info["duration"]))
 
@@ -977,23 +1082,14 @@ def run_config(config_path, output_override=None, vertical=False,
         print("      %d words in window (backend %s)"
               % (len(asr_words), asr_backend))
 
-    surah, a0, a1 = cfg["surah"], cfg["ayah_start"], cfg["ayah_end"]
-    if surah is None:
+    if cfg["surah"] is None:
         print("[3/6] Identifying verse span from the transcript...")
-        span = identify_verse_span(asr_words)
-        if span is None:
-            raise SystemExit("could not auto-identify the verse span; set "
-                             "surah/ayah_start/ayah_end in the config")
-        surah, a0, a1 = span["surah"], span["ayah_start"], span["ayah_end"]
-        print("      detected %s %d:%d-%d"
-              % (quran.surah_name(surah), surah, a0, a1))
-    else:
-        a0 = int(a0 if a0 is not None else 1)
-        a1 = int(a1 if a1 is not None else a0)
-        print("[3/6] Verse span from config: %s %d:%d-%d"
-              % (quran.surah_name(surah), surah, a0, a1))
+    surah, a0, a1 = resolve_span(cfg, asr_words)
+    print(("      detected %s %d:%d-%d" if cfg["surah"] is None
+           else "[3/6] Verse span from config: %s %d:%d-%d")
+          % (quran.surah_name(surah), surah, a0, a1))
 
-    verses = fetch_verses(int(surah), a0, a1)
+    verses = fetch_verses(surah, a0, a1)
     words = spoken_words(verses)
 
     if forced:
@@ -1031,7 +1127,7 @@ def run_config(config_path, output_override=None, vertical=False,
         arabic, english = apply_nudges(arabic, english, cfg["nudge"])
         print("      %d caption nudge(s) applied" % len(cfg["nudge"]))
     if cfg["verse_numbers"]:
-        arabic = append_verse_numbers(arabic, verses, cfg["arabic_font"])
+        arabic = append_verse_numbers(arabic, verses)
     gaps = sum(1 for i in range(len(arabic) - 1)
                if arabic[i + 1]["start"] - arabic[i]["end"] > 0.05)
     print("      %d captions, %d pause gap(s) left clean" % (len(arabic), gaps))
@@ -1039,17 +1135,14 @@ def run_config(config_path, output_override=None, vertical=False,
 
     if verify_only:
         print("      --verify-only: stopping before the render")
-        return {"surah": int(surah), "ayah_start": a0, "ayah_end": a1,
+        return {"surah": surah, "ayah_start": a0, "ayah_end": a1,
                 "captions": len(arabic), "output": None,
                 "style": cfg["style"], "signature": cfg["signature"]}
 
     plan = {"cfg": cfg, "src": source, "info": info,
-            "arabic": arabic, "english": english, "verses": verses,
+            "arabic": arabic, "english": english,
             "tmp": tmp, "out": cfg["output"], "portrait": vertical,
-            "meta": output_meta(int(surah), a0, a1, cfg["reciter"])}
-
-    if cfg["style"] == "bars":
-        warn_heat_bake(cfg, info["duration"])
+            "meta": output_meta(surah, a0, a1, cfg["reciter"])}
 
     print("[6/6] Rendering (%s style)..." % cfg["style"])
     if cfg["style"] == "bars":
@@ -1059,7 +1152,7 @@ def run_config(config_path, output_override=None, vertical=False,
         import render_text
         render_text.render(plan)
     print("Done: %s" % cfg["output"])
-    return {"surah": int(surah), "ayah_start": a0, "ayah_end": a1,
+    return {"surah": surah, "ayah_start": a0, "ayah_end": a1,
             "captions": len(arabic), "output": cfg["output"],
             "style": cfg["style"],
             "signature": cfg["signature"]}

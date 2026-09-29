@@ -51,6 +51,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import quran  # noqa: E402
+from generate import FFMPEG, FFPROBE, envvar  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -82,28 +83,14 @@ COVER_MS = 1550
 
 
 # --- .env ------------------------------------------------------------------
-# Each script in this pipeline carries its own reader on purpose: every one of
-# them must run standalone, so none of them may import a shared util module.
-def load_env():
-    env = dict(os.environ)
-    path = os.path.join(ROOT, ".env")
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                k, v = line.split("=", 1)
-                k, v = k.strip(), v.strip().strip('"').strip("'")
-                env.setdefault(k, v)   # shell environment wins
-    return env
-
-
-def need(env, *keys):
-    missing = [k for k in keys if not env.get(k)]
+def need(*keys):
+    """Credentials, read through generate.envvar: shell environment first,
+    then .env -- the one reader, so publish parses .env as the render does."""
+    vals = [envvar(k, None) for k in keys]
+    missing = [k for k, v in zip(keys, vals) if not v]
     if missing:
         raise SystemExit("missing in .env: %s" % ", ".join(missing))
-    return [env[k] for k in keys]
+    return vals
 
 
 # --- the reel --------------------------------------------------------------
@@ -112,7 +99,7 @@ def probe(path):
     asked for here rather than by clamp_cover, which needs it on the same
     file a moment later."""
     out = subprocess.run(
-        [os.environ.get("QC_FFPROBE", "ffprobe"), "-v", "error",
+        [FFPROBE, "-v", "error",
          "-show_entries", "format=duration:format_tags:stream=width,height",
          "-select_streams", "v:0", "-of", "json", path],
         capture_output=True, text=True, check=True).stdout
@@ -140,7 +127,13 @@ def reel_facts(path, surah=None, ayat=None, reciter=None):
                 % os.path.basename(path))
         surah, a0, a1 = (int(g) for g in m.groups())
     else:
-        a0, a1 = (int(x) for x in str(ayat).replace(":", "-").split("-")[-2:])
+        # "83-87", "83", or with the surah spelled in: "56:83-87".
+        nums = str(ayat).split(":")[-1].split("-")
+        try:
+            a0, a1 = int(nums[0]), int(nums[-1])
+            assert len(nums) <= 2 and 0 < a0 <= a1
+        except (ValueError, AssertionError):
+            raise SystemExit("--ayat %r: expected 83 or 83-87" % ayat)
     if reciter is None:
         reciter = tags.get("artist", "").strip()
         if not reciter:
@@ -261,7 +254,7 @@ def cover_frame(path, ms, out):
     cover is uploaded as an image -- so the frame is cut here and both
     platforms end up on the SAME one."""
     subprocess.run(
-        [os.environ.get("QC_FFMPEG", "ffmpeg"), "-y", "-v", "error",
+        [FFMPEG, "-y", "-v", "error",
          "-ss", "%.3f" % (ms / 1000.0), "-i", path, "-frames:v", "1",
          "-q:v", "2", out], check=True)
     return out
@@ -284,8 +277,8 @@ def multipart(fields, filename, blob, field="source"):
     return "multipart/form-data; boundary=%s" % b.decode(), b"\r\n".join(out)
 
 
-def publish_instagram(env, path, text, publish=True, cover_ms=0):
-    ig, token = need(env, "IG_BUSINESS_ACCOUNT_ID", "FB_PAGE_TOKEN")
+def publish_instagram(path, text, publish=True, cover_ms=0):
+    ig, token = need("IG_BUSINESS_ACCOUNT_ID", "FB_PAGE_TOKEN")
     print("  instagram: creating container...")
     c = api("%s/media" % ig, token, {
         "media_type": "REELS", "upload_type": "resumable",
@@ -339,8 +332,8 @@ def set_facebook_cover(token, video_id, jpeg):
         return False
 
 
-def publish_facebook(env, path, text, publish=True, cover=None):
-    page, token = need(env, "FB_PAGE_ID", "FB_PAGE_TOKEN")
+def publish_facebook(path, text, publish=True, cover=None):
+    page, token = need("FB_PAGE_ID", "FB_PAGE_TOKEN")
     print("  facebook: opening reel session...")
     s = api("%s/video_reels" % page, token, {"upload_phase": "start"})
     vid = s["video_id"]
@@ -410,10 +403,13 @@ def mark_published(path):
             ["xattr", "-w", "-x", key,
              plistlib.dumps(tags, fmt=plistlib.FMT_BINARY).hex(), path],
             check=True, capture_output=True)
+        # The path goes in as an argument, never spliced into the script: a
+        # quote or backslash in a filename would otherwise be AppleScript.
         subprocess.run(
-            ["osascript", "-e",
+            ["osascript", "-e", "on run argv", "-e",
              'tell application "Finder" to set label index of '
-             '(POSIX file "%s" as alias) to %d' % (path, FINDER_LABEL_INDEX)],
+             "(POSIX file (item 1 of argv) as alias) to %d"
+             % FINDER_LABEL_INDEX, "-e", "end run", os.path.abspath(path)],
             capture_output=True, timeout=15)
         print("  tagged %s in Finder" % PUBLISHED_TAG.lower())
     except Exception as e:                                  # noqa: BLE001
@@ -424,8 +420,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description="publish a rendered reel to Instagram + Facebook")
     ap.add_argument("reel", help="reels/<name>.mp4, or just the reel's name")
-    ap.add_argument("--ig-only", action="store_true")
-    ap.add_argument("--fb-only", action="store_true")
+    only = ap.add_mutually_exclusive_group()
+    only.add_argument("--ig-only", action="store_true")
+    only.add_argument("--fb-only", action="store_true")
     ap.add_argument("--draft", action="store_true",
                     help="upload but do not publish: an Instagram container "
                          "and a Facebook draft, both publishable by hand")
@@ -440,6 +437,8 @@ def main(argv=None):
     ap.add_argument("--ayat", help="e.g. 83-87 (with --surah)")
     ap.add_argument("--reciter", help="Arabic name, as the hashtag spells him")
     a = ap.parse_args(argv)
+    if (a.surah is None) != (a.ayat is None):
+        ap.error("--surah and --ayat go together")
 
     a.reel = find_reel(a.reel)
     surah, a0, a1, reciter, dur_ms = reel_facts(a.reel, a.surah, a.ayat,
@@ -466,24 +465,35 @@ def main(argv=None):
                 not in ("y", "yes"):
             return 1
 
-    env = load_env()
     if a.cover_ms:
         a.cover_ms = clamp_cover(dur_ms, a.cover_ms)
-    if not a.fb_only:
-        publish_instagram(env, a.reel, ig_text, publish=not a.draft,
-                          cover_ms=a.cover_ms)
-    if not a.ig_only:
-        cover = None
-        if a.cover_ms:
-            cover = cover_frame(a.reel, a.cover_ms,
-                                os.path.join(tempfile.gettempdir(),
-                                             "qc-cover-%d.jpg" % os.getpid()))
-        publish_facebook(env, a.reel, fb_text, publish=not a.draft,
-                         cover=cover)
-        if cover:
-            os.remove(cover)
-    if not a.draft:
-        mark_published(a.reel)
+    # Tagged as soon as ONE platform is live, so a Facebook failure after
+    # Instagram published still leaves the file marked -- and says which.
+    posted = []
+    try:
+        if not a.fb_only:
+            publish_instagram(a.reel, ig_text, publish=not a.draft,
+                              cover_ms=a.cover_ms)
+            posted.append("Instagram")
+        if not a.ig_only:
+            cover = None
+            try:
+                if a.cover_ms:
+                    cover = cover_frame(
+                        a.reel, a.cover_ms,
+                        os.path.join(tempfile.gettempdir(),
+                                     "qc-cover-%d.jpg" % os.getpid()))
+                publish_facebook(a.reel, fb_text, publish=not a.draft,
+                                 cover=cover)
+            finally:
+                if cover and os.path.exists(cover):
+                    os.remove(cover)
+            posted.append("Facebook")
+    finally:
+        if posted and not a.draft:
+            mark_published(a.reel)
+        if len(posted) < len(targets):
+            print("  ! went out to %s only" % (" + ".join(posted) or "nothing"))
     return 0
 
 

@@ -4,10 +4,10 @@ Landscape 1920x1080: graded footage, white Thuluth on colour pills, wipe then
 sequential crossfades, full-frame FX (fx.py). The 16:9 picture IS the canvas --
 this style does not letterbox, because black padding is not content.
 
-Constants from reference reels (legacy/templates/bars.yaml); size 213pt /
-96px pill / 0.45 W ink. The refs were measured on 720- and 1080-wide pictures
-and every constant here carries to this canvas's 1920 by the matching factor;
-each one names its own. Golden: tests/graph_parity.py.
+Constants measured from reference reels; size 213pt / 96px pill / 0.45 W
+ink. The refs were measured on 720- and 1080-wide pictures and every constant
+here carries to this canvas's 1920 by the matching factor; each one names its
+own. Golden: tests/graph_parity.py.
 Cost: OPTIMIZATIONS.md. `fx: {heat: false}` for timing previews.
 
 Called by generate.py; not a standalone CLI.
@@ -19,7 +19,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, features
+from PIL import Image, ImageDraw, ImageFont, features
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -27,18 +27,19 @@ FONT_DIR = os.path.join(ROOT, "assets", "fonts")
 sys.path.insert(0, HERE)
 
 import fx as FX  # noqa: E402
-from render_common import (FFMPEG, FPS, PORTRAIT_PAD, PROBE,  # noqa: E402
-                           VIDEO_FADE_IN_S, VIDEO_FADE_OUT_S, audio_fades,
-                           encode, fit_pt, loudnorm_filter, measure_loudness,
-                           trim_to_ink)
+from generate import run  # noqa: E402
+from render_common import (FADE_IN_S, FADE_OUT_S, FFMPEG,  # noqa: E402
+                           FPS, PORTRAIT_PAD, PROBE, audio_fades, encode,
+                           fit_pt, loudnorm_filter, measure_loudness, norm_ar,
+                           source_chain, trim_to_ink)
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
              "laid out unjoined, left to right. Use tools/render-venv/bin/python.")
 
 # ---------------------------------------------------------------------------
-# Style constants -- legacy/templates/bars.yaml, derived from pixel
-# measurements of the two reference reels (720x1280 refs x1.5 -> 1080).
+# Style constants, derived from pixel measurements of the two reference reels
+# (720x1280 refs x1.5 -> 1080).
 # ---------------------------------------------------------------------------
 CANVAS_W, CANVAS_H = 1920, 1080
 
@@ -77,9 +78,9 @@ TEXT = {
 # ONE drop shadow on the glyphs -- a solid offset copy of the silhouette,
 # pure black, fully opaque, ZERO blur, pushed straight DOWN. It rides OVER
 # the pill, darkening the bar where a glyph overhangs it (as measured).
-TEXT_SHADOW = {"color": (0, 0, 0), "opacity": 1.0,
+TEXT_SHADOW = {"color": (0, 0, 0),
                # 11px down at this height; the refs measure 6px at 608.
-               "dx_frac": 0.0, "dy_frac": 0.0102, "blur_px": 0}
+               "dy_frac": 0.0102}
 
 # Pill through the glyph bodies: 96px, the 36.1px DDAVDmsMQr3 measures at 720
 # carried to this canvas.
@@ -101,13 +102,13 @@ BAR_AUTO = {"lightness_gain": 1.78, "lightness_min": 0.34, "lightness_max": 0.48
 # the gap the recitation actually leaves. A wipe-out is EXEMPT from the
 # shrink (anchor `end`): it keeps its full duration, mirrors its wipe-in, and
 # eats the outgoing caption's tail instead of snapping.
-TRANSITIONS = {"first": "wipe", "rest": "crossfade", "wipe_target": "bar",
+TRANSITIONS = {"first": "wipe", "rest": "crossfade",
                "min_fade_s": 0.20, "crossfade_s": 0.95,
                "wipe_in_s": 1.02, "wipe_out_s": 1.02,
                "wipe_out_anchor": "end", "wipe_feather_px": 20}
 
-# Band FX parameters -- see pipeline/fx.py for what each one is and
-# legacy/style/refs2/FX_RECIPE.md for the measurements behind the numbers.
+# Band FX parameters -- see pipeline/fx.py for what each one is. The
+# measurement notes behind the numbers (FX_RECIPE.md) are in git history.
 FX_CFG = {
     "glow": {"lo": 0.20, "hi": 0.40, "scatter": 10.0, "gain": 0.35},
     "barglow": {"sigma_near_px": 21, "weight_near": 0.22,
@@ -128,9 +129,9 @@ SWITCHES = ("grade", "scrim") + FX.BAND_ORDER
 # place for a handle here is over the picture, and that is not this look.
 # render() says so rather than dropping the key silently.
 
-# House normalisation of the caption text (see legacy/qc/arabic.py):
-# U+06DF renders ZERO WIDTH in AM_Thulth (silent width corruption) and
-# U+06ED reads as a stray floating meem.
+# House normalisation of the caption text: U+06DF renders ZERO WIDTH in
+# AM_Thulth (silent width corruption) and U+06ED reads as a stray floating
+# meem.
 STRIP_MARKS = {"\u06DF", "\u06ED"}
 # Combining marks, for the tashkeel-stripped "letter body" band the pill must
 # sit inside -- the marks overshoot the em box, so the full ink bbox would
@@ -141,16 +142,8 @@ TASHKEEL = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0653"
                "\u06EA\u06ED\u06EB\u06EC")
 
 
-def norm_ar(s):
-    return "".join(c for c in s if c not in STRIP_MARKS)
-
-
 def strip_tashkeel(s):
     return "".join(c for c in s if c not in TASHKEEL)
-
-
-def run(cmd, **kw):
-    return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw)
 
 
 def switches(clip_fx):
@@ -213,12 +206,7 @@ def band_source_chain(crop, grade_on=True, grade=None):
     """[0:v] -> the graded 1920x1080 picture (no captions).
     The grade also feeds the bar-colour derivation, so turning it off moves
     the pill hue as well as the picture."""
-    if crop:
-        pre = ("crop=%d:%d:%d:%d,scale=%d:%d:flags=lanczos"
-               % (crop["w"], crop["h"], crop["x"], crop["y"], BAND_W, BAND_H))
-    else:
-        pre = ("scale=%d:%d:flags=lanczos:force_original_aspect_ratio=increase,"
-               "crop=%d:%d" % (BAND_W, BAND_H, BAND_W, BAND_H))
+    pre = source_chain(crop, BAND_W, BAND_H)
     if not grade_on:
         return pre
     return "%s,eq=%s,colorbalance=%s,vignette=%s" % (
@@ -301,7 +289,7 @@ def phrase_lines(ph, font, max_w):
     line when it fits the width cap, else the two-line split whose line
     widths are closest to equal -- the account's standard is the two lines of
     a card within ~30px of each other."""
-    words = norm_ar(ph["text"]).split()
+    words = norm_ar(ph["text"], STRIP_MARKS).split()
     split = ph.get("line_split")
     if split:
         k = max(1, min(len(words) - 1, int(split)))
@@ -386,18 +374,13 @@ def with_shadow(ink, cfg, W, H):
     """The glyph layer plus its ONE drop shadow (beneath the ink): a solid,
     fully-opaque, un-blurred copy displaced straight DOWN -- its boundary
     exactly as sharp as the glyph's own antialiased edge."""
-    dx = int(round(cfg["dx_frac"] * W))
     dy = int(round(cfg["dy_frac"] * H))
-    alpha = ink.getchannel("A")
-    if cfg["opacity"] < 1.0:
-        alpha = alpha.point(lambda v: int(round(v * cfg["opacity"])))
     sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sh.paste(Image.new("RGBA", (W, H), cfg["color"] + (255,)), (0, 0), alpha)
+    sh.paste(Image.new("RGBA", (W, H), cfg["color"] + (255,)), (0, 0),
+             ink.getchannel("A"))
     # NEAREST: an integer translate must not resample the silhouette soft.
-    sh = sh.transform((W, H), Image.AFFINE, (1, 0, -dx, 0, 1, -dy),
+    sh = sh.transform((W, H), Image.AFFINE, (1, 0, 0, 0, 1, -dy),
                       resample=Image.NEAREST)
-    if cfg["blur_px"] > 0:
-        sh = sh.filter(ImageFilter.GaussianBlur(cfg["blur_px"]))
     return Image.alpha_composite(sh, ink)
 
 
@@ -473,9 +456,14 @@ SNOW_CACHE = os.path.join(ROOT, "tools", "cache", "snow")
 # map-second per axis -- and no later reel pays perlin again.
 MIN_HEAT_SPAN = 60
 
+# Wall seconds of bake per second of map, at 1920x1080/30. The two axis maps
+# bake concurrently (`perlin` is single-threaded), so a fresh bake costs this
+# once, not once per axis.
+HEAT_BAKE_RATE = 6.3
 
-def heat_map_tag(span):
-    """The cache filename stem for a `span`-second map, minus the seed.
+
+def heat_map_name(axis, seed, span):
+    """The cache filename of one `span`-second map.
 
     Keyed on exactly what determines the baked BYTES -- the perlin source's
     own arguments plus geometry and length. Not on supersample, scroll_v,
@@ -483,9 +471,9 @@ def heat_map_tag(span):
     scroll/scale/lut, downstream of the file, and folding them in here would
     throw away a valid 164s bake every time one of them is tuned."""
     c = FX_CFG["heat"]
-    return "%dx%d_%d_%ds_o%s_p%s_x%s_t%s" % (
-        BAND_W, BAND_H, FPS, span, c["octaves"], c["persistence"],
-        c["xscale"], c["tscale"])
+    return "heat%s_%dx%d_%d_%ss_o%s_p%s_x%s_t%s_s%d.mp4" % (
+        axis, BAND_W, BAND_H, FPS, span, c["octaves"], c["persistence"],
+        c["xscale"], c["tscale"], seed)
 
 
 def heat_axes():
@@ -500,15 +488,10 @@ def heat_map_paths(dur):
     Resolves to the SHORTEST cached pair that already covers `dur`, whatever
     length that is, so a reel never re-bakes what a longer map already holds.
     Only when nothing covers it does it name a fresh bake, floored at
-    MIN_HEAT_SPAN so the first one buys every later reel too.
-
-    Reads the cache directory but writes nothing, so generate.py can warn
-    about a pending bake before a render starts rather than leaving the
-    author at a silent terminal."""
+    MIN_HEAT_SPAN so the first one buys every later reel too."""
 
     def paths(span):
-        return [os.path.join(HEAT_CACHE, "heat%s_%s_s%d.mp4"
-                             % (axis, heat_map_tag(span), seed))
+        return [os.path.join(HEAT_CACHE, heat_map_name(axis, seed, span))
                 for axis, seed in heat_axes()]
     for span in sorted(cached_heat_spans()):
         if span >= dur and all(os.path.exists(p) for p in paths(span)):
@@ -519,11 +502,7 @@ def heat_map_paths(dur):
 
 def cached_heat_spans():
     """Lengths, in seconds, of every complete x-map already on disk."""
-    c = FX_CFG["heat"]
-    axis, seed = heat_axes()[0]
-    head = "heat%s_%dx%d_%d_" % (axis, BAND_W, BAND_H, FPS)
-    tail = "_o%s_p%s_x%s_t%s_s%d.mp4" % (
-        c["octaves"], c["persistence"], c["xscale"], c["tscale"], seed)
+    head, tail = heat_map_name(*heat_axes()[0], "|").split("|s")
     out = []
     for name in sorted(os.listdir(HEAT_CACHE)) if os.path.isdir(
             HEAT_CACHE) else []:
@@ -545,7 +524,7 @@ def heat_layers(dur):
     than realtime.
 
     crf 8 on flat low-frequency noise, matching the snow loop's setting -- the
-    maps are read back through a 3x bicubic upscale, which is far softer than
+    maps are read back through a 2x bicubic upscale, which is far softer than
     the quantiser.
     """
     span, paths = heat_map_paths(dur)
@@ -553,8 +532,6 @@ def heat_layers(dur):
     c = FX_CFG["heat"]
 
     def bake(axis, seed, path):
-        print("      heat map %s: baking %ds of perlin (once per machine, "
-              "reused by every reel)" % (axis, span))
         src = FX.heat_perlin_src(c, BAND_W, BAND_H, FPS, seed)
         # Bake to a pid-tagged temp and rename only on success: the cache
         # is keyed by name alone, so a file that exists must be complete.
@@ -582,6 +559,13 @@ def heat_layers(dur):
             for (axis, seed), path in zip(heat_axes(), paths)
             if not os.path.exists(path)]
     if todo:
+        # Said up front: the bake is minutes of silence otherwise. Only a reel
+        # longer than every cached map pays it, and it buys every later one.
+        print("      heat: no cached map covers %.1fs -- baking %ds of perlin "
+              "(%s), ~%dmin, once per machine; every later reel up to %ds "
+              "reuses it. fx: {heat: false} skips it."
+              % (dur, span, "+".join(a for a, _s, _p in todo),
+                 round(HEAT_BAKE_RATE * span / 60.0), span))
         # `perlin` is single-threaded, so the two axis bakes overlap almost
         # perfectly (measured 1.93x on a 4s-span pair); each thread only
         # waits on its own ffmpeg.
@@ -641,11 +625,10 @@ def schedule(phrases, dur):
     frames of tail beats a 0.2s snap-out."""
     tr = TRANSITIONS
     n_ph = len(phrases)
-    kinds = [str(tr["first"] if i == 0 else tr["rest"]).lower()
-             for i in range(n_ph)]
-    xf = float(tr["crossfade_s"])
-    wipe_in_s, wipe_out_s = float(tr["wipe_in_s"]), float(tr["wipe_out_s"])
-    minf = float(tr["min_fade_s"])
+    kinds = [tr["first"] if i == 0 else tr["rest"] for i in range(n_ph)]
+    xf = tr["crossfade_s"]
+    wipe_in_s, wipe_out_s = tr["wipe_in_s"], tr["wipe_out_s"]
+    minf = tr["min_fade_s"]
 
     def snap(t):
         """On the frame grid, so a fade-out's last frame and the next
@@ -668,8 +651,7 @@ def schedule(phrases, dur):
         gap = t0n - t1c
         d_out, d_in = sched[i][4], sched[i + 1][2]
         nom_out = wipe_out_s if kinds[i] == "wipe" else xf
-        anch = kinds[i] == "wipe" and \
-            str(tr["wipe_out_anchor"]).lower() == "end"
+        anch = kinds[i] == "wipe" and tr["wipe_out_anchor"] == "end"
         if d_out + d_in + guard > gap:            # shrink both, in ratio
             k = max(0.0, gap - guard) / (d_out + d_in)
             d_out, d_in = max(minf, d_out * k), max(minf, d_in * k)
@@ -692,15 +674,14 @@ def schedule(phrases, dur):
 
 
 # ---------------------------------------------------------------------------
-# the filtergraph (a faithful port of legacy build_bars.build)
+# the filtergraph
 # ---------------------------------------------------------------------------
 
 def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
                 ln, afade, heat_paths=None, grade=None, portrait=False):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1..2n]=bar,text
-    per phrase, then snow, then scrim (last of the legacy set, so dropping it
-    cannot shift any other index), then the two heat maps. The heat pair goes
-    LAST so optional maps never renumber earlier inputs."""
+    per phrase, then snow, then scrim, then the two heat maps. The heat pair
+    goes LAST so optional maps never renumber earlier inputs."""
     W, H = CANVAS_W, CANVAS_H
     tr = TRANSITIONS
     nphrases = len(rep)
@@ -736,7 +717,6 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
                  heat_x_in=heat_in[0] if heat_in else None,
                  heat_y_in=heat_in[1] if heat_in else None)
 
-    wtgt = str(tr["wipe_target"]).lower()
     g_.chain(vin, [band_source_chain(crop, on["grade"], grade), "setsar=1",
                    "fps=%d" % FPS, "format=gbrp"], "bnd")
     if on["scrim"]:
@@ -754,7 +734,7 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
         masks = {}
         if kind == "wipe":
             x0, x1 = rep[i]["x0"], rep[i]["x1"]
-            feather = float(tr["wipe_feather_px"])
+            feather = tr["wipe_feather_px"]
             # front travel: the full bar span plus enough margin for the
             # feathered front to clear both ends completely.
             trav = (x1 - x0) + 2 * feather + 40
@@ -774,13 +754,8 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
                       f"gblur=sigma={feather / 4.0:.2f}:steps=2",
                       "format=gray"],
                      f"m{i + 1}")
-            if wtgt == "all":
-                g_.chain(f"m{i + 1}", "split=2",
-                         [f"mbar{i + 1}", f"mtext{i + 1}"])
-                masks = {"bar": f"mbar{i + 1}", "text": f"mtext{i + 1}"}
-            else:
-                # `bar`: the pill alone rides the sweep; the text dissolves.
-                masks = {"bar": f"m{i + 1}"}
+            # The pill alone rides the sweep; the text dissolves.
+            masks = {"bar": f"m{i + 1}"}
         # bar first, text over it -- so the shadow (in the text layer) lands
         # ON the pill, as measured in the references.
         for j, name in enumerate(("bar", "text")):
@@ -824,9 +799,8 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     band_lbl = g_.tap("band", "fxbase")
     for eff in chain:
         band_lbl = eff.apply(g_, band_lbl, ctx)
-    fades = [f"fade=t=in:st=0:d={VIDEO_FADE_IN_S}",
-             f"fade=t=out:st={dur - VIDEO_FADE_OUT_S:.3f}:"
-             f"d={VIDEO_FADE_OUT_S}"] \
+    fades = [f"fade=t=in:st=0:d={FADE_IN_S}",
+             f"fade=t=out:st={dur - FADE_OUT_S:.3f}:d={FADE_OUT_S}"] \
         + ([PORTRAIT_PAD] if portrait else []) + ["format=yuv420p"]
     g_.chain(band_lbl, fades, "vout")
     g_.chain(vin.a, [f for f in (ln, afade) if f], "aout")
@@ -844,8 +818,6 @@ def render(plan):
     dur = info["duration"]
 
     crop = cfg.get("crop")
-    if crop and not all(k in crop for k in ("x", "y", "w", "h")):
-        raise SystemExit("crop must carry x, y, w, h")
     on = switches(cfg.get("fx"))
     grade = cfg.get("grade")
     if grade:
