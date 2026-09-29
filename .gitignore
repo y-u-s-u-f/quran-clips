@@ -1,19 +1,24 @@
 # ==========================================================================
 # quran-clips — track the CREATION PROCESS, not the output.
 # Tracked: pipeline/, assets/ (fonts + quran editions + scene images), docs/,
-#          .claude/, the per-source reel configs and meta under sources/*/,
-#          and the archived first/second-generation code under legacy/.
+#          .agents/, the reel configs of three example sources under
+#          sources/, and the archived first/second-generation code under legacy/.
 # Ignored: downloaded footage, transcripts, the rendered reels under reels/,
 #          and the venvs under tools/.
 # ==========================================================================
 
 # --- sources/: one folder per source video ---------------------------------
-# Media, captions and Whisper output are re-derivable (fetch.py /
-# transcribe.py); the authored *.yaml reel configs and the fetched meta.yaml
-# are the creation process and DO ship. Git will not descend into an excluded
-# directory, so contents are excluded per-folder and the yamls re-admitted.
+# Everything here stays local except the *.yaml of three example sources:
+# hajri-23-taraweeh (one reel in all three styles), ahmad-alarabi and
+# ansari-efore-end-maryam (the ASR/alignment test pair in
+# docs/asr-and-alignment.md). Media, captions and Whisper output are
+# re-derivable (fetch.py / transcribe.py). Git will not descend into an
+# excluded directory, so the kept folders are re-admitted and their yamls
+# re-admitted inside them.
 sources/*
-!sources/*/
+!sources/hajri-23-taraweeh/
+!sources/ahmad-alarabi/
+!sources/ansari-efore-end-maryam/
 sources/*/*
 !sources/*/*.yaml
 

@@ -3,9 +3,7 @@
 Read the rejected list before proposing anything. Numbers:
 `sources/hajri-23-taraweeh/hujurat-4-5-*.yaml` (26.2s, 5 cards, 1920x1080
 source) -- the one source with all three styles cut from it, so the rows below
-are one reel three ways. `sources/gt9y-QGgMsA/hadid-16-16-bars.yaml` (27.5s, 8
-cards, 4P+4E) where noted; its media is not on this machine, which is why the
-`bars` row is measured on hujurat now.
+are one reel three ways.
 
 ## Current cost
 

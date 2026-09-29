@@ -11,7 +11,7 @@ ayah_end: 5
 
 # HAND-SET. The source is 17 minutes of taraweeh across at least two reciters
 # (the man changes around 700s), so align.py's auto-trim has no way to bound
-# itself -- see CLAUDE.md on the quiet failure that produces. Taken off the
+# itself -- see make-post SKILL.md on the quiet failure that produces. Taken off the
 # transcript, then the head tightened onto align.py's measured
 # onset (it found 0.98s of dead air at 124.2): a reel opens ON the
 # recitation, 120ms of lead and no more.
