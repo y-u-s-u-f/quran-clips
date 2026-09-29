@@ -117,6 +117,6 @@ Not present in `quran-clips`, which addresses the same needs differently
 
 Durable procedure now lives in:
 
-- `y-u-s-u-f/quran-clips` — the package, its `.claude/skills/make-post/SKILL.md`,
+- `y-u-s-u-f/quran-clips` — the package, its `.agents/skills/make-post/SKILL.md`,
   and PR #1 (portability, egress routing, decode-verified output).
-- The `quran-video-captioning` Hermes skill, rewritten to drive that package.
+- The `quran-video-captioning` skill, rewritten to drive that package.

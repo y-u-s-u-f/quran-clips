@@ -3,7 +3,7 @@
 `qc.*` proper is the renderer's shared internals, frozen against the goldens in
 tests/golden/. This subpackage is the other half: deciding what to clip in the
 first place. It is the code replacing the prose procedure in
-`.claude/skills/make-post/SKILL.md`, one stage at a time.
+`.agents/skills/make-post/SKILL.md`, one stage at a time.
 
 Present:
     fetch    `qc source add <url>` -- yt-dlp download + metadata + auto-captions

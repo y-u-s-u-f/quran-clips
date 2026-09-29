@@ -3,7 +3,7 @@
     tools/render-venv/bin/python tests/graph_parity.py
     tools/render-venv/bin/python tests/graph_parity.py --bless
 
-CLAUDE.md invariant 2: a look change is an owner decision and never a
+AGENTS.md invariant 2: a look change is an owner decision and never a
 refactor side-effect. This rebuilds the at-tawbah-128-128 graph -- the useful
 case because it exercises a wipe card, crossfade cards, a two-line card and a
 single-line card in one graph -- and diffs it filter by filter against

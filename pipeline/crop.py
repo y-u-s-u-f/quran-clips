@@ -56,7 +56,7 @@ import generate  # noqa: E402  (config/path helpers only -- no Pillow)
 
 # --- machine config (.env) -------------------------------------------------
 # Copied, not imported. Every pipeline script carries its own reader so it
-# stays runnable on its own; see CLAUDE.md's codebase map.
+# stays runnable on its own; see AGENTS.md's codebase map.
 
 def _dotenv():
     """KEY=value pairs from ROOT/.env; process environment wins on conflict."""
@@ -935,7 +935,7 @@ def report(m, sol, style, W, H):
         if not 0.0 < cap < 1.0:
             bad.append("caption centre %.3f is off the frame" % cap)
             print("! caption centre %.3f is OFF THE FRAME. This is the -0.105 "
-                  "failure in sources/9Yci0oWB2fE/meta.yaml -- the block width "
+                  "failure on source 9Yci0oWB2fE -- the block width "
                   "is wrong, not the formula." % cap, file=sys.stderr)
     if m["obstructions"]:
         print("graphics: %d burned-in box(es) seen in most frames:"

@@ -141,7 +141,7 @@ a source lit darker than the reference reels lands under it — a Dubai taraweeh
 measured 0.05, where the reciter reads as a silhouette. Lift that reel's own
 config, `grade: {brightness: -0.12, gamma: 0.95}` (keys: brightness contrast
 saturation gamma, merged over the house numbers), not the constant in
-render_bars.py: measured across the tracked bars reels, moving GRADE_EQ far
+render_bars.py: measured across the bars reels, moving GRADE_EQ far
 enough to fix the dark ones pushes the correctly-exposed ones out the bright
 side. The grade also feeds the pill-colour derivation, so the bar hue moves with
 it. The scrim is not the lever — its whole range is worth about 3 luma here.

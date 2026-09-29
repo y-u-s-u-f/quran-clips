@@ -1,7 +1,7 @@
 # Original pipeline scripts
 
 The **actual** first-generation implementation, not a reconstruction. Recovered
-intact from `~/.hermes/tools/transcription/` and verified to run: all three files
+intact from its original `tools/transcription/` directory and verified to run: all three files
 parse, and `quran_reel_pipeline.py --print-schema` still prints its full config
 reference.
 
@@ -17,8 +17,8 @@ Uploaded 2026-07-31.
 ## Running it
 
 ```sh
-source ~/.hermes/hermes-agent/venv/bin/activate
-cd ~/.hermes/tools/transcription
+source <venv>/bin/activate
+cd <tools>/transcription
 python3 quran_reel_pipeline.py --print-schema          # full config reference
 python3 quran_reel_pipeline.py configs/<name>.json     # render one reel
 ```

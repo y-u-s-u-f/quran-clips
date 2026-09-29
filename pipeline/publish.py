@@ -169,7 +169,7 @@ def caption(surah, a0, a1, reciter, with_ayat=True):
             groups.append((t, [v]))
 
     # "al-Tafsir al-Muyassar: ", escaped rather than pasted -- no Arabic is
-    # typed into a source file here (see CLAUDE.md invariant 1). Letter by
+    # typed into a source file here (see AGENTS.md invariant 1). Letter by
     # letter: alef lam teh feh seen yeh reh / alef lam meem yeh seen reh.
     lines = ["\u0627\u0644\u062a\u0641\u0633\u064a\u0631"      # al-Tafsir
              " \u0627\u0644\u0645\u064a\u0633\u0631: "]  # al-Muyassar

@@ -6,13 +6,13 @@ Combines the two measurements that must agree before you trust a trim:
   2. the deepest trough's timing, so ASR can be aimed at the resumption
 
 Usage:
-    source /home/ubuntu/.hermes/hermes-agent/venv/bin/activate
+    source <venv>/bin/activate
     python3 find_trim_point.py recitation.m4a                 # scan first 120s
     python3 find_trim_point.py recitation.m4a --window 30 90  # narrow the scan
 
 Then confirm the verse with ASR aimed just before the resumption:
     python3 -c "
-    import sys; sys.path.insert(0,'/home/ubuntu/.hermes/tools/transcription')
+    import sys; sys.path.insert(0,'<tools>/transcription')
     from transcribe import transcribe_quran
     t,m = transcribe_quran('probe.wav', window_ayahs=3)
     print(t); [print('%.3f'%x['score'], x['text'][:90]) for x in m[:3]]"

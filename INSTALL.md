@@ -90,7 +90,7 @@ Escalation is fixed — static residential, then datacentre, then fail — and
 one exit is used per fetch, because a signed googlevideo URL embeds the exit
 IP that resolved it and a rotating proxy cannot download at all.
 
-## 4. Optional: the Claude Code CLI for framing
+## 4. Optional: the `claude` CLI for framing
 
 `pipeline/crop.py` solves each reel's crop and caption anchor by asking a
 vision model where the reciter is. It shells out to the local `claude` binary
@@ -99,21 +99,7 @@ over your own auth -- no API key -- and caches every answer in the source's
 nothing else needs it, and rendering never calls it (invariant 4), so a reel
 re-renders identically on a machine that has no `claude` at all.
 
-## 5. Choosing an agent harness
-
-Either drives the pipeline; the instructions and the skill are one copy each.
-
-- **Claude Code** — nothing to do. It reads `CLAUDE.md` (which imports
-  `AGENTS.md`) and finds `skills/make-post` through the committed
-  `.claude/skills/make-post` symlink.
-- **Hermes** — `./install.sh --hermes` adds this clone's `skills/` to
-  `skills.external_dirs` in `~/.hermes/config.yaml`, which makes `/make-post`
-  available from any directory. Re-running it is a no-op, and the entry is
-  read-only to Hermes' background curator, so the repo stays the only writer.
-
-Both then say the same thing: `make-post` is the only reel workflow.
-
-## 6. Verify
+## 5. Verify
 
 ```sh
 ./install.sh --check                 # every line green, .env present

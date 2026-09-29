@@ -53,7 +53,7 @@ transcript, so transcribe.py can be skipped entirely.
 
 Runs under tools/align-venv, never tools/render-venv: torch and
 transformers must never land in the interpreter whose Pillow carries the
-RAQM build that shapes Arabic (CLAUDE.md invariant #3).
+RAQM build that shapes Arabic (AGENTS.md invariant #3).
 
 Forced alignment assumes each reference word is spoken once, so a
 reciter's ibtida'-restart (breaking off and repeating a phrase) leaves
