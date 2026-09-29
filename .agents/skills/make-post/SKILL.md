@@ -15,9 +15,8 @@ Unfamiliar machine: `./install.sh --check` first.
 ## Steps
 
 ```
-python3 pipeline/fetch.py <url-or-path> [--name SLUG] [--proxy] [--timestamps A-B]
-# find the span: captions.srt if fetch got one, else
-python3 pipeline/transcribe.py sources/<id>
+python3 pipeline/fetch.py <url-or-path> [--name SLUG] [--proxy] [--timestamps A-B] [--client C]
+python3 pipeline/transcribe.py sources/<id>        # span finder + ibtidāʾ repair
 python3 pipeline/quran.py --search "<arabic>"     # -> surah:ayah
 # write sources/<id>/<reel>.yaml   (see Config)
 tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml   # several configs: one model load
@@ -27,7 +26,12 @@ ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate, always
 python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
 ```
 
-- Know the verses already → skip transcribe, name them in the config.
+- Skip transcribe only when you know the verses AND the reciter never
+  restarts a phrase: without `whisper.json` align.py cannot repair an ibtidāʾ
+  restart, and the card silently opens late.
+- Name the span in the config. Omitted, align.py identifies it from Whisper
+  and writes it back beside `trim:` — reliable only on a short source; check
+  what it wrote.
 - `captions.srt` is the cheapest span finder: dedupe rolling windows (keep each
   block's last line). Timings are ±1–2s — enough to pick a span, never to `trim:`.
 - Open `/tmp/c.png` and look, every time. crop.py's guards check its own numbers
@@ -53,10 +57,14 @@ groups:
     english: "..."                # vertical + horizontal; bars is Arabic-only
     line_split: 2                 # bars only; omit = auto
 # crop:, x_offset:, face_bottom: are written by crop.py --write
-# optional: suppress, nudge, verse_numbers, y_offset, arabic_font, english_font,
-#   arabic_scale, english_scale, text_width_frac, english_caps, vignette, dim,
-#   bar_color, grade, fx
+# optional: suppress, nudge, verse_numbers, y_offset, signature_offset,
+#   arabic_font, english_font, arabic_scale, english_scale, text_width_frac,
+#   english_caps, vignette, dim, bar_color, grade, fx
 ```
+
+Unknown keys are refused inside `groups` (`n_words english line_split`) and
+`nudge` (`group start end`) entries too, as are bad shapes (`trim`, `crop`,
+fonts, `line_split` outside `1..n_words-1`).
 
 Requirements:
 
@@ -77,11 +85,10 @@ Requirements:
 Per style: `vertical` (1080×1920) needs `crop:` + `face_bottom:` — generate
 refuses a landscape source without a crop rather than centre-crop him blind.
 `horizontal` and `bars` (1920×1080) need `x_offset:`. `--vertical` letterboxes a
-1920×1080 render onto 1080×1920 inside the render's own encode, leaving the
-picture about a third of the frame, so bars' Arabic arrives nearer
-120pt-equivalent; native `vertical` avoids that trade. Safe to re-run through
-generate. `generate.py --verify-only` prints the verification block and stops —
-use it to check a split before paying a render.
+1920×1080 style onto 1080×1920 in the same encode, shrinking the picture to a
+third of the frame (`pipeline/README.md`); native `vertical` avoids that trade.
+`generate.py --verify-only` prints the verification block and stops — use it
+to check a split before paying a render.
 
 ## Verify English against BOTH translations
 
@@ -112,7 +119,8 @@ was none. Check the card start against the envelope before reaching for `nudge:`
 **crop.py boxed a shoulder.** A draped, hooded or turned head can box clean and
 confident (fy=0.275) and still be wrong; bowed posture fails differently. Look at
 the annotation. Hand-solve by measuring crown / body / congregation / graphics over
-several frames: head centre at **0.771 of the window**, crown kept in frame. For
+several frames: face centre at **0.275 of the window height** (`FACE_Y_FRAC`),
+crown kept in frame. For
 `x_offset`, match the outer margins, or centre him in the free space if he runs off
 the edge — `(f-0.5)*1920`. For `face_bottom`, where his head box ends as a fraction
 of canvas height.
@@ -128,13 +136,14 @@ the new cap still leaves margin (130pt → 1143px = 0.595 W, so 0.62).
 **Bars caption lines.** Budget is 213pt with an 864px ink cap → 2–3 words a line.
 If the reported pt is under nominal, one long line is dragging the whole reel down.
 Lines should land within ~30px of each other; >60px is visible. Let auto-balance
-try first, then fix the card boundary (`n_words`) before `line_split` — a
-`line_split` past the cap re-wraps silently, and there is no kashida. Single line
-only at a waqf or ayah end. Take ~3pt of loss over a broken clause; some cards
+try first, then fix the card boundary (`n_words`) before `line_split`. A
+`line_split` is never re-wrapped: a line past the cap keeps the split and
+`fit_pt` shrinks the shared point size for EVERY card. There is no kashida.
+Single line only at a waqf or ayah end. Take ~3pt of loss over a broken clause; some cards
 won't balance, so pick the closer break and stop.
 
-**Bars timing previews.** `fx: {heat: false}` renders ~27% cheaper, but never
-judge the LOOK without the full stack.
+**Bars timing previews.** `fx: {heat: false}` (cost: `OPTIMIZATIONS.md`), but
+never judge the LOOK without the full stack.
 
 **The picture is too dark.** The grade aims the band at mean luma 0.15-0.32, and
 a source lit darker than the reference reels lands under it — a Dubai taraweeh
@@ -146,12 +155,13 @@ enough to fix the dark ones pushes the correctly-exposed ones out the bright
 side. The grade also feeds the pill-colour derivation, so the bar hue moves with
 it. The scrim is not the lever — its whole range is worth about 3 luma here.
 
-**fetch: "Sign in to confirm you're not a bot".** It is per exit IP and per player
-client, and fetch walks the clients itself. Read the printed `client` and `WxH`
-before blaming the proxy pool: a client without a GVS PO token exits 0 at 640x360,
-a silent quality failure rather than an error. `--client android_vr` pins a client
-that carries the full ladder and recovers 1080p when `tv_simply` lands short.
-Pool + `--proxy` goes static residential → datacentre → fail; rotating exits cannot
+**fetch: "Sign in to confirm you're not a bot", or low resolution.** The bot
+check is per exit IP and per player client; fetch walks the clients itself and
+passes over any that offers under 720p (without a PO token only `web_embedded`
+reaches 1080p). Read the printed `client` and `WxH` before blaming the proxy
+pool. If every client lands short fetch stops and says so; for a genuinely
+low-res source pin one with `--client`, which takes whatever it offers. Pool +
+`--proxy` goes static residential → datacentre → fail; rotating exits cannot
 download. Prefer a full download plus `trim:` over `--timestamps` through an
 authenticated proxy.
 
@@ -162,6 +172,8 @@ authenticated proxy.
 - Trust fetch's stub gate; don't bypass it.
 - Decode-check before calling a render done.
 - Do not `open` artefacts; report the path.
-- Never publish unless asked (`--caption-only` is safe for review). A reel
-  that posted is tagged green in Finder; `--draft` and `--caption-only` are not.
+- Never publish unless asked (`--caption-only` is safe for review).
+  `--ig-only`/`--fb-only` are exclusive; `--surah` and `--ayat` go together. A
+  reel is tagged green in Finder once one platform posted; `--draft` and
+  `--caption-only` never tag.
 - Don't delete or overwrite a different reel; the filename is its identity.

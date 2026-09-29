@@ -5,14 +5,15 @@
 #     ./install.sh --check    report only, install nothing
 #
 # What it does, in order:
-#   1. checks the system tools (python3, ffmpeg, ffprobe, yt-dlp, curl)
+#   1. checks the system tools (python3, ffmpeg, ffprobe, yt-dlp)
 #   2. builds tools/render-venv  -- PyYAML + a Pillow whose RAQM does Arabic
 #      shaping (falls back to --system-site-packages when the pip wheel's
 #      Pillow lacks RAQM but the system python's has it)
 #   3. builds tools/asr-venv    -- mlx-whisper on Apple silicon,
-#      faster-whisper everywhere else (override with QC_ASR_BACKEND in .env)
+#      faster-whisper everywhere else (QC_ASR_BACKEND overrides, read from
+#      the shell or .env like every script reads it)
 #   3b. builds tools/align-venv -- ctc-forced-aligner (torch) for align.py
-#   4. resolves the framing model for pipeline/crop.py (optional)
+#   4. looks for the `claude` CLI pipeline/crop.py uses (optional)
 #   5. copies .env.example -> .env when absent
 #   6. prints a doctor-style summary of what resolved and what is missing
 #
@@ -46,14 +47,13 @@ if [ -n "$PY" ]; then
 else
     bad+=("python3: not found -- everything needs it. brew install python3 / apt install python3-venv")
 fi
-for tool in ffmpeg ffprobe yt-dlp curl; do
+for tool in ffmpeg ffprobe yt-dlp; do
     if have "$tool"; then
         ok+=("$(printf '%-12s %s' "$tool" "$(command -v "$tool")")")
     else
         case "$tool" in
             ffmpeg|ffprobe) bad+=("$tool: not found -- rendering and probing need it. brew install ffmpeg / apt install ffmpeg");;
             yt-dlp)         bad+=("yt-dlp: not found -- fetch.py needs it for YouTube sources (local files still work). brew install yt-dlp / apt install yt-dlp");;
-            curl)           bad+=("curl: not found -- the face-model download needs it");;
         esac
     fi
 done
@@ -63,6 +63,9 @@ if have ffmpeg && ! ffmpeg -hide_banner -filters 2>/dev/null | grep -q ' perlin 
 fi
 
 [ -z "$PY" ] && { say ""; printf '  MISSING: %s\n' "${bad[@]}"; exit 1; }
+
+# QC_* from the shell, else .env -- through pipeline/generate.py's one reader.
+envvar() { "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import generate; print(generate.envvar(sys.argv[2]) or "")' "$ROOT/pipeline" "$1" 2>/dev/null; }
 
 # ---------------------------------------------------------------------------
 # 2. render venv (PyYAML + RAQM Pillow)
@@ -103,11 +106,19 @@ fi
 say "== asr venv"
 AVENV="$ROOT/tools/asr-venv"
 APY="$AVENV/bin/python"
-if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
-    ASR_PKG="mlx-whisper";    ASR_MOD="mlx_whisper"
-else
-    ASR_PKG="faster-whisper"; ASR_MOD="faster_whisper"
+ASR_BACKEND="$(envvar QC_ASR_BACKEND)"
+if [ -z "$ASR_BACKEND" ]; then
+    if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+        ASR_BACKEND=mlx
+    else
+        ASR_BACKEND=faster
+    fi
 fi
+case "$ASR_BACKEND" in
+    mlx)    ASR_PKG="mlx-whisper";    ASR_MOD="mlx_whisper";;
+    faster) ASR_PKG="faster-whisper"; ASR_MOD="faster_whisper";;
+    *) say "QC_ASR_BACKEND=$ASR_BACKEND: want mlx or faster"; exit 2;;
+esac
 if [ "$CHECK_ONLY" = 0 ]; then
     if [ ! -x "$APY" ]; then
         say "  creating $AVENV"
@@ -153,12 +164,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. framing model (pipeline/crop.py; optional, authoring only)
+# 4. the `claude` CLI (pipeline/crop.py; optional, authoring only)
 # ---------------------------------------------------------------------------
-# No download: crop.py rides the user's own `claude` CLI auth. Nothing at
-# RENDER time consults a model, so this being absent cannot change a pixel.
-if have "${QC_CLAUDE:-claude}"; then
-    ok+=("framing      $(command -v "${QC_CLAUDE:-claude}") (crop.py)")
+# crop.py rides the user's own `claude` sign-in. Nothing at RENDER time
+# consults a model, so this being absent cannot change a pixel.
+CLAUDE="$(envvar QC_CLAUDE)"
+CLAUDE="${CLAUDE:-claude}"
+if have "$CLAUDE"; then
+    ok+=("framing      $(command -v "$CLAUDE") (crop.py)")
 else
     ok+=("framing      claude CLI absent (optional; hand-write crop:/x_offset:)")
 fi
@@ -188,6 +201,7 @@ fi
 say ""
 say "All set. Next:"
 say "  python3 pipeline/fetch.py <youtube-url-or-file>"
-say "  python3 pipeline/transcribe.py sources/<id>        # only to find the span"
-say "  tools/align-venv/bin/python pipeline/align.py sources/<id>/<reel>.yaml"
+say "  python3 pipeline/transcribe.py sources/<id>        # span finder + ibtida' repair"
+say "  tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml"
+say "  tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png"
 say "  tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml"

@@ -1,82 +1,60 @@
 # pipeline/ — Qur'an reel pipeline
 
-Each script reads/writes plain files; every stage is independently runnable.
+Each stage is a script that reads and writes plain files; every one is
+independently runnable. The workflow and its fixes:
+`.agents/skills/make-post/SKILL.md`.
 
 ```
 Source (YouTube / local)
-  └─ fetch.py ──► sources/<id>/source.*  (+ captions.srt if any)
-Whisper (transcribe.py) -- ONLY to discover the verse span
-  └─ whisper.json + whisper.srt
-Identify verses (quran.py search, or name the span in the config)
+  └─ fetch.py ──► sources/<id>/source.*  (+ captions.srt, or captions.none)
+transcribe.py (Whisper) ──► whisper.json + whisper.srt
+     finds the span, and lets align.py repair an ibtidāʾ restart
+Identify verses (quran.py --search, or name the span in the config)
 Write sources/<id>/<reel>.yaml
-align.py ──► <reel>.align.json (+ writes trim: if omitted)
+align.py ──► <reel>.align.json (+ writes trim:, and the span if omitted)
 crop.py (every style) ──► crop: + x_offset:/face_bottom: in the config
 generate.py ──► reels/<reel>.mp4  (tags: title, artist, Quran s:a-b)
 publish.py ──► Instagram + Facebook
 ```
 
-## Quickstart
-
-```sh
-./install.sh
-python3 pipeline/fetch.py "https://www.youtube.com/watch?v=..."
-# transcribe + quran.py search ONLY if you don't know the verses
-tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml
-tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
-tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml [--vertical]
-python3 pipeline/publish.py reels/<reel>.mp4
-```
-
-## Layout
+## Files
 
 ```
-sources/<id>/   source.*, captions.srt?, whisper.*, <reel>.yaml, <reel>.align.json, crop.json
+sources/<id>/   source.*, captions.srt|captions.none, whisper.*,
+                <reel>.yaml, <reel>.align.json, crop.json
 reels/          output only
-pipeline/       fetch transcribe quran align crop generate letterbox publish + render_*
+pipeline/       fetch transcribe quran align crop generate letterbox publish
+                + render_text render_bars fx render_common (imported by generate)
 assets/         fonts + mushaf/translation editions
-legacy/         archived; do not run/edit/import
+tests/          graph_parity.py (bars goldens), wrap_parity.py (English wrap)
 ```
 
 ## Config
 
-`generate.py --print-schema` is authoritative. Shape:
+`tools/render-venv/bin/python pipeline/generate.py --print-schema` is the
+schema; the make-post skill has an annotated example. Rules: Uthmani by word index (no
+model-typed Arabic); unknown key = error, inside `groups`/`nudge` entries too;
+group sums must partition the span. `--verify-only` prints the verification
+block (every card vs Saheeh + Taqi) and stops — a split check costs seconds
+instead of a render.
 
-```yaml
-style: vertical                   # vertical | horizontal | bars
-signature: null                   # omit/null = burn nothing; bars never burns
-surah: 78
-ayah_start: 31
-ayah_end: 40
-reciter: "..."                    # Arabic spelling for the hashtag / mp4 artist
-trim: [15.0, 55.0]                # omit -> align.py measures (source ≈ reel only)
-groups:                           # n_words must sum to the span's word count
-  - n_words: 4
-    english: "..."                # vertical + horizontal; bars is Arabic-only
-    line_split: 2                 # bars only; omit = auto
-crop: {x: 0, y: 0, w: 1920, h: 1080}   # crop.py writes these three
-x_offset: -384                    # bars + horizontal: the caption column
-face_bottom: 0.371                # vertical: where his head box ends
-y_offset: 0                       # px nudge on whichever anchor applies
-# optional: suppress, nudge, verse_numbers, arabic_font, english_font,
-#   arabic_scale, english_scale, text_width_frac, english_caps, vignette, dim,
-#   bar_color, grade, fx
-```
+## Stages
 
-Rules: Uthmani by word index (no model-typed Arabic); unknown key = error;
-group sums must partition the span. Verification block: every card vs
-Saheeh + Taqi.
+**align.py** — `trim:` head is measured (0.12s before the first word);
+hand-set trim is reported, never moved; tail keeps 0.30s. With no `trim:` it
+aligns the whole source and writes the window back; with no span it
+identifies one from Whisper and writes it back too. Both only when the source
+is roughly the reel. Takes several configs at once (`sources/<id>/*.yaml`),
+sharing the model load. Without `whisper.json` an ibtidāʾ restart goes
+unrepaired.
 
-`trim:` head is measured (0.12s before first word); hand-set trim is reported,
-never moved; tail keeps 0.30s. Auto-trim only when the source is roughly the reel.
-`align.py` takes several configs at once (`sources/<id>/*.yaml`), which is how
-the reels cut from one source share the model load.
-
-`crop.py` (every style): framing from a vision model, cached in `crop.json`.
-Column styles (bars, horizontal) get the equal-gap rule and `x_offset`;
-`vertical` centres him and reports `face_bottom`, the fraction of the canvas
-height his head box ends at. Refuses on no face / off-frame caption / no room
-under his chin; an EMPTY shot is a centred window and no anchor key.
-`--annotate` is required. Authoring only — no model at render time.
+**crop.py** (every style) — framing from the `claude` CLI, cached in
+`crop.json`. Column styles (bars, horizontal) get the equal-gap rule and
+`x_offset`; `vertical` centres him and reports `face_bottom`, the fraction of
+the canvas height his head box ends at. Refuses on no face / off-frame
+caption / no room under his chin; an EMPTY shot is a centred window and no
+anchor key. Check `--annotate` every time. Authoring only — no model at
+render time.
 
 ## Styles
 
@@ -90,15 +68,12 @@ All 30fps and fixed-size; a weak source is upscaled, never delivered small.
   then sequential crossfades, full FX (`fx.py`). Never burns a signature.
   Golden: `tests/graph_parity.py`. `fx: {heat: false}` for timing previews.
 
-`--vertical` delivers a 1920×1080 render as 1080×1920, black above and below —
-the scale/pad runs inside the render's own graph, one encode, no second
-generation (`letterbox.py` stays for letterboxing an already-finished file).
-The picture is 1080×608, about a third of the frame, so bars' 213pt Arabic
-arrives on the phone nearer 120pt-equivalent. The native `vertical` style is
-what avoids that trade.
-
-`--verify-only` stops after the verification block: a split or timing check
-costs seconds instead of a render.
+`generate.py --vertical` delivers a 1920×1080 style as 1080×1920, black above
+and below, inside the render's own encode. The picture is 1080×608, about a
+third of the frame, so bars' 213pt Arabic arrives on the phone nearer
+120pt-equivalent; the native `vertical` style avoids that trade.
+`letterbox.py` does the same to an already-finished file (and refuses a
+portrait one).
 
 Design rationale lives in each renderer's module docstring.
 
@@ -111,13 +86,14 @@ python3 pipeline/publish.py reels/<name>.mp4 --draft
 ```
 
 Cover at 1.55s (`COVER_MS`). Caption from `tafsir()` + ayat + `#reciter | #surah`
-(from mp4 tags). Credentials in `.env`. Posts are independent (no Graph link).
-A published reel is tagged green in Finder; `--draft` leaves it untagged.
+(from mp4 tags; `--surah` + `--ayat` together, `--reciter` override them).
+`--ig-only` / `--fb-only` are exclusive. Credentials in `.env`. Posts are
+independent (no Graph link). The reel is tagged green in Finder once at least
+one platform posted; `--draft` leaves it untagged.
 
 ## Environments
 
 `./install.sh` / `INSTALL.md`. Render: `tools/render-venv` (RAQM Pillow).
 Whisper: `asr-venv`. Align: `align-venv` (`ctc-forced-aligner` from git — PyPI
-name is unrelated). Machine config in `.env` only; never affects pixels.
-`docs/asr-and-alignment.md` before an ASR swap; `OPTIMIZATIONS.md` before a
-performance change.
+name is unrelated). Machine config in `.env` only. `docs/asr-and-alignment.md`
+before an ASR swap; `OPTIMIZATIONS.md` before a performance change.

@@ -4,8 +4,8 @@ Records the models that were measured and the trade-offs, so the next person
 asking "can't we just use a smaller Quran model?" has the evidence instead of
 re-running it.
 
-**Current stack:** `transcribe.py` (Whisper large-v3-turbo) for discovery,
-`align.py` (Meta MMS CTC forced alignment) for timing. **Decision: keep it.**
+**Current stack:** `transcribe.py` (Whisper large-v3-turbo) for discovery and
+repeat detection, `align.py` (Meta MMS CTC forced alignment) for timing. **Decision: keep it.**
 Every alternative measured so far loses something load-bearing.
 
 ## Three jobs, not one
@@ -15,8 +15,8 @@ it isn't.
 
 1. **Discovery** — *which verses is this?* Needs rough Arabic text. Feeds
    `quran.search()`, which is IDF + contiguity scoring and tolerates badly
-   garbled input. **Skippable entirely**: name `surah`/`ayah_start`/`ayah_end`
-   in the config and no ASR runs.
+   garbled input. **Skippable**: name `surah`/`ayah_start`/`ayah_end` in the
+   config.
 2. **Timing** — *when is each mushaf word spoken?* Done by forced alignment
    against text already known byte-exact. No ASR involved; the model only
    decides WHEN, never WHAT, so it cannot hallucinate.
@@ -29,8 +29,8 @@ known mushaf text.
 
 ## Measured comparison
 
-Two clips, both in `sources/`. Discovery is scored through the real
-`generate.identify_verse_span()` path (chunked search), not a single
+Two clips, Faatir and Maryam (see Reproducing). Discovery is scored through
+the real `generate.identify_verse_span()` path (chunked search), not a single
 whole-clip search — the chunked path is meaningfully more forgiving.
 
 | Option | Faatir 35:31-34 | Maryam 19:88-95 | Repeat | Disk | Runtime |
@@ -134,7 +134,8 @@ model. The real cost is disk and install complexity, not memory:
 | `tools/asr-venv` | 1.1 G | turbo 1.5 G |
 | `tools/align-venv` | 1.3 G | MMS 1.2 G |
 
-Naming the verse span in the config already avoids the ASR half at run time.
+Naming the verse span avoids the ASR half at run time only for a reciter who
+never restarts; otherwise job 3 still needs it.
 
 ## The open item: repeat detection without ASR
 
@@ -176,7 +177,14 @@ than the 1–2 s errors that started this work.
 Discovery is scored with `generate.identify_verse_span()` over each model's
 words; repeat detection by looking for consecutive identical segments
 (Whisper) or a repeated n-gram in the word stream (CTC models). The two test
-clips are `sources/ahmad-alarabi/` (has an ibtidāʾ restart) and
-`sources/ansari-efore-end-maryam/` (no restart; the discriminator for model
-quality). Any replacement must pass both, and must reproduce **76.72s** as
-the start of card 8 on the Faatir clip.
+clips were local recordings with no public URL, so they are not in the repo;
+their configs are in git history (`sources/ahmad-alarabi/` — Faatir, with an
+ibtidāʾ restart; `sources/ansari-efore-end-maryam/` — Maryam, no restart, the
+discriminator for model quality; last at `9bc669b`). On them, any replacement
+had to pass both and reproduce **76.72s** as the start of card 8 on Faatir.
+
+Without those recordings, `sources/YkXjYyKwHJ4/ahzab-56-56.yaml` (tracked,
+fetchable) has an ibtidāʾ restart the current stack repairs — card 2 stays up
+across both utterances — so it is the restart check; measure a candidate
+against the current stack's align output there. The table above was not
+measured on it.

@@ -1,10 +1,17 @@
 - [ ] Optimize all workflows.
 - [ ] Re-enable CLI tool.
-- [ ] Add more fonts e.g. Lifta.
-- [ ] Add more reel style.
 - [ ] Clean up code, ensure minimality, correctness, conciseness, lack of AI-generated slop.
-- [ ] Add shadows to text for default reel.
-- [ ] Consider making YAML splits for verses a globally configured thing so I don't have to do it myself. That would automate the whole entire pipeline - a one time step of splitting up all the verses of the Qur'ān - or relevant Suwar to begin with.
-- [ ] Evaluate whether it makes more sense to use [Tarteel Whisper](https://huggingface.co/tarteel-ai/whisper-base-ar-quran) + [CTC Forced Aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner), or to use [wav2vec2-quran-phonetics](https://huggingface.co/TBOGamer22/wav2vec2-quran-phonetics)
-- [ ] Automatic Volume 
-- [ ] Right now we kinda merge the images together when transitioning between text frames... we should also have fade in and fade out configurable .
+- [ ] Add more fonts, e.g. Lifta (`ARABIC_FONT_NAMES`/`ENGLISH_FONT_NAMES` + the renderer tables; measure a new Arabic face's ayah-ornament behaviour first).
+- [ ] Add more reel styles, e.g. word-by-word from `assets/quran/en.wbw.json` (`quran.words()` is None for 37:130 — refuse, don't offset).
+- [ ] Committed verse-split library (`groups:` per ayah, counts + English only), so a config names a span and inherits a reviewed split.
+- [ ] Decide caption changeover: current 0.45s crossfade overlaps cards; bars-style fade-out-then-in is the alternative. Then consider making the fades configurable.
+- [ ] Per-config audio controls (LUFS target, fades) and an intake loudness/clipping report in `fetch.py`.
+- [ ] One driver over align → crop → generate → publish with a resume point (subprocess per venv).
+- [ ] `generate.py --preview` (small, `veryfast`, fx off) for timing checks; `generate.py --all` to re-render stale reels.
+- [ ] Pre-publish check: full decode, canvas/fps/duration, loudness, non-black cover, AAC.
+- [ ] `publish.py`: retry Graph 5xx / rate limits; show progress during the Instagram container poll.
+- [ ] Progress on the final render encode (`-progress`); line-buffer `crop.py`, `transcribe.py`, `publish.py`.
+- [ ] `crop.py --annotate`: contact sheet of every sampled frame, not just the middle one.
+- [ ] Reel ledger: table of `reels/*.mp4` from their tags (span, reciter, style, posted).
+- [ ] Caption sidecar (`reels/<name>.srt`) from the burned cards.
+- [ ] English search in `quran.py` (`en.sahih`, `en.taqi`, word glosses).
