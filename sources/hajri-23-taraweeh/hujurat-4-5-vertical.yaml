@@ -1,7 +1,8 @@
+# source: https://www.youtube.com/watch?v=94bFKq5PUXI
 # Al-Hujurat 49:4-5, Ilyas Hajri, 23rd night taraweeh -- the `vertical` cut of
-# the merge test. Same span, timing and groups as the -horizontal and -bars
-# cuts beside it; only the style and the framing differ, which is the point:
-# one config surface, three shapes.
+# the reel tracked in all three styles. Same span, timing and groups as the
+# -horizontal and -bars cuts beside it; only the style and the framing differ,
+# which is the point: one config surface, three shapes.
 style: vertical
 signature: "TilawatQuraniyyah"
 
@@ -17,10 +18,8 @@ ayah_end: 5
 # recitation, 120ms of lead and no more.
 trim: [125.06, 151.2]
 
-
-
 # framing solved by pipeline/crop.py on 2026-08-01,
-# sonnet via claude code CLI, median of 4/4 sampled frames.
+# sonnet via the `claude` CLI, median of 4/4 sampled frames.
 # Head centred (0.647 of the window), face centre at 0.282 of its
 # height; the caption band hangs under his head box.
 # Re-solve with `pipeline/crop.py <this-file> --force`; edit these

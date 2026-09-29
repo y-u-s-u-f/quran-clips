@@ -1,31 +1,29 @@
 # ==========================================================================
 # quran-clips — track the CREATION PROCESS, not the output.
-# Tracked: pipeline/, assets/ (fonts + quran editions + scene images), docs/,
-#          .agents/, the reel configs of three example sources under
-#          sources/, and the archived first/second-generation code under legacy/.
+# Tracked: pipeline/, assets/ (fonts + quran editions), docs/, .agents/,
+#          tests/, and the reel configs of two example sources under sources/.
 # Ignored: downloaded footage, transcripts, the rendered reels under reels/,
-#          and the venvs under tools/.
+#          and the venvs + caches under tools/.
 # ==========================================================================
 
 # --- sources/: one folder per source video ---------------------------------
-# Everything here stays local except the *.yaml of three example sources:
-# hajri-23-taraweeh (one reel in all three styles), ahmad-alarabi and
-# ansari-efore-end-maryam (the ASR/alignment test pair in
-# docs/asr-and-alignment.md). Media, captions and Whisper output are
-# re-derivable (fetch.py / transcribe.py). Git will not descend into an
-# excluded directory, so the kept folders are re-admitted and their yamls
-# re-admitted inside them.
+# Everything here stays local except the *.yaml of two example sources, each
+# re-fetchable from the `# source:` URL at the top of its configs:
+# hajri-23-taraweeh (one reel in all three styles) and YkXjYyKwHJ4 (Badr
+# al-Turki, horizontal). Media, captions and Whisper output are re-derivable
+# (fetch.py / transcribe.py). Git will not descend into an excluded
+# directory, so the kept folders are re-admitted and their yamls re-admitted
+# inside them.
 sources/*
 !sources/hajri-23-taraweeh/
-!sources/ahmad-alarabi/
-!sources/ansari-efore-end-maryam/
+!sources/YkXjYyKwHJ4/
 sources/*/*
 !sources/*/*.yaml
 
 # --- reels/: generated output, flat -- never tracked ------------------------
 reels/
 
-# --- venvs + downloaded models ----------------------------------------------
+# --- venvs, downloaded models, render caches --------------------------------
 tools/
 
 # --- Media, anywhere --------------------------------------------------------
@@ -33,40 +31,17 @@ tools/
 *.mov
 *.wav
 *.m4a
-
-# --- legacy/: archived code is tracked; its caches and renders are not ------
-legacy/caches/
-legacy/clips/*/*
-legacy/style/**/*.jpg
-legacy/style/**/*.jpeg
-legacy/style/**/*.png
+# README demo videos — the one place an .mp4 is tracked on purpose.
+!docs/*.mp4
 
 # --- Machine-level config: paths, models, PROXY CREDENTIALS ----------------
-# .env carries proxy passwords, so it must never be committed; .env.example
-# documents every key and DOES ship.
+# .env carries proxy passwords and Meta tokens, so it must never be committed;
+# .env.example documents every key and DOES ship.
 .env
 .env.bak*
-qc.toml
-!.env.example
-!legacy/qc.toml.example
 
 # --- Python / OS cruft ------------------------------------------------------
 __pycache__/
 *.pyc
 *.pyo
 .DS_Store
-
-# ===========================================================================
-# Explicit keeps — INPUTS to the pipeline, never outputs.
-# ===========================================================================
-!assets/
-!assets/fonts/*.ttf
-!assets/reciters/*.png
-!*.excalidraw
-
-# The archived example recipes the legacy golden fixtures were recorded
-# against (also the README demo clips).
-!legacy/clips/*/clip.yaml
-
-# README demo videos — the one place an .mp4 is tracked on purpose.
-!docs/*.mp4
