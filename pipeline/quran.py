@@ -97,10 +97,7 @@ def flat_index(surah, num):
 
 
 def from_flat(idx):
-    """Inverse of flat_index: 0-based flat index -> (surah, ayah).
-
-    Hot: search() calls it once per candidate ayah whenever a surah boost is
-    in play, which is every call that a video title fed a hint to."""
+    """Inverse of flat_index: 0-based flat index -> (surah, ayah)."""
     _offsets()
     s = bisect.bisect_right(_STARTS, idx)      # surahs starting at or before
     if not s:
@@ -143,35 +140,21 @@ def tafsir(surah, num):
     return _load("ar.muyassar")["ayahs"][flat_index(surah, num)]
 
 
-def basmalah():
-    """The basmalah, verbatim -- surah 1 ayah 1, which is where it comes from.
-
-    Every surah but 1 and 9 opens with it, but it is NOT part of their ayah 1
-    and is not stored there; ask for it explicitly when you need it.
-    """
-    return _load("uthmani")["basmalah"]
-
-
 def ayah(surah, num):
     """-> {'surah','ayah','ar','en','en2'}. `ar` is the stored Uthmani text,
-    verbatim. `en` is Saheeh International, `en2` Mufti Taqi Usmani (None on
-    a checkout that predates the second edition).
+    verbatim. `en` is Saheeh International, `en2` Mufti Taqi Usmani.
 
     TWO translations on purpose: a caption's English is verified against
     both, because one rendering can paraphrase in a way that hides a
     mis-split -- where the two agree on clause order, a card boundary that
     contradicts them is wrong."""
     i = flat_index(surah, num)
-    try:
-        en2 = _load("en.taqi")["ayahs"][i]
-    except FileNotFoundError:
-        en2 = None
     return {
         "surah": int(surah),
         "ayah": int(num),
         "ar": _load("uthmani")["ayahs"][i],
         "en": _load("en.sahih")["ayahs"][i],
-        "en2": en2,
+        "en2": _load("en.taqi")["ayahs"][i],
     }
 
 
@@ -179,7 +162,7 @@ def range(surah, a, b):  # noqa: A001 -- deliberate: quran.range(9, 128, 129)
     """Inclusive ayah range as a list of ayah() dicts."""
     a, b = int(a), int(b)
     if b < a:
-        a, b = b, a
+        raise ValueError("ayah range %d:%d-%d runs backwards" % (surah, a, b))
     return [ayah(surah, n) for n in _pyrange(a, b + 1)]
 
 
@@ -202,35 +185,22 @@ def words(surah, num):
     """-> the ayah's English word-by-word glosses, one per DISPLAY word, or None.
 
     None means the gloss table and the mushaf DISAGREE about how many words the
-    ayah has (true for exactly one ayah, 37:130), or the optional en.wbw.json
-    is simply not on disk. There is no partially usable answer in the mismatch
-    case -- an offset table cuts every later gloss one word out -- so callers
+    ayah has (true for exactly one ayah, 37:130). There is no partially usable
+    answer -- an offset table cuts every later gloss one word out -- so callers
     must fall back to something that does not need per-word English.
     """
     i = flat_index(surah, num)
-    try:
-        gl = _load("en.wbw")["words"][i]
-    except FileNotFoundError:
-        return None
+    gl = _load("en.wbw")["words"][i]
     if len(gl) != len(display_words(_load("uthmani")["ayahs"][i])):
         return None
     return list(gl)
 
 
 def nfc(text):
-    """Canonical (NFC) form. See same_text()."""
+    """Canonical (NFC) form. alquran.cloud writes the madda alif DECOMPOSED
+    (U+0627 U+0653) while precomposed U+0622 renders identically through
+    HarfBuzz -- different byte strings, same text."""
     return unicodedata.normalize("NFC", text or "")
-
-
-def same_text(a, b):
-    """Are these the same Uthmani string, ignoring Unicode composition only?
-
-    alquran.cloud writes the madda alif DECOMPOSED (U+0627 U+0653) while
-    precomposed U+0622 renders identically through HarfBuzz -- different byte
-    strings, same text. That is the ONLY licensed difference: compare under NFC
-    and nothing else, so a dropped shadda or a normalised hamza still fails.
-    """
-    return nfc(a) == nfc(b)
 
 
 # ---------------------------------------------------------------------------
@@ -242,8 +212,8 @@ def same_text(a, b):
 # rounded zero, small low meem), tatweel, and the combining ranges added for
 # Quranic orthography.
 _MARKS = re.compile(
-    "[ؐ-ًؚ-ٰٟۖ-ۭ"
-    "ـ࣓-ࣿﹰ-ﹿ]"
+    "[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED"
+    "\u0640\u08D3-\u08FF\uFE70-\uFE7F]"
 )
 # Anything that is not an Arabic letter, after marks are gone.
 _NON_LETTER = re.compile("[^ء-ؿف-يٱ-ە]")
@@ -270,7 +240,7 @@ _LETTER_MAP = {
 # small alif above the line, and modern spelling resolves it inconsistently.
 # Both readings are generated and indexed (see _index), so either convention
 # matches.
-_SUPER_ALIF = "ٰ"
+_SUPER_ALIF = "\u0670"
 
 
 def normalize(text, keep_super_alif=False):
@@ -358,24 +328,20 @@ def _index():
     return _INDEX
 
 
-def _idf(postings, n_docs=N_AYAT):
+def _idf(postings):
     # Postings are (ayah, position) pairs, so count distinct ayat.
     df = len({p[0] for p in postings}) or 1
-    return math.log(1.0 + n_docs / float(df))
+    return math.log(1.0 + N_AYAT / float(df))
 
 
-def search(toks, top=8, boost=None, span=None, detail=False):
+def search(toks, top=8):
     """Locate a sequence of Arabic word tokens in the mushaf.
 
-    `toks`   a raw Arabic string (normalised for you) or a token list.
-    `boost`  optional {surah: multiplier} -- how a video title's surah name is
-             fed in. It nudges ranking; it never decides it on its own.
-    `span`   optional (a, b): only consider these flat ayah indices.
+    `toks` is a raw Arabic string (normalised for you) or a token list.
 
     Returns [(surah, ayah, score, hits)] sorted by score, best first, where
     `score` is roughly the fraction of the query's information content found
-    in that ayah and `hits` is how many query tokens matched. `detail` appends
-    a fifth element: the frozenset of QUERY token indices that matched.
+    in that ayah and `hits` is how many query tokens matched.
 
     Scoring: IDF-weighted token overlap, plus a bonus whenever query token i
     and i+1 land on consecutive positions of the same ayah. Word ORDER is what
@@ -388,7 +354,6 @@ def search(toks, top=8, boost=None, span=None, detail=False):
     if not toks:
         return []
     ix = _index()
-    lo, hi = (span if span else (0, N_AYAT))
 
     votes = {}      # flat idx -> weight
     pairs = {}      # flat idx -> set of (query_i, ayah_pos)
@@ -408,8 +373,6 @@ def search(toks, top=8, boost=None, span=None, detail=False):
         if len(posts) > 4000:      # a stopword-ish token: no discriminative value
             continue
         for idx, pos in posts:
-            if not lo <= idx < hi:
-                continue
             votes[idx] = votes.get(idx, 0.0) + w * fuzzy
             pairs.setdefault(idx, set()).add((qi, pos))
 
@@ -422,51 +385,10 @@ def search(toks, top=8, boost=None, span=None, detail=False):
         # contiguity: consecutive query tokens on consecutive ayah positions
         run = sum(1 for (qi, p) in pr if (qi + 1, p + 1) in pr)
         score = (v + run * 1.2) / max(total_w, 1e-6)
-        if boost:
-            s, _ = from_flat(idx)
-            score *= boost.get(s, 1.0)
-        qis = frozenset(qi for qi, _ in pr)
-        out.append((idx, score, len(qis), qis))
+        out.append((idx, score, len({qi for qi, _ in pr})))
 
     out.sort(key=lambda r: -r[1])
-    res = []
-    for idx, score, hits, qis in out[:top]:
-        s, a = from_flat(idx)
-        res.append((s, a, score, hits, qis) if detail else (s, a, score, hits))
-    return res
-
-
-def surah_from_title(title):
-    """Surah numbers plausibly named in a video title -> {surah: 1.0}.
-
-    Matches the transliterated English name with the definite article and
-    punctuation made optional ("Surah At-Tawbah", "surat al tawba",
-    "Attawbah") and the Arabic name as written in the mushaf. A HINT only:
-    callers pass the result to search(boost=...), which lets transcript
-    evidence override it.
-    """
-    if not title:
-        return {}
-    t = re.sub(r"[^a-zء-ۿ ]+", " ", title.lower())
-    t_sq = re.sub(r"[^a-zء-ۿ]+", "", title.lower())
-    hits = {}
-    for n in _pyrange(1, 115):
-        en = surah_name(n).lower()
-        forms = {en, re.sub(r"^(adh|ash|al|an|ar|as|at|az|ad)-", "", en),
-                 en.replace("-", " "), en.replace("-", "")}
-        for f in forms:
-            f = f.strip()
-            if len(f) < 3:
-                continue
-            if (" %s " % f) in (" %s " % t) or f.replace(" ", "") in t_sq:
-                hits[n] = 1.0
-                break
-        ar = normalize(surah_name_ar(n))
-        # mushaf names are "سُورَةُ ٱلْفَاتِحَةِ"-style; keep the last word
-        ar_last = ar.split()[-1] if ar else ""
-        if len(ar_last) >= 4 and ar_last in normalize(title):
-            hits[n] = 1.0
-    return hits
+    return [from_flat(idx) + (score, hits) for idx, score, hits in out[:top]]
 
 
 # ---------------------------------------------------------------------------

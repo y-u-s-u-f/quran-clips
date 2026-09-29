@@ -35,6 +35,9 @@ import subprocess
 import sys
 import tempfile
 
+import generate  # stdlib + quran.py only at import: safe under any python3
+from generate import envvar  # the one .env reader
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = os.path.join(ROOT, "sources")
 
@@ -44,7 +47,6 @@ MODELS = {
     "faster": "deepdml/faster-whisper-large-v3-turbo-ct2",
 }
 MODULES = {"mlx": "mlx_whisper", "faster": "faster_whisper"}
-_PIP = {"mlx": "mlx-whisper", "faster": "faster-whisper"}
 
 # Each snippet prints nothing and writes the contract dict to argv[2]. Kept as
 # source strings (not importable modules) so they run under an interpreter
@@ -91,41 +93,6 @@ json.dump({"words": words, "backend": "faster", "model": model,
 }
 
 
-# --- machine config (.env) -------------------------------------------------
-
-def _dotenv():
-    path = os.path.join(ROOT, ".env")
-    out = {}
-    if os.path.exists(path):
-        for raw in open(path, encoding="utf-8"):
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("export "):
-                line = line[7:].lstrip()
-            k, sep, v = line.partition("=")
-            if sep:
-                v = v.strip()
-                if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-                    v = v[1:-1]
-                elif " #" in v:
-                    v = v.split(" #", 1)[0].rstrip()
-                out[k.strip()] = v
-    return out
-
-
-_ENV = None
-
-
-def envvar(name, default=None):
-    global _ENV
-    if os.environ.get(name):
-        return os.environ[name]
-    if _ENV is None:
-        _ENV = _dotenv()
-    return _ENV.get(name) or default
-
-
 # --- backend selection -----------------------------------------------------
 
 def backend():
@@ -167,10 +134,8 @@ def interpreter(name):
     for py in candidates:
         if py and os.path.exists(py) and _can_import(py, module):
             return py
-    raise SystemExit(
-        "no interpreter can import %s.\n"
-        "  python3 -m venv tools/asr-venv && "
-        "tools/asr-venv/bin/pip install %s" % (module, _PIP[name]))
+    raise SystemExit("no interpreter can import %s -- run ./install.sh "
+                     "(it builds tools/asr-venv)" % module)
 
 
 # --- transcription ---------------------------------------------------------
@@ -201,8 +166,7 @@ def write_srt(data, path):
 
 
 def find_source(folder):
-    for name in ("source.mp4", "source.mkv", "source.webm", "source.mov",
-                 "source.m4a", "source.mp3", "source.wav"):
+    for name in generate.SOURCE_NAMES:
         p = os.path.join(folder, name)
         if os.path.exists(p):
             return p
@@ -230,13 +194,17 @@ def transcribe(folder, force=False):
     print("  backend : %s (%s)" % (name, py))
     print("  model   : %s" % model)
 
+    # Only a finished transcript is renamed into place: a crash mid-dump must
+    # not leave a partial whisper.json that the exists-check above accepts.
+    part = out_json + ".part"
     with tempfile.TemporaryDirectory(prefix="quran-transcribe-") as tmp:
         wav = os.path.join(tmp, "audio.wav")
         extract_wav(src, wav)
-        p = subprocess.run([py, "-c", _SNIPPETS[name], wav, out_json, model],
+        p = subprocess.run([py, "-c", _SNIPPETS[name], wav, part, model],
                            stdout=sys.stderr, stderr=sys.stderr)
         if p.returncode != 0:
             raise SystemExit("ASR backend %r failed on %s" % (name, src))
+        os.replace(part, out_json)
 
     data = json.load(open(out_json, encoding="utf-8"))
     write_srt(data, out_srt)

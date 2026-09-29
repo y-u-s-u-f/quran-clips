@@ -47,9 +47,12 @@ reported every run, and a loose one is called out with the value it
 should have had. The tail is deliberately still padded: a held final word
 wants its decay.
 
-whisper.json is needed only to DISCOVER the verse span. Name the span in
-the config and this script -- and generate.py after it -- never read a
-transcript, so transcribe.py can be skipped entirely.
+whisper.json does two jobs here: it DISCOVERS the verse span when the
+config names none, and it repairs an ibtida' restart (below). Name the span
+and a reciter who never restarts needs no transcript at all. A span
+discovered here is written back into the config beside the trim, so
+generate.py renders the span that was aligned rather than re-identifying
+one -- reliable only when the source is roughly the reel.
 
 Runs under tools/align-venv, never tools/render-venv: torch and
 transformers must never land in the interpreter whose Pillow carries the
@@ -107,8 +110,8 @@ TAIL_PAD = 0.30
 ENV_STEP = 0.05            # RMS bin, seconds
 
 
-def rms_envelope(src, t0, t1, step=ENV_STEP):
-    """RMS in dBFS per `step` seconds over [t0, t1) -> [(t, db), ...].
+def rms_envelope(src, t0, t1):
+    """RMS in dBFS per ENV_STEP seconds over [t0, t1) -> [(t, db), ...].
 
     `silencedetect` is unusable on these sources. A Haram recording's hall
     reverb never falls below about -35 dB and the ambience floor sits near
@@ -123,9 +126,9 @@ def rms_envelope(src, t0, t1, step=ENV_STEP):
     align.py already pulls in torch -- it does not need to grow another
     numerical dependency to sum 32000 squares."""
     sr = 16000
-    n = max(1, int(sr * step))
+    n = max(1, int(sr * ENV_STEP))
     raw = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-loglevel", "error",
+        [generate.FFMPEG, "-hide_banner", "-loglevel", "error",
          "-ss", "%.3f" % t0, "-to", "%.3f" % t1, "-i", src,
          "-ar", str(sr), "-ac", "1", "-vn", "-f", "s16le", "-"],
         check=True, capture_output=True).stdout
@@ -141,12 +144,12 @@ def rms_envelope(src, t0, t1, step=ENV_STEP):
     return out
 
 
-def head_cut(src, onset, lead=HEAD_LEAD, lookback=HEAD_LOOKBACK):
+def head_cut(src, onset):
     """Where to cut so the reel opens ON the recitation -> (t, gap_seconds).
 
-    `lead` before the first word's onset, but never back past the start of
+    HEAD_LEAD before the first word's onset, but never back past the start of
     the quiet run that onset comes out of: on a short breath there may be
-    less than `lead` of air to take, and opening on the tail of the previous
+    less than HEAD_LEAD of air to take, and opening on the tail of the previous
     word is worse than opening a frame late.
 
     "Quiet" is the bottom third of THIS window's own dynamic range, which is
@@ -154,17 +157,18 @@ def head_cut(src, onset, lead=HEAD_LEAD, lookback=HEAD_LOOKBACK):
     returned gap is the measured length of that run, 0.0 when none was found
     -- continuous recitation with no waqf before the first word, where the
     lead is simply taken and the caller is told nothing was measured."""
-    lo = max(0.0, onset - lookback)
+    lead = max(0.0, onset - HEAD_LEAD)
+    lo = max(0.0, onset - HEAD_LOOKBACK)
     if onset - lo < 4 * ENV_STEP:
-        return max(0.0, onset - lead), 0.0
+        return lead, 0.0
     env = rms_envelope(src, lo, onset)
     if len(env) < 4:
-        return max(0.0, onset - lead), 0.0
+        return lead, 0.0
 
     floor = min(db for _t, db in env)
     peak = max(db for _t, db in env)
     if peak - floor < 6.0:            # nothing resembling speech-vs-gap here
-        return max(0.0, onset - lead), 0.0
+        return lead, 0.0
     quiet = [db < floor + 0.35 * (peak - floor) for _t, db in env]
 
     # A CTC onset can sit a bin or two either side of the real attack, so the
@@ -173,12 +177,12 @@ def head_cut(src, onset, lead=HEAD_LEAD, lookback=HEAD_LOOKBACK):
     while i >= 0 and not quiet[i] and env[-1][0] - env[i][0] < 3 * ENV_STEP:
         i -= 1
     if i < 0 or not quiet[i]:
-        return max(0.0, onset - lead), 0.0
+        return lead, 0.0
     j = i
     while j >= 0 and quiet[j]:
         j -= 1
     gap_start = env[j + 1][0]
-    return max(gap_start, onset - lead), env[i][0] + ENV_STEP - gap_start
+    return max(gap_start, onset - HEAD_LEAD), env[i][0] + ENV_STEP - gap_start
 
 
 def cut_level(src, t, lookback=0.60, ahead=0.10):
@@ -200,7 +204,7 @@ def cut_level(src, t, lookback=0.60, ahead=0.10):
 
 
 def extract_window(src, out_wav, t0, t1):
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+    cmd = [generate.FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
            "-ss", "%.3f" % t0]
     if t1 is not None:
         cmd += ["-to", "%.3f" % t1]
@@ -208,8 +212,13 @@ def extract_window(src, out_wav, t0, t1):
     subprocess.run(cmd, check=True)
 
 
-def write_trim(config_path, t0, t1):
-    """Put `trim: [t0, t1]` into the config, in place.
+SPAN_KEYS = ("surah", "ayah_start", "ayah_end")
+
+
+def write_back(config_path, keys):
+    """Put each `key: value` of `keys` into the config, in place: over its
+    existing line, else where a hand-written one goes -- the span above the
+    trim, the trim just under the span.
 
     Line-level edit rather than a YAML round-trip: safe_dump would strip the
     hand-written comments that carry every reel's reasoning."""
@@ -217,21 +226,30 @@ def write_trim(config_path, t0, t1):
     if not text.endswith("\n"):
         text += "\n"
     lines = text.splitlines(keepends=True)
-    new = "trim: [%.2f, %.2f]\n" % (t0, t1)
-    for i, ln in enumerate(lines):
-        if re.match(r"^trim\s*:", ln):
-            lines[i] = new
-            break
-    else:
-        # where a hand-written trim goes: just under the verse span
-        after = [i for i, ln in enumerate(lines)
-                 if re.match(r"^(surah|ayah_start|ayah_end)\s*:", ln)]
-        lines.insert(max(after) + 1 if after else len(lines), "\n" + new)
+
+    def find(pat):
+        return [i for i, ln in enumerate(lines) if re.match(pat + r"\s*:", ln)]
+
+    for key, value in keys:
+        new = "%s: %s\n" % (key, value)
+        at = find(key)
+        if at:
+            lines[at[0]] = new
+            continue
+        span, trim = find("(%s)" % "|".join(SPAN_KEYS)), find("trim")
+        if span:
+            i = max(span) + 1
+            lines[i:i] = [new] if key in SPAN_KEYS else ["\n", new]
+        elif key in SPAN_KEYS and trim:
+            lines[trim[0]:trim[0]] = [new, "\n"]
+        else:
+            lines += ["\n", new]
     open(config_path, "w", encoding="utf-8").write("".join(lines))
 
 
 def find_repeats(whisper_path, t0, t1=None):
-    """Ibtida' restarts, as (first_utterance_start, second_utterance_start).
+    """Ibtida' restarts, as (first_utterance_start, second_utterance_start,
+    the repeated tokens).
 
     Two consecutive Whisper segments carrying the SAME words is the reciter
     breaking off and starting the phrase again. Whisper transcribes both
@@ -251,11 +269,11 @@ def find_repeats(whisper_path, t0, t1=None):
     for a, b in zip(segments, segments[1:]):
         toks = tuple(quran.tokens(a["text"]))
         if toks and toks == tuple(quran.tokens(b["text"])):
-            out.append((a["t0"] - t0, b["t0"] - t0))
+            out.append((a["t0"] - t0, b["t0"] - t0, toks))
     return out
 
 
-def apply_repeats(results, repeats, min_fix=0.5):
+def apply_repeats(results, repeats, words, min_fix=0.5):
     """Pull a restarted phrase's opening word back onto its FIRST utterance.
 
     The aligner times the second utterance (nothing is left to claim the
@@ -269,14 +287,22 @@ def apply_repeats(results, repeats, min_fix=0.5):
     clamping the predecessor to it would leave that word ending before it
     begins (measured: end 58.52 against start 60.98, a zero-length card).
     That is the shape when the aligner already split the phrase across both
-    utterances, so the earlier one is claimed and there is nothing to move."""
+    utterances, so the earlier one is claimed and there is nothing to move.
+
+    The first word has no predecessor to rule a repeat out, and an auto-trim
+    window is the whole source, so any phrase repeated anywhere before the
+    recitation would otherwise drag it there: the repeat must carry the
+    first word itself (compared on skeletons -- Whisper's spelling drifts)."""
     fixed = []
-    for first_start, second_start in repeats:
+    for first_start, second_start, toks in repeats:
         k = next((i for i, r in enumerate(results)
                   if r["start"] >= second_start), None)
         if k is None or results[k]["start"] - first_start < min_fix:
             continue
         if k and first_start <= results[k - 1]["start"]:
+            continue
+        if not k and not {quran.skeleton(t) for t in quran.tokens(words[0])} \
+                <= {quran.skeleton(t) for t in toks}:
             continue
         fixed.append((k, results[k]["start"], first_start))
         results[k]["start"] = first_start
@@ -285,32 +311,28 @@ def apply_repeats(results, repeats, min_fix=0.5):
     return fixed
 
 
-def trim_note(out_path, trim, tol=0.01):
+def trim_note(out_path, cfg):
     """Why an existing alignment no longer matches the config, or None.
 
     Word timings are relative to the trim window, so an edited `trim:` leaves
     the file wrong by however far the window moved -- and generate.py reads it
     happily, captions hundreds of ms out with nothing said. Editing a trim is
     unambiguous intent, so it re-aligns on its own instead of costing the
-    author a --force they have to remember. Values are compared loosely
+    author a --force they have to remember. Values are compared to 10ms
     because both sides are rounded to 2dp."""
-    def fmt(t):
-        return ("whole source" if t is None else
-                "[%s]" % ", ".join("end" if v is None else "%.2f" % v
-                                   for v in t))
     try:
         was = json.load(open(out_path, encoding="utf-8")).get("trim")
     except ValueError:
         return "unreadable -- re-aligning"
-    now = ([None if v is None else float(v) for v in (list(trim) + [None])[:2]]
-           if trim else None)
-    if was is None:
+    if not was or len(was) != 2 or was[0] is None:
         return "no trim recorded -- re-aligning"
-    if now is not None and len(was) == 2 and all(
-            (a is None) == (b is None) and (a is None or abs(a - b) <= tol)
-            for a, b in zip(was, now)):
+    now = generate.trim_window(cfg) if cfg.get("trim") else None
+    if now is not None and (was[1] is None) == (now[1] is None) and all(
+            abs(a - b) <= 0.01 for a, b in zip(was, now) if a is not None):
         return None
-    return "stale (trim %s -> %s), re-aligning" % (fmt(was), fmt(now))
+    return "stale (trim %s -> %s), re-aligning" % (
+        generate.format_window(was),
+        "whole source" if now is None else generate.format_window(now))
 
 
 _ALIGNER = None
@@ -336,7 +358,7 @@ def align(config_path, force=False):
     cfg = generate.resolve_paths(cfg, config_path)
     out_path = generate.align_path_for(config_path)
     if os.path.exists(out_path):
-        note = trim_note(out_path, cfg.get("trim"))
+        note = trim_note(out_path, cfg)
         if note:
             print("  %s" % note)
         elif not force:
@@ -351,20 +373,21 @@ def align(config_path, force=False):
     auto_trim = not cfg.get("trim")
     t0, t1 = generate.trim_window(cfg)
 
-    surah, a0, a1 = cfg["surah"], cfg["ayah_start"], cfg["ayah_end"]
-    if surah is None:
+    asr_words = []
+    if cfg["surah"] is None:
         asr_words, _ = generate.load_whisper_window(
             generate.require_whisper(cfg), t0, t1)
-        span = generate.identify_verse_span(asr_words)
-        if span is None:
-            raise SystemExit("could not auto-identify the verse span; set "
-                             "surah/ayah_start/ayah_end in the config")
-        surah, a0, a1 = span["surah"], span["ayah_start"], span["ayah_end"]
-    else:
-        a0 = int(a0 if a0 is not None else 1)
-        a1 = int(a1 if a1 is not None else a0)
+    surah, a0, a1 = generate.resolve_span(cfg, asr_words)
+    # An identified span is pinned into the config: generate.py would
+    # otherwise re-identify it over the trimmed window, and a different
+    # answer there with the same word count is silently wrong captions.
+    if cfg["surah"] is None:
+        write_back(config_path, zip(SPAN_KEYS, (surah, a0, a1)))
+        print("  identified span: %s %d:%d-%d -> written into %s -- CHECK it"
+              % (quran.surah_name(surah), surah, a0, a1,
+                 os.path.basename(config_path)))
 
-    verses = generate.fetch_verses(int(surah), a0, a1)
+    verses = generate.fetch_verses(surah, a0, a1)
     words = generate.spoken_words(verses)
     ref_text = " ".join(words)
     print("aligning %d mushaf words (%s %d:%d-%d) against %s"
@@ -398,7 +421,8 @@ def align(config_path, force=False):
     # still share the alignment window's clock.
     if os.path.exists(cfg["whisper"]):
         for k, was, now in apply_repeats(results,
-                                         find_repeats(cfg["whisper"], t0, t1)):
+                                         find_repeats(cfg["whisper"], t0, t1),
+                                         words):
             print("  repeated phrase: %s starts at %.2fs, not %.2fs "
                   "(reciter restarted; caption now covers both)"
                   % (words[k], now, was))
@@ -414,7 +438,7 @@ def align(config_path, force=False):
         for r in results:
             r["start"] -= t0
             r["end"] -= t0
-        write_trim(config_path, t0, t1)
+        write_back(config_path, [("trim", "[%.2f, %.2f]" % (t0, t1))])
         print("  derived trim: [%.2f, %.2f] -> written into %s"
               % (t0, t1, os.path.basename(config_path)))
         print("  head: %.0fms before the first word (%s)"
@@ -479,7 +503,7 @@ def main(argv=None):
         # form exists.
         try:
             align(path, force=a.force)
-        except (SystemExit, RuntimeError, ValueError) as e:
+        except (SystemExit, Exception) as e:
             failed.append(path)
             print("  ! FAILED: %s" % e, file=sys.stderr)
     if failed:

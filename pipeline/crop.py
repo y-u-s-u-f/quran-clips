@@ -7,16 +7,16 @@
 Samples frames, asks a vision model where the reciter is, computes the window
 with arithmetic, prints; `--write` edits it into the config. Every style:
 
-    bars        16:9 band inside 1080x1920   -> crop: + x_offset:
-    horizontal  1920x1080                    -> crop: + x_offset:
-    vertical    1080x1920                    -> crop: + face_bottom:
+    bars        1920x1080   -> crop: + x_offset:
+    horizontal  1920x1080   -> crop: + x_offset:
+    vertical    1080x1920   -> crop: + face_bottom:
 
 Authoring only (invariant 4): model never consulted at render. Model returns
 head/crown/shoulders; never a crop. Bad answer = wrong box on `--annotate`.
 
 The CAPTION goes somewhere different in each shape, so the solve does too.
 
-Column styles (bars, horizontal) -- `targets()`, the legacy equal-gap rule:
+Column styles (bars, horizontal) -- `targets()`, the equal-gap rule:
 caption = fixed-width column (centre ~0.302) BESIDE him; reciter = HEAD box
 including headwear, not body. Body is containment only (clamped to
 BODY_FROM_FACE face widths of head centre); `outer` is air beyond the HEAD --
@@ -39,6 +39,7 @@ geometry guards only check the model's numbers against each other.
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -54,54 +55,18 @@ sys.path.insert(0, HERE)
 import generate  # noqa: E402  (config/path helpers only -- no Pillow)
 
 
-# --- machine config (.env) -------------------------------------------------
-# Copied, not imported. Every pipeline script carries its own reader so it
-# stays runnable on its own; see AGENTS.md's codebase map.
-
-def _dotenv():
-    """KEY=value pairs from ROOT/.env; process environment wins on conflict."""
-    path = os.path.join(ROOT, ".env")
-    out = {}
-    if os.path.exists(path):
-        for raw in open(path, encoding="utf-8"):
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("export "):
-                line = line[7:].lstrip()
-            k, sep, v = line.partition("=")
-            if sep:
-                v = v.strip()
-                if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-                    v = v[1:-1]
-                elif " #" in v:
-                    v = v.split(" #", 1)[0].rstrip()
-                out[k.strip()] = v
-    return out
-
-
-_ENV = None
-
-
-def envvar(name, default=None):
-    global _ENV
-    if os.environ.get(name):
-        return os.environ[name]
-    if _ENV is None:
-        _ENV = _dotenv()
-    return _ENV.get(name) or default
-
-
 # --- the owner's numbers ---------------------------------------------------
 
-ASPECT = {"bars": (16, 9),        # the band inside the 1080x1920 canvas
-          "horizontal": (16, 9),  # the canvas itself
-          "vertical": (9, 16)}
+ASPECT = {"bars": (16, 9), "horizontal": (16, 9), "vertical": (9, 16)}
 # Width of the caption COLUMN as a fraction of the window, for the styles that
 # put one beside the reciter. None = the caption is a centred band below him
 # (vertical), so it never competes with him for horizontal space.
+# Hard-coded, not imported: both renderers pull in Pillow, which this script
+# must not need. horizontal is the WIDER of its two lines, since the column
+# has to hold both.
 CAPTION_W = {"bars": 0.45,          # render_bars.TEXT["max_line_width_frac"]
-             "horizontal": 0.504,   # 2 x render_text AR_WIDTH_FRAC/EN margin
+             "horizontal": 0.55,    # max(render_text AR_WIDTH_FRAC 0.51,
+                                    #     EN_WIDTH_FRAC 0.55)["horizontal"]
              "vertical": None}
 CANVAS_W = {"bars": 1920, "horizontal": 1920, "vertical": 1080}
 MIN_GAP = 0.02
@@ -115,8 +80,9 @@ FACE_IN_HEAD = (0.50, 0.85)    # face_cy below box top, in head heights
 # Low edge = tightest real reading (keeps want off MAX_HEADROOM). High edge
 # stays clear of 0.759 so bowed framing still prints outside the band.
 MIN_CONF = 0.4
-BODY_FROM_FACE = 2.6           # legacy crop.py:89, from HEAD centre
-HEAD_FROM_FACE = 2.0           # legacy crop.py:90
+# Both from the first-generation crop solver (git history at 9bc669b).
+BODY_FROM_FACE = 2.6           # from HEAD centre
+HEAD_FROM_FACE = 2.0
 # Fixtures reach 0.593-1.163 head widths a side; congregation hit 3.0.
 
 # --- the model -------------------------------------------------------------
@@ -125,13 +91,11 @@ HEAD_FROM_FACE = 2.0           # legacy crop.py:90
 
 MODEL = "sonnet"
 FRAME_W = 1280                 # ~1.2k tokens/frame; 4K buys nothing here
-EST_TOKENS_PER_FRAME = 1200
-CTX = 1000000
 GRID = 1000.0                  # prompt asks for 0-1000, not fractions
 TIMEOUT = 180.0                # ~7.5s for 4 frames measured; headroom
 RETRIES = 3                    # transient CLI / malformed parse; never silent
-PROMPT = """You are framing a Qur'an recitation video for a vertical social \
-media reel. I am showing you %d frames sampled from one continuous shot of the \
+PROMPT = """You are framing a Qur'an recitation video for a social media \
+reel. I am showing you %d frames sampled from one continuous shot of the \
 same recitation, in time order. Report, PER FRAME and in that same order, where \
 the reciter is.
 
@@ -182,9 +146,6 @@ and right: "left" if his face points toward the left edge of the picture \
 man photographed from his own right side is facing "left" here.
   posture          "upright", "bowed" (rukuu', or reciting with the head \
 lowered over a mushaf), or "prostrate" (sujuud).
-  headroom_frac    how much empty space should sit above his crown in the final \
-crop -- the ONLY fraction here, given as a fraction of the crop's height. \
-Reference reels run 0.00 to 0.08.
   obstructions     GRAPHICS BURNED INTO THE VIDEO, and nothing else: channel \
 logos, station watermarks, social-media handles, lower-thirds and name plates, \
 hard subtitles, tickers, timestamps, URLs. Things that are part of the picture \
@@ -229,13 +190,12 @@ SCHEMA = {
             "facing": {"type": "string", "enum": ["left", "right", "frontal"]},
             "posture": {"type": "string",
                         "enum": ["upright", "bowed", "prostrate"]},
-            "headroom_frac": {"type": "number"},
             "obstructions": {"type": "array", "items": _BOX},
             "confidence": {"type": "number"},
         },
         "required": ["reciter_present", "face_visible", "head", "crown_y",
                      "face_cy", "body_left", "body_right", "facing", "posture",
-                     "headroom_frac", "obstructions", "confidence"],
+                     "obstructions", "confidence"],
     }}},
     "required": ["frames"],
 }
@@ -257,7 +217,7 @@ def sample_times(t0, t1, n):
 
 def extract(src, times, tmp, W, H):
     """One JPEG per timestamp, scaled to FRAME_W wide. -> ([paths], (w, h))"""
-    ff = envvar("QC_FFMPEG", "ffmpeg")
+    ff = generate.envvar("QC_FFMPEG", "ffmpeg")
     os.makedirs(tmp, exist_ok=True)
     fw = min(FRAME_W, W)
     fh = int(round(H * fw / float(W) / 2.0)) * 2
@@ -304,7 +264,7 @@ def ask(paths, dims, cwd):
     prompt = (PROMPT % (len(paths), dims[0], dims[1])
               + "\n\nThe frames, in the same time order, are these image "
                 "files on disk -- read each one before answering:\n" + listing)
-    cli = envvar("QC_CLAUDE", "claude")
+    cli = generate.envvar("QC_CLAUDE", "claude")
     cmd = [cli, "-p", prompt, "--model", MODEL, "--output-format", "json",
            "--allowedTools", "Read", "--strict-mcp-config",
            "--json-schema", json.dumps(SCHEMA)]
@@ -319,7 +279,7 @@ def ask(paths, dims, cwd):
         except FileNotFoundError:
             # Not a transient failure -- retrying won't install the CLI.
             raise SystemExit(
-                "%r is not on PATH. Install the Claude Code CLI and sign in "
+                "%r is not on PATH. Install the `claude` CLI and sign in "
                 "(`claude auth login`), or point QC_CLAUDE at its binary in "
                 "%s." % (cli, os.path.join(ROOT, ".env")))
         except subprocess.TimeoutExpired:
@@ -428,7 +388,7 @@ def _validate(schema, value, path):
 
 # --- medianing -------------------------------------------------------------
 
-_NUM = ("crown_y", "face_cy", "body_left", "body_right", "headroom_frac")
+_NUM = ("crown_y", "face_cy", "body_left", "body_right")
 
 
 def usable(f):
@@ -801,8 +761,8 @@ def report(m, sol, style, W, H):
                                 m["head_h"], m["n"], m["n_frames"],
                                 m["confidence"]))
     print("          face visible in %d/%d frames%s"
-          % (m.get("face_seen", 0), m["n"],
-             "" if m.get("face_visible", True) else "  <- NO FACE, see below"))
+          % (m["face_seen"], m["n"],
+             "" if m["face_visible"] else "  <- NO FACE, see below"))
     print("          facing %s, posture %s; body %.3f..%.3f W; crown %.3f H"
           % (m["facing"], m["posture"], m["body_left"], m["body_right"],
              m["crown_y"]))
@@ -844,9 +804,9 @@ def report(m, sol, style, W, H):
               "outer %.3f" % (sol["outer"], CAPTION_W[style], sol["inner"],
                               sol["block"], sol["outer"]))
     print("face    : %.3f of window height (rule %.3f, band %.2f-%.2f); "
-          "headroom %.3f (model asked %.3f)"
+          "headroom %.3f"
           % (sol["fy"], FACE_Y_FRAC, FACE_Y_BAND[0], FACE_Y_BAND[1],
-             sol["headroom"], m["headroom_frac"]))
+             sol["headroom"]))
     # Before the band check, because the band is a statement ABOUT a face and
     # is meaningless when there is not one. Every other guard here compares the
     # model's numbers with each other, so all of them pass on a shot where it
@@ -855,9 +815,9 @@ def report(m, sol, style, W, H):
     # spread across 12 frames and a face at exactly 0.275 -- a window whose top
     # edge sat 130px BELOW his real crown. Nothing downstream could have caught
     # that; only "is there a face at all" can.
-    if not m.get("face_visible", True):
+    if not m["face_visible"]:
         bad.append("no face is visible in %d of %d frames"
-                   % (m["n"] - m.get("face_seen", 0), m["n"]))
+                   % (m["n"] - m["face_seen"], m["n"]))
         print("! NO FACE IS VISIBLE in this shot (%d of %d frames). Every "
               "number above is then a box drawn round something that is not "
               "his face, and it will still look self-consistent -- confident, "
@@ -867,7 +827,7 @@ def report(m, sol, style, W, H):
               "any burned-in graphics start over several frames, put his head "
               "centre at %.3f of the window, and write crop:/%s "
               "yourself with the reasoning in a comment."
-              % (m["n"] - m.get("face_seen", 0), m["n"], sol["fx_target"],
+              % (m["n"] - m["face_seen"], m["n"], sol["fx_target"],
                  "face_bottom:" if CAPTION_W[style] is None else "x_offset:"),
               file=sys.stderr)
     if not sol["y_ok"]:
@@ -1044,10 +1004,15 @@ def cache_path(config_path):
                         "crop.json")
 
 
-def cache_key(times):
-    """Keyed by the frame timestamps, so re-running to tune the GEOMETRY costs
-    nothing and only a change of frames pays again."""
-    return "%s|%s" % (MODEL, ",".join("%.2f" % t for t in times))
+def cache_key(src, times):
+    """Keyed by everything that shapes the model's answer -- the source, the
+    frame timestamps, and a digest of the prompt, schema and frame width -- so
+    re-running to tune the GEOMETRY costs nothing, while a new question never
+    gets an old answer."""
+    ask_digest = hashlib.sha256(json.dumps(
+        [PROMPT, SCHEMA, FRAME_W], sort_keys=True).encode()).hexdigest()[:12]
+    return "%s|%s|%s|%s" % (MODEL, ask_digest, os.path.relpath(src, ROOT),
+                            ",".join("%.2f" % t for t in times))
 
 
 def cache_read(path, key):
@@ -1108,8 +1073,9 @@ def block_lines(sol, style, source, when, m, H):
                      % sol["fy"]]
             anchor = ["x_offset: %d\n" % x_offset_px(sol, style)]
     return head + [
-        "# Re-solve with `pipeline/crop.py <this-file> --force`; edit these\n",
-        "# by hand and they stay edited (crop.py then refuses without --force).\n",
+        "# Re-solve with `pipeline/crop.py <this-file> --write --force`. To\n",
+        "# hand-set the keys, delete these comments: crop.py then refuses to\n",
+        "# overwrite them without --force.\n",
         "crop: {x: %d, y: %d, w: %d, h: %d}\n"
         % (sol["x"], sol["y"], sol["w"], sol["h"]),
     ] + anchor
@@ -1123,21 +1089,28 @@ def write_config(path, lines_to_write, force):
 
     yaml.safe_dump would round-trip the file and eat every hand-written comment
     in it, and those comments are where each reel's reasoning lives -- the same
-    reason align.py's write_trim edits lines."""
+    reason align.py's write_back edits lines."""
     text = open(path, encoding="utf-8").read()
     if not text.endswith("\n"):
         text += "\n"
     lines = text.splitlines(keepends=True)
 
-    # Our own previous block: the marker, its comment lines, and the keys.
+    # Our own previous block: the marker, its comment lines, and the keys --
+    # ending at its LAST key, so a comment that follows it (the next key's
+    # reasoning) is never taken with it.
     at = next((i for i, l in enumerate(lines) if l.startswith(MARK)), None)
     if at is not None:
-        end = at
-        while end < len(lines) and (
-                lines[end].lstrip().startswith("#")
-                or re.match(KEYS, lines[end])):
-            end += 1
+        end, i = at + 1, at
+        while i < len(lines) and (lines[i].lstrip().startswith("#")
+                                  or re.match(KEYS, lines[i])):
+            if re.match(KEYS, lines[i]):
+                end = i + 1
+            i += 1
         del lines[at:end]
+        # The blank line written after the block goes with it.
+        if 0 < at < len(lines) and not lines[at].strip() \
+                and not lines[at - 1].strip():
+            del lines[at]
 
     stray = [i for i, l in enumerate(lines) if re.match(KEYS, l)]
     if stray and not force:
@@ -1149,13 +1122,19 @@ def write_config(path, lines_to_write, force):
     for i in reversed(stray):
         del lines[i]
 
-    # Under the verse span / trim, where a reader looks for the source facts.
+    # Under the verse span / trim, where a reader looks for the source facts,
+    # with exactly one blank line either side -- so a re-write is a no-op.
     keys = r"^(style|signature|surah|ayah_start|ayah_end|trim)\s*:"
     after = [i for i, l in enumerate(lines) if re.match(keys, l)]
     at = max(after) + 1 if after else len(lines)
     while at < len(lines) and not lines[at].strip():
         at += 1
-    lines[at:at] = ["\n"] + lines_to_write
+    while at >= 2 and not lines[at - 1].strip() and not lines[at - 2].strip():
+        del lines[at - 1]
+        at -= 1
+    block = (["\n"] if at and lines[at - 1].strip() else []) \
+        + lines_to_write + (["\n"] if at < len(lines) else [])
+    lines[at:at] = block
     open(path, "w", encoding="utf-8").write("".join(lines))
 
 
@@ -1181,18 +1160,12 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
     t0, t1 = generate.trim_window(cfg)
     if t1 is None:
         t1 = info["duration"]
-    cap = max(1, (CTX - 8192) // EST_TOKENS_PER_FRAME)
-    if frames > cap:
-        print("      --frames %d would not fit %s's %d-token context at ~%d "
-              "tokens a frame; using %d." % (frames, MODEL, CTX,
-                                             EST_TOKENS_PER_FRAME, cap))
-        frames = cap
     times = sample_times(t0, t1, frames)
     print("%s  %dx%d  %s, %d frames over %.1f-%.1fs"
           % (os.path.basename(config_path), W, H, style, len(times), t0, t1))
 
     tmp_dir = os.path.join(cfg["tmp_dir"], "crop")
-    key = cache_key(times)
+    key = cache_key(src, times)
     entry = None
     if measurements:
         # Already in fractions: a hand-written regression fixture is written in
@@ -1204,10 +1177,13 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
         if entry:
             print("      cached solve (%s) -- --force re-queries"
                   % entry.get("when", "?"))
-    # Frames cost one ffmpeg seek each and only ask() and --annotate look at
-    # them, so a cached geometry re-solve extracts nothing.
-    paths, dims = ((None, None) if entry is not None and not annotate_path
-                   else extract(src, times, tmp_dir, W, H))
+    # Frames cost one ffmpeg seek each. ask() needs all of them; --annotate
+    # draws on the middle one only, so a cached re-solve extracts that or none.
+    paths = dims = None
+    if entry is None:
+        paths, dims = extract(src, times, tmp_dir, W, H)
+    elif annotate_path:
+        paths, dims = extract(src, [times[len(times) // 2]], tmp_dir, W, H)
     if entry is None:
         if dry_run:
             raise SystemExit(
@@ -1229,8 +1205,8 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
     usage = entry.get("usage") or {}
     if usage:
         # Printed so the cost of a solve is checked against a bill: one 4-frame
-        # pass measures $0.09-0.13 total_cost_usd (Claude Code reports it in
-        # the --output-format json envelope).
+        # pass measures $0.09-0.13 total_cost_usd (the `claude` CLI reports it
+        # in the --output-format json envelope).
         print("usage   : %s  ->  $%.5f"
               % (json.dumps(usage), entry.get("cost_usd") or 0.0))
 
@@ -1259,7 +1235,7 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
         print("annotate: %s" % annotate(paths[len(paths) // 2], sol, m, style,
                                         annotate_path))
     if not write:
-        print("(dry run -- pass --write to put crop:%s in %s)"
+        print("(not written -- pass --write to put crop:%s in %s)"
               % ("" if m.get("no_reciter") else " and %s:" % anchor,
                  os.path.basename(config_path)))
         return sol
@@ -1269,7 +1245,7 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False,
                          % "; ".join(bad))
     source = ("measurements from %s" % os.path.basename(measurements)
               if measurements
-              else "%s via claude code CLI" % entry.get("model", MODEL))
+              else "%s via the `claude` CLI" % entry.get("model", MODEL))
     when = entry.get("when") or datetime.date.today().isoformat()
     write_config(config_path, block_lines(sol, style, source, when, m, H),
                  force)

@@ -10,13 +10,15 @@
 
 Produces sources/<id>/:
     source.mp4      the video (downloaded, or a symlink to the local file --
-                    re-encoded instead when the local file is above 30fps)
+                    re-encoded instead when it is above 30fps)
     captions.srt    YouTube's Arabic auto-captions, only when YouTube has them
-    captions.none   sentinel: captions resolved and YouTube has none, so a
-                    re-fetch of a complete source never touches the network
+    captions.none   sentinel: captions resolved and YouTube has none (or the
+                    fetch was a --timestamps section), so a re-fetch of a
+                    complete source never touches the network
 
 Everything is held to 30fps at intake: the reels render at 30, so surplus
-frames only cost decode and filter time in every stage downstream.
+frames only cost decode and filter time in every stage downstream. A source
+above 30fps is re-encoded down once, here.
 
 A hand-made source needs no fetch at all: create sources/<name>/ and put a
 source.mp4 in it.
@@ -31,12 +33,19 @@ Proxy: `--proxy` with no value enables the pool configured in .env
 -- static residential first, datacentre fallback). One exit is used for the
 whole fetch: a signed googlevideo URL embeds the exit IP that resolved it, so
 the metadata call and the media fetch must leave from the same exit, and a
-rotating proxy 403s the download outright. Credentials are redacted in output.
+rotating proxy 403s the download outright. Credentials are redacted in output
+and reach yt-dlp through its environment, never its argv.
+
+One player-API request per fresh fetch: the metadata call's JSON is handed
+back to yt-dlp (--load-info-json) for the media and captions, so those two
+fetch only googlevideo/timedtext URLs and never meet the bot check.
 
 --timestamps limits the download to a section via yt-dlp --download-sections.
-Caveat: combined with an authenticated proxy the range fetch runs through a
-child ffmpeg that cannot CONNECT-tunnel https, so for proxied hosts download
-the full video instead and use the reel config's `trim`.
+YouTube's captions are timed against the full video, so a section fetch
+records captions.none instead of a mistimed captions.srt. Caveat: combined
+with an authenticated proxy the range fetch runs through a child ffmpeg that
+cannot CONNECT-tunnel https, so for proxied hosts download the full video
+instead and use the reel config's `trim`.
 """
 import argparse
 import json
@@ -44,6 +53,10 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
+
+import generate  # stdlib + quran.py only at import
+from generate import envvar  # the one .env reader
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = os.path.join(ROOT, "sources")
@@ -51,42 +64,6 @@ SOURCES = os.path.join(ROOT, "sources")
 # Reels render at 30fps, so nothing above it survives to the screen. Held down
 # at intake -- once here -- rather than in every downstream decode.
 MAX_FPS = 30
-
-
-# --- machine config (.env) -------------------------------------------------
-
-def _dotenv():
-    """KEY=value pairs from ROOT/.env; process environment wins on conflict."""
-    path = os.path.join(ROOT, ".env")
-    out = {}
-    if os.path.exists(path):
-        for raw in open(path, encoding="utf-8"):
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("export "):
-                line = line[7:].lstrip()
-            k, sep, v = line.partition("=")
-            if sep:
-                v = v.strip()
-                if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
-                    v = v[1:-1]
-                elif " #" in v:
-                    v = v.split(" #", 1)[0].rstrip()
-                out[k.strip()] = v
-    return out
-
-
-_ENV = None
-
-
-def envvar(name, default=None):
-    global _ENV
-    if os.environ.get(name):
-        return os.environ[name]
-    if _ENV is None:
-        _ENV = _dotenv()
-    return _ENV.get(name) or default
 
 
 def yt_dlp():
@@ -150,17 +127,20 @@ def probe_duration(path):
         return 0.0
 
 
-def video_fps(path):
-    """Frames per second of the first video stream; 0.0 when there is none."""
+def video_info(path):
+    """(width, height, fps) of the first video stream; zeros when there is
+    none."""
     p = subprocess.run([ffprobe(), "-v", "error", "-select_streams", "v:0",
-                        "-show_entries", "stream=avg_frame_rate",
-                        "-of", "default=nw=1:nk=1", path],
+                        "-show_entries", "stream=width,height,avg_frame_rate",
+                        "-of", "json", path],
                        capture_output=True, text=True)
-    num, _, den = (p.stdout or "").strip().partition("/")
     try:
-        return float(num) / (float(den) or 1.0)
-    except ValueError:
-        return 0.0
+        s = json.loads(p.stdout)["streams"][0]
+        num, _, den = s["avg_frame_rate"].partition("/")
+        return int(s["width"]), int(s["height"]), \
+            float(num) / (float(den or 1) or 1.0)
+    except (ValueError, KeyError, IndexError):
+        return 0, 0, 0.0
 
 
 def audio_codec(path):
@@ -172,8 +152,9 @@ def audio_codec(path):
     return out.splitlines()[0].strip() if out else ""
 
 
-def ensure_aac(path):
-    """Guarantee the source's audio is AAC. -> True if it had to transcode.
+def ensure_aac(path, dst=None):
+    """Guarantee the source's audio is AAC, writing to `dst` (default: in
+    place). -> True if it had to transcode.
 
     OPUS-IN-MP4 DEADLOCKS FFMPEG at some seek points -- the demuxer blocks in
     tq_send while the filter and encoder threads block in tq_receive, 0% CPU,
@@ -185,7 +166,8 @@ def ensure_aac(path):
     codec = audio_codec(path)
     if codec in ("aac", ""):
         return False
-    tmp = path + ".aac.mp4"
+    dst = dst or path
+    tmp = dst + ".aac.mp4"
     print("  audio   : %s -> aac (opus in mp4 deadlocks ffmpeg; video copied)"
           % codec)
     rc = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-loglevel",
@@ -197,72 +179,129 @@ def ensure_aac(path):
         if os.path.exists(tmp):
             os.remove(tmp)
         raise SystemExit("could not transcode %s audio to AAC" % path)
-    os.replace(tmp, path)
+    os.replace(tmp, dst)
     return True
 
 
-def usable(path, min_bytes=100_000):
+def usable(path):
     """A downloaded file is usable only when it has real size AND a probeable
     duration -- a stalled or stub fetch leaves a file that is present and
     worthless, so mere existence is never accepted."""
-    return (os.path.exists(path) and os.path.getsize(path) >= min_bytes
+    return (os.path.exists(path) and os.path.getsize(path) >= 100_000
             and probe_duration(path) > 0)
+
+
+def cap_fps(src, dst):
+    """Re-encode `src` to MAX_FPS at `dst` (they may be the same path). The
+    renderers drop the surplus frames anyway, so carrying them only buys
+    every later pass (bar-colour sample, loudnorm, the render's own decode +
+    grade) twice the work. Audio leaves as AAC -- see ensure_aac."""
+    print("  fps     : %.3f -> %d (re-encoded once, at intake)"
+          % (video_info(src)[2], MAX_FPS))
+    # crf 16: this copy becomes the master every reel is cut from, so it is
+    # encoded well above the crf 18 the reels themselves are delivered at.
+    acodec = ["-c:a", "copy"] if audio_codec(src) == "aac" else \
+        ["-c:a", "aac", "-b:a", "192k"]
+    tmp = dst + ".part.mp4"
+    rc = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-loglevel",
+                         "error", "-y", "-i", src, "-r", str(MAX_FPS),
+                         "-c:v", "libx264", "-preset", "medium", "-crf", "16",
+                         "-pix_fmt", "yuv420p"] + acodec
+                        + ["-movflags", "+faststart", tmp]).returncode
+    if rc != 0 or not usable(tmp):
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise SystemExit("could not re-encode %s to %dfps" % (src, MAX_FPS))
+    os.replace(tmp, dst)
+
+
+def describe(dst):
+    """The one line that reveals a quality downgrade: what actually landed."""
+    w, h, fps = video_info(dst)
+    return "%dx%d %gfps, audio %s" % (w, h, round(fps, 3),
+                                      audio_codec(dst) or "none")
 
 
 # --- YouTube ---------------------------------------------------------------
 
 # Prefer a real <=1080p video+audio pair, and prefer M4A (AAC) audio -- see
 # ensure_aac for why an Opus track in an MP4 is not acceptable here.
-# <=30fps first: reels are rendered at 30, so a 60fps rendition is a bigger
-# download whose every other frame is decoded and filtered only to be dropped
-# again. The unconstrained selectors stay as fallbacks -- a video published
-# only at 60fps must still fetch.
-FORMAT = ("bv*[height<=1080][fps<=%(fps)d]+ba[ext=m4a]/"
-          "bv*[height<=1080][fps<=%(fps)d]+ba/"
-          "bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/"
-          "b[height<=1080]/bv*+ba/b") % {"fps": MAX_FPS}
+FORMAT = ("bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/"
+          "b[height<=1080]/bv*+ba/b")
+# Resolution outranks frame rate, then the smallest-surplus rate wins. A hard
+# [fps<=30] filter instead settled for 720p30 on aqz-KE-bpKQ, whose 1080p
+# exists only at 60 (measured 2026-09); a 60fps download is capped by cap_fps.
+SORT = "res:1080,fps:%d" % MAX_FPS
 
 # Player-client ladder. The bot check ("Sign in to confirm you're not a bot")
 # fires per exit IP AND per player client at the player API, before any bytes
-# move, so recovery is the next client, never retrying one harder. Measured
-# 2026-08 over 105 endpoints x 5 clients: `tv_simply` resolved on 31 exits
-# where the yt-dlp default and `web_embedded` failed on all 105, so it leads.
-# `web_embedded` stays last: it is the one that still exposes 1080p when the
-# others answer DRM-only.
+# move, so recovery is the next client, never retrying one harder.
 #
-# `tv_simply` costs 1080p unless a GVS PO token is available: without one it
-# skips its https formats and the selector above silently settles for 640x360,
-# exiting 0 with a real (small) file that the stub gate accepts. A local bgutil
-# provider on 127.0.0.1:4416 supplies the token; check it is up before a fetch
-# and read the printed WxH afterwards, since only that reveals the downgrade.
-# With no provider running, `--client android_vr` pins a client whose formats
-# need no token and reaches 1080p.
-PLAYER_CLIENTS = ["tv_simply", "android_vr", "ios", "tv", "web_safari",
-                  "web_embedded"]
+# Measured 2026-09, yt-dlp 2026.08.19, direct, no PO-token provider, on
+# YkXjYyKwHJ4 and 94bFKq5PUXI: `web_embedded` offered 1080p / 2160p;
+# `tv_simply` and `android_vr` offered only 360p (they skip their https formats
+# without a GVS PO token); `ios`, `tv` and `web_safari` offered no video at all,
+# so they are gone. `web_embedded` leads because it is the only one that
+# reaches 1080p unaided. The other two stay because they resolved past the bot
+# check on exits where `web_embedded` did not (2026-08: `tv_simply` on 31 of
+# 105), and a local bgutil provider on 127.0.0.1:4416 restores their 1080p.
+PLAYER_CLIENTS = ["web_embedded", "tv_simply", "android_vr"]
+# A client whose formats top out below this is passed over for the next one:
+# the PO-token cap lands at 640x360 with rc 0 and a real file, which nothing
+# else would catch. A pinned `--client` accepts whatever it offers -- that is
+# how a genuinely low-resolution source gets in.
+MIN_HEIGHT = 720
+
+
+def best_height(meta):
+    """Tallest downloadable video format the metadata call offered."""
+    return max([f.get("height") or 0 for f in meta.get("formats") or []
+                if f.get("vcodec") not in (None, "none") and f.get("url")]
+               or [0])
 
 
 def _run_ytdlp(args, proxy=None, capture=False):
-    cmd = [yt_dlp()] + args + (["--proxy", proxy] if proxy else [])
+    env = None
+    if proxy:
+        env = dict(os.environ, HTTP_PROXY=proxy, HTTPS_PROXY=proxy,
+                   http_proxy=proxy, https_proxy=proxy)
+    cmd = [yt_dlp()] + args
     if capture:
-        p = subprocess.run(cmd, capture_output=True, text=True)
+        p = subprocess.run(cmd, capture_output=True, text=True, env=env)
         return p.returncode, p.stdout, redact(p.stderr)
-    p = subprocess.run(cmd)
+    p = subprocess.run(cmd, env=env)
     return p.returncode, "", ""
 
 
-def _with_fallback(args, proxy=None, capture=False, client=None):
-    """Walk PLAYER_CLIENTS until one resolves. `client` pins a known-good one
-    (the caller passes back what metadata succeeded with, so the media fetch
-    does not re-pay the ladder)."""
+def _resolve(url, proxy=None, client=None):
+    """Metadata call. Walk PLAYER_CLIENTS until one resolves with formats of
+    at least MIN_HEIGHT; `client` pins one and accepts what it offers.
+    -> (json_text, meta, client)."""
     order = [client] if client else PLAYER_CLIENTS
-    rc = out = err = None
+    err = ""
+    low = []
     for cl in order:
-        cl_args = ["--extractor-args", "youtube:player_client=%s" % cl]
-        rc, out, err = _run_ytdlp(cl_args + args, proxy, capture)
-        if rc == 0:
-            return rc, out, err, cl
-        print("  player_client=%s failed (rc=%d)" % (cl, rc), file=sys.stderr)
-    return rc, out, err, None
+        rc, out, err = _run_ytdlp(
+            ["--extractor-args", "youtube:player_client=%s" % cl,
+             "-J", "--no-playlist", url], proxy, capture=True)
+        if rc != 0:
+            print("  player_client=%s failed (rc=%d)" % (cl, rc),
+                  file=sys.stderr)
+            continue
+        meta = json.loads(out)
+        h = best_height(meta)
+        if client or h >= MIN_HEIGHT:
+            return out, meta, cl
+        print("  player_client=%s offers only %dp -- next client"
+              % (cl, h), file=sys.stderr)
+        low.append("%s %dp" % (cl, h))
+    if low:
+        raise RuntimeError(
+            "no player client offered >= %dp (%s). tv_simply/android_vr need "
+            "a PO token (bgutil on 127.0.0.1:4416) for more; for a genuinely "
+            "low-res source, pin one with --client {%s}"
+            % (MIN_HEIGHT, ", ".join(low), ",".join(PLAYER_CLIENTS)))
+    raise RuntimeError("yt-dlp metadata failed:\n%s" % (err or "")[-2000:])
 
 
 def parse_ts(spec):
@@ -288,106 +327,125 @@ def fetch_youtube(vid, out_dir, proxy=None, timestamps=None, client=None):
     # like any other and can fail the bot check -- failing it for a fetch
     # that would have downloaded nothing is a re-fetch that fails for free.
     if usable(dst) and (os.path.exists(srt) or os.path.exists(none)):
-        print("  video   : %s  (reused)" % os.path.relpath(dst, ROOT))
+        print("  video   : %s  %s  (reused)"
+              % (os.path.relpath(dst, ROOT), describe(dst)))
         print("  captions: %s  (reused)"
               % os.path.relpath(srt if os.path.exists(srt) else none, ROOT))
         return
 
     # metadata first: title/duration are worth having on screen before minutes
     # of download, and a bot check fires here, before any bytes move.
-    rc, out, err, client = _with_fallback(["-J", "--no-playlist", url], proxy,
-                                          capture=True, client=client)
-    if rc != 0:
-        raise RuntimeError("yt-dlp metadata failed:\n%s"
-                           % ((err or out) or "")[-2000:])
-    print("  client  : %s" % client)
-    meta = json.loads(out)
-    print("  %s | %ss | %sx%s | %s" % (
-        meta.get("title"), meta.get("duration"), meta.get("width"),
-        meta.get("height"), meta.get("uploader") or meta.get("channel")))
+    out, meta, client = _resolve(url, proxy, client)
+    print("  client  : %s (offers %dp)" % (client, best_height(meta)))
+    print("  %s | %ss | %s" % (meta.get("title"), meta.get("duration"),
+                              meta.get("uploader") or meta.get("channel")))
+    fd, info = tempfile.mkstemp(suffix=".info.json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(out)
+        _fetch_media(info, meta, dst, srt, none, proxy, timestamps, vid)
+    finally:
+        os.remove(info)
 
+
+def _fetch_media(info, meta, dst, srt, none, proxy, timestamps, vid):
+    """Media + captions from the metadata call's own JSON: same formats, same
+    exit, no second player-API request."""
+    out_dir = os.path.dirname(dst)
     if usable(dst):
-        print("  video   : %s  (reused)" % os.path.relpath(dst, ROOT))
+        print("  video   : %s  %s  (reused)"
+              % (os.path.relpath(dst, ROOT), describe(dst)))
     else:
-        args = ["--no-playlist", "-f", FORMAT, "--merge-output-format", "mp4",
-                "-o", os.path.join(out_dir, "source.%(ext)s"), url]
+        args = ["--load-info-json", info, "-f", FORMAT, "-S", SORT,
+                "--merge-output-format", "mp4",
+                "-o", os.path.join(out_dir, "source.%(ext)s")]
         if timestamps:
             a, _, b = timestamps.partition("-")
             args = ["--download-sections",
                     "*%s-%s" % (parse_ts(a), parse_ts(b))] + args
-        rc, _, _, _ = _with_fallback(args, proxy, client=client)
+        rc, _, _ = _run_ytdlp(args, proxy)
         if rc != 0 or not usable(dst):
             raise RuntimeError(
                 "download failed for %s (file %s)" % (
                     vid, "missing" if not os.path.exists(dst)
                     else "present but stub/unprobeable -- not accepted"))
-        ensure_aac(dst)
-        print("  video   : %s  [audio %s]"
-              % (os.path.relpath(dst, ROOT), audio_codec(dst) or "none"))
+        want = min(best_height(meta), 1080)
+        if video_info(dst)[1] < want:
+            got = describe(dst)
+            os.remove(dst)
+            raise RuntimeError("download landed at %s but %dp was offered "
+                               "-- not accepted" % (got, want))
+        if video_info(dst)[2] > MAX_FPS:
+            cap_fps(dst, dst)
+        else:
+            ensure_aac(dst)
+        print("  video   : %s  %s" % (os.path.relpath(dst, ROOT), describe(dst)))
 
     if os.path.exists(srt):
         print("  captions: %s  (reused)" % os.path.relpath(srt, ROOT))
         return
-    rc, _, _, _ = _with_fallback(
-        ["--no-playlist", "--skip-download", "--write-auto-subs",
+    if timestamps:
+        _no_captions(none, "--timestamps section: YouTube's captions are "
+                           "timed against the full video")
+        return
+    if "ar-orig" not in (meta.get("automatic_captions") or {}):
+        _no_captions(none, "no ar-orig auto-captions on YouTube")
+        return
+    rc, _, _ = _run_ytdlp(
+        ["--load-info-json", info, "--skip-download", "--write-auto-subs",
          "--sub-lang", "ar-orig", "--convert-subs", "srt",
-         "-o", os.path.join(out_dir, "source.%(ext)s"), url],
-        proxy, client=client)
+         "-o", os.path.join(out_dir, "source.%(ext)s")], proxy)
     got = os.path.join(out_dir, "source.ar-orig.srt")
-    if os.path.exists(got):
+    if rc == 0 and os.path.exists(got):
         os.replace(got, srt)
         print("  captions: %s" % os.path.relpath(srt, ROOT))
-    elif rc == 0:
-        # The fetch resolved and YouTube has no ar-orig track: record that, so
-        # the completeness gate above fires and a re-fetch never touches the
-        # network. A FAILED caption fetch records nothing -- it must retry.
-        with open(none, "w", encoding="utf-8") as fh:
-            fh.write("no ar-orig auto-captions on YouTube "
-                     "(recorded by fetch.py; delete to re-check)\n")
-        print("  captions: none on YouTube (recorded -- a re-fetch now skips "
-              "the network; transcribe.py covers it)")
     else:
+        # A FAILED caption fetch records nothing -- the next run retries.
         print("  captions: fetch failed; the next run retries")
+
+
+def _no_captions(none, why):
+    """Record that there is no captions.srt to have, so the completeness gate
+    fires and a re-fetch never touches the network."""
+    with open(none, "w", encoding="utf-8") as fh:
+        fh.write("%s (recorded by fetch.py; delete to re-check)\n" % why)
+    print("  captions: none -- %s (recorded; transcribe.py covers it)" % why)
 
 
 # --- local files -----------------------------------------------------------
 
 def fetch_local(path, out_dir):
     """Symlink the file in place. A source ABOVE MAX_FPS is re-encoded down to
-    it instead: the renderers drop the surplus frames anyway, so carrying them
-    only buys every later pass (bar-colour sample, loudnorm, the render's own
-    decode + grade) twice the work. The user's own file is never touched."""
+    it instead (cap_fps), and a non-AAC .mp4 gets an AAC copy (ensure_aac --
+    the deadlock is an MP4-container one, so other containers are linked
+    as-is). The user's own file is never touched."""
     src = os.path.abspath(path)
     if not os.path.isfile(src):
         raise SystemExit("not a file: %s" % src)
-    fps = video_fps(src)
-    ext = ".mp4" if fps > MAX_FPS else os.path.splitext(src)[1].lower()
+    fps = video_info(src)[2]
+    ext = os.path.splitext(src)[1].lower()
+    fix_audio = ext in (".mp4", ".m4v") and audio_codec(src) not in ("aac", "")
+    if fps > MAX_FPS or fix_audio or ext == ".m4v":
+        ext = ".mp4"
     dst = os.path.join(out_dir, "source" + ext)
+    if os.path.basename(dst) not in generate.SOURCE_NAMES:
+        raise SystemExit("%s: unsupported extension; use one of %s"
+                         % (src, " ".join(n[6:] for n in generate.SOURCE_NAMES)))
     if os.path.islink(dst) or os.path.exists(dst):
-        print("  video   : %s  (already present, untouched)"
-              % os.path.relpath(dst, ROOT))
+        print("  video   : %s  %s  (already present, untouched)"
+              % (os.path.relpath(dst, ROOT), describe(dst)))
         return
-    if fps <= MAX_FPS:
+    if fps > MAX_FPS:
+        cap_fps(src, dst)
+    elif fix_audio:
+        ensure_aac(src, dst)
+    else:
         os.symlink(src, dst)
-        print("  video   : %s -> %s" % (os.path.relpath(dst, ROOT), src))
+        print("  video   : %s -> %s  %s"
+              % (os.path.relpath(dst, ROOT), src, describe(dst)))
         return
-    print("  fps     : %.3f -> %d (re-encoded once, at intake)" % (fps, MAX_FPS))
-    # crf 16: this copy becomes the master every reel is cut from, so it is
-    # encoded well above the crf 18 the reels themselves are delivered at.
-    acodec = ["-c:a", "copy"] if audio_codec(src) == "aac" else \
-        ["-c:a", "aac", "-b:a", "192k"]
-    tmp = dst + ".part.mp4"
-    rc = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-loglevel",
-                         "error", "-y", "-i", src, "-r", str(MAX_FPS),
-                         "-c:v", "libx264", "-preset", "medium", "-crf", "16",
-                         "-pix_fmt", "yuv420p"] + acodec
-                        + ["-movflags", "+faststart", tmp]).returncode
-    if rc != 0 or not usable(tmp):
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise SystemExit("could not re-encode %s to %dfps" % (src, MAX_FPS))
-    os.replace(tmp, dst)
-    print("  video   : %s  [from %s]" % (os.path.relpath(dst, ROOT), src))
+    print("  video   : %s  %s  [from %s]"
+          % (os.path.relpath(dst, ROOT), describe(dst), src))
 
 
 # --- main ------------------------------------------------------------------
@@ -402,8 +460,8 @@ def main(argv=None):
     ap.add_argument("--timestamps", metavar="A-B",
                     help="download only this section (MM:SS-MM:SS)")
     ap.add_argument("--client", choices=PLAYER_CLIENTS,
-                    help="pin one player client instead of walking the ladder "
-                         "(android_vr when tv_simply lands at 640x360)")
+                    help="pin one player client instead of walking the ladder; "
+                         "accepts whatever resolution it offers")
     a = ap.parse_args(argv)
 
     vid = video_id(a.source)
