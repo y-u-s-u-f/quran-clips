@@ -13,7 +13,7 @@
 #      faster-whisper everywhere else (QC_ASR_BACKEND overrides, read from
 #      the shell or .env like every script reads it)
 #   3b. builds tools/align-venv -- ctc-forced-aligner (torch) for align.py
-#   4. looks for the `claude` CLI pipeline/crop.py uses (optional)
+#   4. checks the vision API settings pipeline/crop.py uses (optional)
 #   5. copies .env.example -> .env when absent
 #   6. prints a doctor-style summary of what resolved and what is missing
 #
@@ -164,16 +164,14 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. the `claude` CLI (pipeline/crop.py; optional, authoring only)
+# 4. the vision API (pipeline/crop.py; optional, authoring only)
 # ---------------------------------------------------------------------------
-# crop.py rides the user's own `claude` sign-in. Nothing at RENDER time
-# consults a model, so this being absent cannot change a pixel.
-CLAUDE="$(envvar QC_CLAUDE)"
-CLAUDE="${CLAUDE:-claude}"
-if have "$CLAUDE"; then
-    ok+=("framing      $(command -v "$CLAUDE") (crop.py)")
+# Nothing at RENDER time consults a model, so this being absent cannot change
+# a pixel.
+if [ -n "$(envvar QC_VISION_API_KEY)" ] && [ -n "$(envvar QC_VISION_MODEL)" ]; then
+    ok+=("framing      $(envvar QC_VISION_MODEL) (crop.py)")
 else
-    ok+=("framing      claude CLI absent (optional; hand-write crop:/x_offset:)")
+    ok+=("framing      QC_VISION_API_KEY/QC_VISION_MODEL unset (optional; hand-write crop:/x_offset:)")
 fi
 
 # ---------------------------------------------------------------------------
