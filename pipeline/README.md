@@ -48,11 +48,13 @@ is roughly the reel. Takes several configs at once (`sources/<id>/*.yaml`),
 sharing the model load. Without `whisper.json` an ibtidāʾ restart goes
 unrepaired.
 
-**crop.py** (every style) — framing from the `claude` CLI, cached in
-`crop.json`. Column styles (bars, horizontal) get the equal-gap rule and
-`x_offset`; `vertical` centres him and reports `face_bottom`, the fraction of
-the canvas height his head box ends at. Refuses on no face / off-frame
-caption / no room under his chin; an EMPTY shot is a centred window and no
+**crop.py** (every style) — framing from an OpenAI-compatible vision API
+(`QC_VISION_*` in `.env`), cached in `crop.json`. Column styles (bars,
+horizontal): caption on the side he faces, edge|reciter, reciter|caption and
+caption|edge roughly equal, `x_offset`. `vertical` centres him and reports
+`face_bottom`, the fraction of the canvas height his head box ends at. Zooms
+only to clear burned-in graphics or reach that layout. Refuses to write on no
+face / no room for the caption; an EMPTY shot is a centred window and no
 anchor key. Check `--annotate` every time. Authoring only — no model at
 render time.
 

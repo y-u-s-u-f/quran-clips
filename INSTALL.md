@@ -7,8 +7,8 @@ macOS or Linux. One script does the whole setup and is safe to re-run:
 ./install.sh --check    # report what resolved, change nothing
 ```
 
-It checks the system tools, builds the three Python environments, looks for
-the `claude` CLI, and creates `.env` from the template. A green summary means
+It checks the system tools, builds the three Python environments, checks the
+vision API settings, and creates `.env` from the template. A green summary means
 every pipeline stage can run; anything listed under `MISSING:` names exactly
 which stage it blocks and the command that fixes it.
 
@@ -73,15 +73,15 @@ that is usually nothing; on a cloud host it is at least the proxy pool; to
 publish, the Meta credentials. `.env.example` documents every key, the
 precedence (shell > `.env` > default) and the proxy escalation order.
 
-## 4. Optional: the `claude` CLI for framing
+## 4. Optional: a vision API for framing
 
 `pipeline/crop.py` solves each reel's crop and caption anchor by asking a
-vision model where the reciter is. It shells out to the local `claude` CLI
-over your own sign-in (`claude auth login`) — no API key — and caches every
-answer in the source's `crop.json`. Without it you hand-write `crop:` and
-`x_offset:`/`face_bottom:`; nothing else needs it, and rendering never calls
-it, so a reel re-renders identically on a machine that has no `claude` at
-all.
+vision model where the reciter is. It calls any OpenAI-compatible API set by
+`QC_VISION_BASE_URL`, `QC_VISION_API_KEY` and `QC_VISION_MODEL` in `.env`,
+and caches every answer in the source's `crop.json`. Without it you
+hand-write `crop:` and `x_offset:`/`face_bottom:`; nothing else needs it, and
+rendering never calls it, so a reel re-renders identically on a machine with
+no API key at all.
 
 ## 5. Verify
 

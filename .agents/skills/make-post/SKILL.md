@@ -119,7 +119,7 @@ was none. Check the card start against the envelope before reaching for `nudge:`
 **crop.py boxed a shoulder.** A draped, hooded or turned head can box clean and
 confident (fy=0.275) and still be wrong; bowed posture fails differently. Look at
 the annotation. Hand-solve by measuring crown / body / congregation / graphics over
-several frames: face centre at **0.275 of the window height** (`FACE_Y_FRAC`),
+several frames: face centre at **0.275 of the window height** (`FACE_Y`),
 crown kept in frame. For
 `x_offset`, match the outer margins, or centre him in the free space if he runs off
 the edge — `(f-0.5)*1920`. For `face_bottom`, where his head box ends as a fraction

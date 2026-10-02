@@ -49,23 +49,25 @@ one `.env` reader (`envvar`), `FFMPEG`/`FFPROBE` (resolved once) and
   the model load; a failed config is reported and the batch continues (exit
   non-zero).
 - **`crop.py`** — authoring-time framing for EVERY style: `crop:` plus
-  `x_offset:` (bars, horizontal) or `face_bottom:` (vertical). Shells out to
-  the `claude` CLI (`claude -p`, local auth); arithmetic decides the window.
-  Column styles use `targets()`'s equal-gap rule with the caption column at
-  `CAPTION_W` (bars 0.45; horizontal 0.55, the wider of render_text's Arabic
-  and English caps); `vertical` has no column beside him, so he is centred
-  (`fx_target` 0.5) and the answer is where his head box ENDS, which is what
-  the caption hangs under. `COST_W` weights the trade per style — vertical
-  weights resolution over centring, because a 9:16 window out of a 16:9
-  source has already thrown away two thirds of the pixels (measured on
-  hajri-23-taraweeh: the column weights bought dead-centre with a 2.5x
-  upscale). Answers cached in `crop.json`, keyed by model, a hash of
-  prompt/schema/`FRAME_W`, the source and the frame timestamps. Defensive
-  parse, no silent defaults. Refuses on no face / off-frame caption / no
-  room under the chin; an EMPTY shot (no reciter in most frames) is a
-  centred window and no anchor key, not a refusal. `FACE_Y_BAND` is a
-  printed note. `--annotate` is the primary check (invariant 4: model never
-  consulted at render time).
+  `x_offset:` (bars, horizontal) or `face_bottom:` (vertical). One request
+  to an OpenAI-compatible chat completions API (`QC_VISION_BASE_URL` /
+  `_API_KEY` / `_MODEL` in `.env`, stdlib `urllib`) for the head box, facing
+  and burned-in graphics; arithmetic decides the window. Column styles: the
+  caption goes on the side he faces (frontal: whichever side frames better),
+  at `CAPTION_W` (bars 0.45; horizontal 0.55, the wider of render_text's
+  Arabic and English caps), with edge|reciter, reciter|caption and
+  caption|edge roughly equal (`ideal_x`), the caption centred in the free
+  space beside him. `vertical` centres him and the answer is where his head
+  box ENDS, which is what the caption hangs under. Up/down: head centre at
+  `FACE_Y`, crown in frame, never below the middle. `ZOOM_COST` weights the
+  trade per style — vertical weights resolution over centring, because a
+  9:16 window out of a 16:9 source has already thrown away two thirds of the
+  pixels (measured on hajri-23-taraweeh). Answers cached in `crop.json`,
+  keyed by model, a hash of prompt/`FRAME_W`, the source and the frame
+  timestamps. Refuses to write on no face / no room for the caption; an
+  EMPTY shot (no reciter in most frames) is a centred window and no anchor
+  key, not a refusal. `--annotate` is the primary check (invariant 4: model
+  never consulted at render time).
 - **`generate.py`** — YAML -> render. `load_config` (+ `check_shapes`) /
   `resolve_span` / `align_words` / groups / silences / `suppress`/`nudge`
   (nudge last) / `print_verification`. Dispatches on `style:` with plan dict
@@ -179,4 +181,4 @@ Two files drive this repo: `AGENTS.md` and
 - Keep repo knowledge in the repo. Nothing here belongs in private memory
   or a skill store outside it — a fact kept anywhere else will drift from
   the one kept here.
-- `crop.py`'s `claude` subprocess is a tool on PATH, like `ffmpeg`.
+- `crop.py`'s vision API is machine config in `.env`, like `ffmpeg`.
