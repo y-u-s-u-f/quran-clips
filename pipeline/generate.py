@@ -98,6 +98,8 @@ DEFAULTS = {
     "surah": None,               # verse span; omit all three to auto-detect
     "ayah_start": None,          # from the whisper transcript (reliable only
     "ayah_end": None,            # for short 1-4 ayah windows)
+    "ayah_end_words": None,      # stop after this many spoken words of
+                                 # ayah_end: the recitation ends mid-ayah
 
     "reciter": None,             # his name in Arabic, spelled as the post's
                                  # hashtag spells it. Never on screen: it is
@@ -185,6 +187,9 @@ an error rather than a silent no-op.
     surah: 33                       # verse span. Omit all three to auto-detect
     ayah_start: 56                  # from whisper.json (short clips only)
     ayah_end: 56
+    ayah_end_words: 18              # optional: the reel ends after this many
+                                    # spoken words of ayah_end (recitation
+                                    # stops mid-ayah). No ornament on it.
     reciter: "..."                  # his name in ARABIC, spelled the way the
                                     # post's hashtag spells it. Copied from
                                     # the source's own title or an earlier
@@ -599,11 +604,21 @@ def fetch_verses(surah, a0, a1):
             for v in quran.range(surah, a0, a1)]
 
 
-def spoken_words(verses):
+def spoken_words(verses, end_words=None):
     """Flatten to the display-word list, dropping pure annotation tokens (the
     rub-el-hizb etc.) that no one speaks -- keeping them would offset display
-    text against the timestamps."""
-    return [w for v in verses for w in quran.display_words(v["text_uthmani"])]
+    text against the timestamps. `end_words` keeps only that many words of
+    the LAST verse, for a recitation that stops mid-ayah."""
+    words = [w for v in verses for w in quran.display_words(v["text_uthmani"])]
+    if end_words is None:
+        return words
+    last = len(quran.display_words(verses[-1]["text_uthmani"]))
+    if (not isinstance(end_words, int) or isinstance(end_words, bool)
+            or not 1 <= end_words <= last):
+        raise SystemExit("ayah_end_words must be 1..%d for %d:%d, not %r"
+                         % (last, verses[-1]["surah"], verses[-1]["ayah"],
+                            end_words))
+    return words[:len(words) - last + end_words]
 
 
 # ---------- caption building ------------------------------------------------
@@ -1090,7 +1105,7 @@ def run_config(config_path, output_override=None, vertical=False,
           % (quran.surah_name(surah), surah, a0, a1))
 
     verses = fetch_verses(surah, a0, a1)
-    words = spoken_words(verses)
+    words = spoken_words(verses, cfg["ayah_end_words"])
 
     if forced:
         print("[4/6] Using forced alignment (pipeline/align.py)...")

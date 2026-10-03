@@ -57,7 +57,8 @@ groups:
     english: "..."                # vertical + horizontal; bars is Arabic-only
     line_split: 2                 # bars only; omit = auto
 # crop:, x_offset:, face_bottom: are written by crop.py --write
-# optional: suppress, nudge, verse_numbers, y_offset, signature_offset,
+# optional: ayah_end_words (recitation stops mid-ayah), suppress, nudge,
+#   verse_numbers, y_offset, signature_offset,
 #   arabic_font, english_font, arabic_scale, english_scale, text_width_frac,
 #   english_caps, vignette, dim, bar_color, grade, fx
 ```
