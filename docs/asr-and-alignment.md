@@ -1,37 +1,22 @@
 # ASR and alignment: what we use, what we rejected, and why
 
-Records the models that were measured and the trade-offs, so the next person
-asking "can't we just use a smaller Quran model?" has the evidence instead of
-re-running it.
+Records the models that were measured and the trade-offs, so the next person asking "can't we just use a smaller Quran model?" has the evidence instead of re-running it.
 
-**Current stack:** `transcribe.py` (Whisper large-v3-turbo) for discovery and
-repeat detection, `align.py` (Meta MMS CTC forced alignment) for timing. **Decision: keep it.**
-Every alternative measured so far loses something load-bearing.
+**Current stack:** `transcribe.py` (Whisper large-v3-turbo) for discovery and repeat detection, `align.py` (Meta MMS CTC forced alignment) for timing. **Decision: keep it.** Every alternative measured so far loses something load-bearing.
 
 ## Three jobs, not one
 
-Conflating these is what makes "just use a smaller model" sound obvious when
-it isn't.
+Conflating these is what makes "just use a smaller model" sound obvious when it isn't.
 
-1. **Discovery** — *which verses is this?* Needs rough Arabic text. Feeds
-   `quran.search()`, which is IDF + contiguity scoring and tolerates badly
-   garbled input. **Skippable**: name `surah`/`ayah_start`/`ayah_end` in the
-   config.
-2. **Timing** — *when is each mushaf word spoken?* Done by forced alignment
-   against text already known byte-exact. No ASR involved; the model only
-   decides WHEN, never WHAT, so it cannot hallucinate.
-3. **Repeat detection** — *did the reciter break off and restart?* Needs an
-   ASR that transcribes the repeated phrase **twice**. This is the job that
-   pins us to Whisper, and the one every alternative fails.
+1. **Discovery** — *which verses is this?* Needs rough Arabic text. Feeds `quran.search()`, which is IDF + contiguity scoring and tolerates badly garbled input. **Skippable**: name `surah`/`ayah_start`/`ayah_end` in the config.
+2. **Timing** — *when is each mushaf word spoken?* Done by forced alignment against text already known byte-exact. No ASR involved; the model only decides WHEN, never WHAT, so it cannot hallucinate.
+3. **Repeat detection** — *did the reciter break off and restart?* Needs an ASR that transcribes the repeated phrase **twice**. This is the job that pins us to Whisper, and the one every alternative fails.
 
-Whisper is only needed for 1 and 3. Timing is forced alignment against
-known mushaf text.
+Whisper is only needed for 1 and 3. Timing is forced alignment against known mushaf text.
 
 ## Measured comparison
 
-Two clips, Faatir and Maryam (see Reproducing). Discovery is scored through
-the real `generate.identify_verse_span()` path (chunked search), not a single
-whole-clip search — the chunked path is meaningfully more forgiving.
+Two clips, Faatir and Maryam (see Reproducing). Discovery is scored through the real `generate.identify_verse_span()` path (chunked search), not a single whole-clip search — the chunked path is meaningfully more forgiving.
 
 | Option | Faatir 35:31-34 | Maryam 19:88-95 | Repeat | Disk | Runtime |
 |---|---|---|---|---|---|
@@ -41,116 +26,64 @@ whole-clip search — the chunked path is meaningfully more forgiving.
 | `whisper-small` (generic) | PASS | FAIL | FAIL | 4.1 G | mlx + torch |
 | `Muno459/fastconformer-quran` + MMS | PASS | PASS | FAIL | **2.6 G** | onnxruntime + torch |
 
-**Discovery is not the discriminator — repeat detection is.** Three models
-handle discovery fine (turbo, Tarteel, fastconformer). Only the
-autoregressive one handles a restart. Anyone optimising this pipeline for
-size will find discovery easy to replace and will lose repeats silently
-unless they test for it specifically.
+**Discovery is not the discriminator — repeat detection is.** Three models handle discovery fine (turbo, Tarteel, fastconformer). Only the autoregressive one handles a restart. Anyone optimising this pipeline for size will find discovery easy to replace and will lose repeats silently unless they test for it specifically.
 
 ### Whisper large-v3-turbo — current, for discovery + repeats
 
-Not the heavyweight option it looks like: 809M params but only 4 decoder
-layers, so it runs near medium speed with large accuracy. `whisper-medium` is
-about the same size, so there is no smaller generic model that holds the
-accuracy.
+Not the heavyweight option it looks like: 809M params but only 4 decoder layers, so it runs near medium speed with large accuracy. `whisper-medium` is about the same size, so there is no smaller generic model that holds the accuracy.
 
-Its text is *worse* than the Quran-tuned models (it wrote `وردا` for `ولدا`,
-`أصارهم معدهم` for `أحصاهم وعدهم`) and discovery still passes, because
-`quran.search` is built for lossy input. Text quality is not the binding
-constraint — **being autoregressive is**. Being a sequential decoder is
-exactly why it emits a restarted phrase twice.
+Its text is *worse* than the Quran-tuned models (it wrote `وردا` for `ولدا`, `أصارهم معدهم` for `أحصاهم وعدهم`) and discovery still passes, because `quran.search` is built for lossy input. Text quality is not the binding constraint — **being autoregressive is**. Being a sequential decoder is exactly why it emits a restarted phrase twice.
 
 ### `tarteel-ai/whisper-base-ar-quran` — rejected
 
-Excellent text, fully diacritized, and it **passes discovery on both clips**
-(`Faatir 35:31-34`, `Maryam 19:90-94`) at 556 MB against turbo's 1.5 G. As a
-discovery-only replacement it works.
+Excellent text, fully diacritized, and it **passes discovery on both clips** (`Faatir 35:31-34`, `Maryam 19:90-94`) at 556 MB against turbo's 1.5 G. As a discovery-only replacement it works.
 
-Rejected for one reason: **no timestamps at all.** The fine-tune stripped the
-timestamp tokens — `no_timestamps_token_id` is absent and
-`return_timestamps=True` raises. That kills `find_repeats` (which needs timed
-segments), `whisper.srt`, and the Needleman-Wunsch fallback. There is no
-decoding option that recovers them; the tokens are not in the vocabulary.
+Rejected for one reason: **no timestamps at all.** The fine-tune stripped the timestamp tokens — `no_timestamps_token_id` is absent and `return_timestamps=True` raises. That kills `find_repeats` (which needs timed segments), `whisper.srt`, and the Needleman-Wunsch fallback. There is no decoding option that recovers them; the tokens are not in the vocabulary.
 
-Its generation config is also monolingual-legacy, so it rejects the
-`language=`/`task=` kwargs modern transformers passes.
+Its generation config is also monolingual-legacy, so it rejects the `language=`/`task=` kwargs modern transformers passes.
 
-**Worth revisiting** if repeat detection moves out of ASR (below): it would
-then be a straight 1.5 G → 556 MB win, still on torch.
+**Worth revisiting** if repeat detection moves out of ASR (below): it would then be a straight 1.5 G → 556 MB win, still on torch.
 
 ### `TBOGamer22/wav2vec2-quran-phonetics` — rejected
 
-Unusable. Output was romanized gibberish on Faatir and the single character
-`y` on Maryam. The repo ships `rng_state.pth` and `trainer_state.json`, i.e.
-a raw training checkpoint. Its vocab is Latin phonemes (`ā ī ū ʿ ḍ ḥ ṣ ṭ ẓ`)
-rather than Arabic, so `quran.search` could not consume it without a parallel
-romanized index over all 6236 ayat.
+Unusable. Output was romanized gibberish on Faatir and the single character `y` on Maryam. The repo ships `rng_state.pth` and `trainer_state.json`, i.e. a raw training checkpoint. Its vocab is Latin phonemes (`ā ī ū ʿ ḍ ḥ ṣ ṭ ẓ`) rather than Arabic, so `quran.search` could not consume it without a parallel romanized index over all 6236 ayat.
 
 ### `whisper-small` (generic) — rejected
 
-The important negative result: it keeps timestamps but **found zero repeats**
-on the Faatir clip where turbo found the restart, and lost Maryam
-(An-Nisaa 4:171). Shrinking the model breaks repeat detection.
+The important negative result: it keeps timestamps but **found zero repeats** on the Faatir clip where turbo found the restart, and lost Maryam (An-Nisaa 4:171). Shrinking the model breaks repeat detection.
 
 ### `Muno459/fastconformer-quran` — the best rejected option
 
-Genuinely well built, and the closest call. NVIDIA
-`stt_ar_fastconformer_hybrid_large_pcd_v1.0` fine-tuned on
-`tarteel-ai/everyayah` + `tlog` + `muaalem`. Matches turbo on discovery
-(`Faatir 35:31-33`, `Maryam 19:90-95` — the same Maryam range turbo gets) at
-**131 MB against 1.5 G**, on `onnxruntime` with **no torch and no mlx**. Ships
-a numpy `LogMelExtractor` matching NeMo's preprocessor, a SentencePiece
-tokenizer over Arabic (1024 tokens), and its own `ctc_forced_align`.
-Quantization is free: q8 (131 MB) output was identical to fp32 (458 MB).
+Genuinely well built, and the closest call. NVIDIA `stt_ar_fastconformer_hybrid_large_pcd_v1.0` fine-tuned on `tarteel-ai/everyayah` + `tlog` + `muaalem`. Matches turbo on discovery (`Faatir 35:31-33`, `Maryam 19:90-95` — the same Maryam range turbo gets) at **131 MB against 1.5 G**, on `onnxruntime` with **no torch and no mlx**. Ships a numpy `LogMelExtractor` matching NeMo's preprocessor, a SentencePiece tokenizer over Arabic (1024 tokens), and its own `ctc_forced_align`. Quantization is free: q8 (131 MB) output was identical to fp32 (458 MB).
 
-Rejected because **greedy CTC structurally cannot see a restart**. On the
-Faatir clip `حَرِيرٌ` was assigned 70.08 → **94.64s** — 24.5 seconds during
-which it emitted nothing, swallowing the entire first utterance at
-76.72–83.66. It transcribes the phrase once. Confirmed on fp32, so it is not
-a quantization artifact. It also truncates words (`الْدُ` for `الْحَمْدُ`).
+Rejected because **greedy CTC structurally cannot see a restart**. On the Faatir clip `حَرِيرٌ` was assigned 70.08 → **94.64s** — 24.5 seconds during which it emitted nothing, swallowing the entire first utterance at 76.72–83.66. It transcribes the phrase once. Confirmed on fp32, so it is not a quantization artifact. It also truncates words (`الْدُ` for `الْحَمْدُ`).
 
-Gated (`gated: auto`) and licensed `npl-1.0`, not a standard OSS licence —
-worth reading before any monetised use.
+Gated (`gated: auto`) and licensed `npl-1.0`, not a standard OSS licence — worth reading before any monetised use.
 
 **Still the best candidate if repeat detection moves out of ASR** (below).
 
 ### `yayaiu6/Real-Time-Quran-recitation-tracker-System` — not applicable
 
-A memorization trainer, not alignment technology. Its "alignment" is
-Levenshtein + Needleman-Wunsch over text, which is what
-`generate.align_words()` already does; its word times still come from ASR
-timestamps, the exact weakness forced alignment removed. Its "repetition
-detection" tracks a live reciter's position on a page, not caption timing.
-MIT, so readable for ideas.
+A memorization trainer, not alignment technology. Its "alignment" is Levenshtein + Needleman-Wunsch over text, which is what `generate.align_words()` already does; its word times still come from ASR timestamps, the exact weakness forced alignment removed. Its "repetition detection" tracks a live reciter's position on a page, not caption timing. MIT, so readable for ideas.
 
 ## Cost, honestly
 
-`transcribe.py` and `align.py` are **separate processes run at different
-times**, so both models are never resident at once. Peak RAM is already one
-model. The real cost is disk and install complexity, not memory:
+`transcribe.py` and `align.py` are **separate processes run at different times**, so both models are never resident at once. Peak RAM is already one model. The real cost is disk and install complexity, not memory:
 
 | | venv | weights |
 |---|---|---|
 | `tools/asr-venv` | 1.1 G | turbo 1.5 G |
 | `tools/align-venv` | 1.3 G | MMS 1.2 G |
 
-Naming the verse span avoids the ASR half at run time only for a reciter who
-never restarts; otherwise job 3 still needs it.
+Naming the verse span avoids the ASR half at run time only for a reciter who never restarts; otherwise job 3 still needs it.
 
 ## The open item: repeat detection without ASR
 
-Repeat detection is the only remaining tie to Whisper. If it moved into the
-CTC alignment, Whisper would become purely optional discovery, and
-fastconformer's 131 MB (or nothing at all) could replace it.
+Repeat detection is the only remaining tie to Whisper. If it moved into the CTC alignment, Whisper would become purely optional discovery, and fastconformer's 131 MB (or nothing at all) could replace it.
 
-**Sketch:** after aligning, find a large gap where no reference word was
-claimed — on the Faatir clip, `حرير` ends at 70.08 and the next word is not
-until 85.40. Re-run CTC alignment of *only the phrase that follows* against
-*only that window*. A good score means the phrase really was spoken there, so
-it is a restart; pull the caption start back.
+**Sketch:** after aligning, find a large gap where no reference word was claimed — on the Faatir clip, `حرير` ends at 70.08 and the next word is not until 85.40. Re-run CTC alignment of *only the phrase that follows* against *only that window*. A good score means the phrase really was spoken there, so it is a restart; pull the caption start back.
 
-**It must re-align acoustically — an energy or silence test will not work.**
-Measured on extracted WAVs:
+**It must re-align acoustically — an energy or silence test will not work.** Measured on extracted WAVs:
 
 | Window | Level |
 |---|---|
@@ -159,32 +92,14 @@ Measured on extracted WAVs:
 | Faatir restart-gap 70.5-83.5 | −18.2 dB |
 | Faatir recitation 90-100 | −18.7 dB |
 
-A genuine pause and a genuine restart sit at the **same level as recitation**
-in these reverberant masjid recordings. `silencedetect` cannot separate them;
-only asking "does this phrase's text match this audio?" can.
+A genuine pause and a genuine restart sit at the **same level as recitation** in these reverberant masjid recordings. `silencedetect` cannot separate them; only asking "does this phrase's text match this audio?" can.
 
-(Beware `-ss`/`-to` placed before `-i` with `volumedetect` — it silently
-measured the whole file during this investigation and produced two wrong
-conclusions in a row. Extract the window to a WAV and check its duration.)
+(Beware `-ss`/`-to` placed before `-i` with `volumedetect` — it silently measured the whole file during this investigation and produced two wrong conclusions in a row. Extract the window to a WAV and check its duration.)
 
-Also untested: fastconformer as the *aligner*, replacing MMS. That would be
-one 131 MB model with no torch anywhere, ~2.5 G → ~200 MB. The catch is 80 ms
-frame resolution against MMS's 20 ms — 4× coarser, though still far tighter
-than the 1–2 s errors that started this work.
+Also untested: fastconformer as the *aligner*, replacing MMS. That would be one 131 MB model with no torch anywhere, ~2.5 G → ~200 MB. The catch is 80 ms frame resolution against MMS's 20 ms — 4× coarser, though still far tighter than the 1–2 s errors that started this work.
 
 ## Reproducing
 
-Discovery is scored with `generate.identify_verse_span()` over each model's
-words; repeat detection by looking for consecutive identical segments
-(Whisper) or a repeated n-gram in the word stream (CTC models). The two test
-clips were local recordings with no public URL, so they are not in the repo;
-their configs are in git history (`sources/ahmad-alarabi/` — Faatir, with an
-ibtidāʾ restart; `sources/ansari-efore-end-maryam/` — Maryam, no restart, the
-discriminator for model quality; last at `9bc669b`). On them, any replacement
-had to pass both and reproduce **76.72s** as the start of card 8 on Faatir.
+Discovery is scored with `generate.identify_verse_span()` over each model's words; repeat detection by looking for consecutive identical segments (Whisper) or a repeated n-gram in the word stream (CTC models). The two test clips were local recordings with no public URL, so they are not in the repo; their configs are in git history (`sources/ahmad-alarabi/` — Faatir, with an ibtidāʾ restart; `sources/ansari-efore-end-maryam/` — Maryam, no restart, the discriminator for model quality; last at `9bc669b`). On them, any replacement had to pass both and reproduce **76.72s** as the start of card 8 on Faatir.
 
-Without those recordings, `sources/YkXjYyKwHJ4/ahzab-56-56.yaml` (tracked,
-fetchable) has an ibtidāʾ restart the current stack repairs — card 2 stays up
-across both utterances — so it is the restart check; measure a candidate
-against the current stack's align output there. The table above was not
-measured on it.
+Without those recordings, `sources/YkXjYyKwHJ4/ahzab-56-56.yaml` (tracked, fetchable) has an ibtidāʾ restart the current stack repairs — card 2 stays up across both utterances — so it is the restart check; measure a candidate against the current stack's align output there. The table above was not measured on it.
