@@ -94,7 +94,8 @@ one `.env` reader (`envvar`), `FFMPEG`/`FFPROBE` (resolved once) and
   portrait puts its TOP under `face_bottom` — then lifts the whole block if
   the deepest card would reach the signature's band. Grade gradients at 48x27
   (that resolution IS the softness). `english_caps`, `vignette`, `dim`,
-  fonts and scales are the only look knobs; the rest are constants here.
+  `caption_transition`, fonts and scales are the only look knobs; the rest
+  are constants here.
   A constant that cannot hold on both canvases is keyed by style.
 - **`render_bars.py`** — 1920x1080 pills; the 16:9 picture IS the canvas, no
   letterbox. `layout` / `draw_layers` / `schedule` / `build_graph`.

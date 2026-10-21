@@ -152,6 +152,12 @@ DEFAULTS = {
                                  # The backing carries the type's contrast, so
                                  # this is the global mood knob: dial it down
                                  # for footage that should stay bright.
+    "caption_transition": 0.6,   # seconds per card change: the old card fades
+                                 # out over the first half, then the new one
+                                 # fades in over the second. 0.6 keeps the old
+                                 # card up to about the end of its last word
+                                 # across the 0.16-0.86s breaths measured at
+                                 # hujurat-4-5's card boundaries.
     "face_bottom": None,         # vertical only: fraction of the canvas
                                  # height at which the reciter's head box
                                  # ends, measured by crop.py. The caption
@@ -228,7 +234,9 @@ an error rather than a silent no-op.
     #   text_width_frac (raises the ink-width cap the fitted size is solved
     #   against, so a *_scale is not silently clipped by it),
     #   english_caps (true = ALL-CAPS, the reference reels' setting),
-    #   vignette (true | false), dim (0 untouched .. 1 black; 0.118 house)
+    #   vignette (true | false), dim (0 untouched .. 1 black; 0.118 house),
+    #   caption_transition (seconds per card change, half fading the old
+    #   card out, then half fading the new one in; 0.6 house)
     # bars style: bar_color ("#RRGGBB" | omit for auto),
     #   grade: {brightness: -0.12, gamma: 0.95, ...} to move the picture
     #   grade for THIS source only (keys: brightness contrast saturation
@@ -955,6 +963,9 @@ def check_shapes(cfg, path):
     if cfg["bar_color"] is not None and not re.fullmatch(
             r"#?[0-9A-Fa-f]{6}", str(cfg["bar_color"])):
         bad("bar_color must be \"#RRGGBB\", not %r" % cfg["bar_color"])
+    if not (_num(cfg["caption_transition"]) and cfg["caption_transition"] > 0):
+        bad("caption_transition must be seconds > 0, not %r"
+            % (cfg["caption_transition"],))
     for key in ("groups", "nudge", "suppress"):
         if cfg[key] is not None and not isinstance(cfg[key], list):
             bad("%s must be a list, not %r" % (key, cfg[key]))

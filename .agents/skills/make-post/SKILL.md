@@ -59,7 +59,7 @@ groups:
 # crop:, x_offset:, face_bottom: are written by crop.py --write
 # optional: suppress, nudge, verse_numbers, y_offset, signature_offset,
 #   arabic_font, english_font, arabic_scale, english_scale, text_width_frac,
-#   english_caps, vignette, dim, bar_color, grade, fx
+#   english_caps, vignette, dim, caption_transition, bar_color, grade, fx
 ```
 
 Unknown keys are refused inside `groups` (`n_words english line_split`) and
