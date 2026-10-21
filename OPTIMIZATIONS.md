@@ -6,12 +6,12 @@ Read the rejected list before proposing anything. Numbers: `sources/hajri-23-tar
 
 | | wall | CPU |
 |---|---|---|
-| `bars`, full fx, heat + snow cached | **~75s** | ~552s |
+| `bars`, full fx, heat + snow cached | **~72s** | ~516s |
 | `bars`, first run on a machine | ~850s | ~1830s |
-| `horizontal` | ~12s | ~105s |
-| `vertical` | ~14s | ~119s |
+| `horizontal` | ~8s | ~65s |
+| `vertical` | ~8s | ~69s |
 
-ffmpeg 9.0.1, 14 cores. MEASURE THESE COOLED AND ALONE. Rendered back to back they read 10-25% high -- a bars render is 550s of CPU across 14 cores, and the next one starts on a hot machine -- which reads as a regression that is not there. These are the medians of alternating runs with the machine idle between them.
+ffmpeg 9.0.2, 14 cores. MEASURE THESE COOLED AND ALONE. Rendered back to back they read 10-25% high -- a bars render is 520s of CPU across 14 cores, and the next one starts on a hot machine -- which reads as a regression that is not there. These are the medians of alternating runs with the machine idle between them.
 
 The first-run row is one 60s perlin bake per axis (1237s CPU together) plus the snow bake (~12s / ~45s) plus the render, paid once per machine and never per reel. The two axis bakes run CONCURRENTLY (`perlin` is single-threaded; 1.93x measured on a 4s-span pair), so the wall for the pair is one bake's, ~380s, not the 761s two sequential bakes cost.
 
@@ -36,7 +36,7 @@ Changing one of these needs the guard it was verified with: PSNR for anything th
 - **`font.getlength` cached per (font, character)** — every English width in render_text is a sum of per-character advances over an alphabet of a few dozen glyphs, re-measured for every line of every card by the wrap, by `draw_en_line` and again by `backing_ellipse`.
 - **`render_bars.layout` splits each phrase once** — `phrase_lines` shapes every candidate split to measure it: 180 shaping calls where asking twice per phrase costs 362.
 
-The last three are NOT why a render is fast. `layout` costs the hujurat reels 1.8ms (bars), 4.3ms (horizontal) and 3.8ms (vertical) -- single-digit milliseconds against 12 to 75 seconds of ffmpeg, and the table above cannot see them. What the wrap solve buys is that every card returns at all; the rest is the cost of a draft loop and of anything that calls layout in bulk.
+The last three are NOT why a render is fast. `layout` costs the hujurat reels 1.8ms (bars), 4.3ms (horizontal) and 3.8ms (vertical) -- single-digit milliseconds against 8 to 72 seconds of ffmpeg, and the table above cannot see them. What the wrap solve buys is that every card returns at all; the rest is the cost of a draft loop and of anything that calls layout in bulk.
 
       tools/render-venv/bin/python tests/graph_parity.py
       tools/render-venv/bin/python tests/wrap_parity.py
@@ -47,7 +47,7 @@ What the stages around the render pay before any pixel moves.
 
 - **`fetch.py`** — a source that is already complete (a usable `source.mp4` plus `captions.srt` OR the `captions.none` sentinel) never calls yt-dlp at all, so a re-fetch costs no network round trip and cannot fail the bot check for nothing. Most recitations have no Arabic auto-captions, which is why the sentinel exists. A fresh fetch makes ONE player-API request: its JSON is handed back (`--load-info-json`) for the media and the captions.
 - **`crop.py`** — the cache is read BEFORE any frame is extracted, so a cached geometry re-solve runs no ffmpeg at all: 0.13s against 0.65s for a 4-frame solve. A cached `--annotate` extracts only the one frame it draws.
-- **`generate.py --verify-only`** — the verification block without the render, off a 32px-wide cut of the window: ~1.7s wall / ~6s CPU against a 12s `vertical` render, and the block is the only thing a split check reads.
+- **`generate.py --verify-only`** — the verification block without the render, off a 32px-wide cut of the window: ~1.7s wall / ~6s CPU against an 8s `vertical` render, and the block is the only thing a split check reads.
 - **`transcribe.py`** — the interpreter probe asks `importlib.util.find_spec` instead of importing the backend: 0.02s per candidate against 0.9s warm and 3.1s cold for `import mlx_whisper`.
 - **`align.py`** — takes several configs per invocation, so the 7.1s of start-up (1.0s torch, 4.9s the aligner package, 1.3s the MMS weights) is paid once for every reel cut from one source rather than once per reel.
 - **`publish.py`** — one `ffprobe` for the tags, the frame size and the duration `clamp_cover` needs.
@@ -57,11 +57,10 @@ What the stages around the render pay before any pixel moves.
 - **`-thread_queue_size 4096`**: 4096→64 moves RSS 24 MB; md5 unchanged.
 - **`scrim_plate` pixel loop**: 0.10s.
 - **`align_words` skeleton precompute**: ms at ~50×60.
-- **Final encode `slow`→`medium`**: 1.4% CPU for a deliverable change.
 - **`heat` lutrgb before 2× upscale**: *worse* (28.4→29.2s CPU).
 - **Audio analysis passes**: 0.10s together.
 - **`align.py` memory**: already windowed; long auto-trim is a correctness hazard anyway.
-- **Letterbox pass at `slow`**: 54.97→58.32 dB vs the padded source for 10.9→17.5s CPU. Both are far above the 45 dB floor, and the input is already a crf-18 `slow` encode of the final pixels — the dB buys fidelity to a finished encode, not to the render.
+- **Letterbox pass at `slow`**: 54.97→58.32 dB vs the padded source for 10.9→17.5s CPU. Both are far above the 45 dB floor, and the input is already a crf-18 encode of the final pixels — the dB buys fidelity to a finished encode, not to the render.
 - **Delete `trim_media`**: ~3.1s wall; seek into long source is cheaper to decode than the intermediate. Not worth the A/V-sync surface.
 
 ## Open

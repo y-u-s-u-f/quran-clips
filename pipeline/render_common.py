@@ -21,7 +21,9 @@ FPS = 30
 # the audio fades in and out (all three reference reels).
 FADE_IN_S, FADE_OUT_S = 0.3, 0.5
 AUDIO = {"lufs": -14.0, "tp": -1.0, "lra": 11.0}
-ENCODE = {"crf": 18, "preset": "slow", "audio_bitrate": "192k"}
+# The encode is the largest cost of a text-style render. `faster` holds 46+ dB
+# PSNR against a lossless render of the same graph on all three hujurat styles.
+ENCODE = {"crf": 18, "preset": "faster", "audio_bitrate": "192k"}
 
 # ffmpeg's per-input packet queue defaults to 8. Both styles feed ONE
 # filtergraph from many inputs (source + a looped PNG per caption layer +
