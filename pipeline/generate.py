@@ -616,16 +616,12 @@ def spoken_words(verses, end_words=None):
     """Flatten to the display-word list, dropping pure annotation tokens (the
     rub-el-hizb etc.) that no one speaks -- keeping them would offset display
     text against the timestamps. `end_words` keeps only that many words of
-    the LAST verse, for a recitation that stops mid-ayah."""
+    the LAST verse, for a recitation that stops mid-ayah (range-checked in
+    check_shapes)."""
     words = [w for v in verses for w in quran.display_words(v["text_uthmani"])]
     if end_words is None:
         return words
     last = len(quran.display_words(verses[-1]["text_uthmani"]))
-    if (not isinstance(end_words, int) or isinstance(end_words, bool)
-            or not 1 <= end_words <= last):
-        raise SystemExit("ayah_end_words must be 1..%d for %d:%d, not %r"
-                         % (last, verses[-1]["surah"], verses[-1]["ayah"],
-                            end_words))
     return words[:len(words) - last + end_words]
 
 
@@ -981,6 +977,16 @@ def check_shapes(cfg, path):
     if not (_num(cfg["caption_transition"]) and cfg["caption_transition"] > 0):
         bad("caption_transition must be seconds > 0, not %r"
             % (cfg["caption_transition"],))
+    n = cfg["ayah_end_words"]
+    if n is not None:
+        s, a1 = cfg["surah"], cfg["ayah_end"]
+        if s is None or a1 is None:
+            bad("ayah_end_words counts words of ayah_end, so surah and "
+                "ayah_end must be set beside it")
+        last = len(spoken_words(fetch_verses(s, a1, a1)))
+        if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= last:
+            bad("ayah_end_words must be 1..%d for %s:%s, not %r"
+                % (last, s, a1, n))
     for key in ("groups", "nudge", "suppress"):
         if cfg[key] is not None and not isinstance(cfg[key], list):
             bad("%s must be a list, not %r" % (key, cfg[key]))

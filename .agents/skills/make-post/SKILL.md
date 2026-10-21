@@ -65,7 +65,7 @@ groups:
 
 Unknown keys are refused inside `groups` (`n_words english line_split`) and
 `nudge` (`group start end`) entries too, as are bad shapes (`trim`, `crop`,
-fonts, `line_split` outside `1..n_words-1`).
+fonts, `line_split` outside `1..n_words-1`, `ayah_end_words` without `surah` + `ayah_end` or outside 1 to the ayah's word count).
 
 Requirements:
 
