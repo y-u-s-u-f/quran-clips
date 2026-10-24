@@ -388,7 +388,7 @@ def align(config_path, force=False):
                  os.path.basename(config_path)))
 
     verses = generate.fetch_verses(surah, a0, a1)
-    words = generate.spoken_words(verses)
+    words = generate.spoken_words(verses, cfg["ayah_end_words"])
     ref_text = " ".join(words)
     print("aligning %d mushaf words (%s %d:%d-%d) against %s"
           % (len(words), quran.surah_name(surah), surah, a0, a1,

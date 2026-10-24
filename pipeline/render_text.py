@@ -10,9 +10,9 @@ reels/BADR-AL-TURKI-AHZAB-56-56.mp4: the footage reframed by the config's
 `crop` and pushed down under ONE black alpha plate (flat dim + optional soft
 vignette + a backing gradient sized to the caption block), warm-white Uthmanic
 Hafs on a single line with the ayah medallion inline, tracked ALL-CAPS Albertus
-beneath it, one shared hard drop shadow for both scripts, and 0.45s dissolves
-between cards. The two shapes share every one of those: they differ only in
-canvas and in where the block sits.
+beneath it, one shared hard drop shadow for both scripts, and a fade through
+nothing between cards (`caption_transition`). The two shapes share every one
+of those: they differ only in canvas and in where the block sits.
 
 WHERE THE TYPE GOES is the one thing the two shapes do not share, and neither
 half of it is decided here at render time -- pipeline/crop.py measures the
@@ -131,10 +131,6 @@ FACE_GAP_FRAC = 0.035
 # ...and the block's ink may not run past this fraction of the height, which is
 # where the signature's own band begins (SIGNATURE_Y_FRAC 0.945).
 BLOCK_BOTTOM_FRAC = 0.90
-
-# Cards dissolve in fixed position: the incoming fade-in straddles the
-# outgoing fade-out. No slide, no scale, no per-word reveal.
-CROSSFADE_S = 0.45
 
 # Signature: the SIZE is of the short side (28px on either canvas); the
 # POSITION is of the height.
@@ -586,27 +582,29 @@ def signature_card(text, font_path, W, H, tmp, offset=0):
 # transition schedule
 # ---------------------------------------------------------------------------
 
-def schedule(phrases, dur):
-    """One (t_in, d_in, t_out, d_out) per card. Every card fades for the same
-    0.45s and a later card comes up early enough that its fade-in straddles the
-    outgoing card's fade-out -> a fixed-position dissolve, not a blink.
+def schedule(phrases, dur, transition):
+    """One (t_in, d_in, t_out, d_out) per card. Cards change over in fixed
+    position and strictly in sequence: the outgoing card fades to nothing over
+    half of `transition`, then the incoming card fades up over the other half,
+    so no frame shows two cards. A later card is half up on its first word's
+    onset. No slide, no scale, no per-word reveal.
 
     The offsets were tuned once on the reference reels:
       0.05  the FIRST card is up a hair before its own first word, so the frame
             is never empty on the word onset;
-      0.24  a later card comes up early enough to straddle the outgoing fade;
-      0.02  a non-last card holds a beat past its last word;
+      0.02  a non-last card with a clean pause after it holds a beat past its
+            last word;
       0.15  the LAST card starts leaving before its last word ends, so it is
             gone INTO the tail fade rather than cut off by it.
     """
     n = len(phrases)
-    xf = CROSSFADE_S
+    f = transition / 2.0
     out = []
     for i, ph in enumerate(phrases):
-        t_in = max(0.0, ph["start"] - 0.05) if i == 0 else ph["start"] - 0.24
-        t_out = (min(dur - xf, ph["end"] - 0.15) if i == n - 1
-                 else ph["end"] + 0.02)
-        out.append((t_in, xf, t_out, xf))
+        t_in = max(0.0, ph["start"] - 0.05) if i == 0 else ph["start"] - f / 2
+        t_out = (min(dur - f, ph["end"] - 0.15) if i == n - 1
+                 else min(ph["end"] + 0.02, phrases[i + 1]["start"] - 1.5 * f))
+        out.append((t_in, f, t_out, f))
     return out
 
 
@@ -745,7 +743,7 @@ def render(plan):
                           ENGLISH_FONTS[cfg["english_font"]]["path"], W, H,
                           tmp, cfg["signature_offset"])
            if cfg["signature"] else None)
-    sched = schedule(phrases, dur)
+    sched = schedule(phrases, dur, cfg["caption_transition"])
 
     # A portrait delivery of a landscape canvas pads inside this one graph;
     # the `vertical` canvas is already 1080x1920 and needs nothing.

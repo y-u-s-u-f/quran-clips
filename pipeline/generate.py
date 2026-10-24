@@ -98,6 +98,8 @@ DEFAULTS = {
     "surah": None,               # verse span; omit all three to auto-detect
     "ayah_start": None,          # from the whisper transcript (reliable only
     "ayah_end": None,            # for short 1-4 ayah windows)
+    "ayah_end_words": None,      # stop after this many spoken words of
+                                 # ayah_end: the recitation ends mid-ayah
 
     "reciter": None,             # his name in Arabic, spelled as the post's
                                  # hashtag spells it. Never on screen: it is
@@ -152,6 +154,12 @@ DEFAULTS = {
                                  # The backing carries the type's contrast, so
                                  # this is the global mood knob: dial it down
                                  # for footage that should stay bright.
+    "caption_transition": 0.6,   # seconds per card change: the old card fades
+                                 # out over the first half, then the new one
+                                 # fades in over the second. 0.6 keeps the old
+                                 # card up to about the end of its last word
+                                 # across the 0.16-0.86s breaths measured at
+                                 # hujurat-4-5's card boundaries.
     "face_bottom": None,         # vertical only: fraction of the canvas
                                  # height at which the reciter's head box
                                  # ends, measured by crop.py. The caption
@@ -185,6 +193,9 @@ an error rather than a silent no-op.
     surah: 33                       # verse span. Omit all three to auto-detect
     ayah_start: 56                  # from whisper.json (short clips only)
     ayah_end: 56
+    ayah_end_words: 18              # optional: the reel ends after this many
+                                    # spoken words of ayah_end (recitation
+                                    # stops mid-ayah). No ornament on it.
     reciter: "..."                  # his name in ARABIC, spelled the way the
                                     # post's hashtag spells it. Copied from
                                     # the source's own title or an earlier
@@ -228,7 +239,9 @@ an error rather than a silent no-op.
     #   text_width_frac (raises the ink-width cap the fitted size is solved
     #   against, so a *_scale is not silently clipped by it),
     #   english_caps (true = ALL-CAPS, the reference reels' setting),
-    #   vignette (true | false), dim (0 untouched .. 1 black; 0.118 house)
+    #   vignette (true | false), dim (0 untouched .. 1 black; 0.118 house),
+    #   caption_transition (seconds per card change, half fading the old
+    #   card out, then half fading the new one in; 0.6 house)
     # bars style: bar_color ("#RRGGBB" | omit for auto),
     #   grade: {brightness: -0.12, gamma: 0.95, ...} to move the picture
     #   grade for THIS source only (keys: brightness contrast saturation
@@ -599,11 +612,17 @@ def fetch_verses(surah, a0, a1):
             for v in quran.range(surah, a0, a1)]
 
 
-def spoken_words(verses):
+def spoken_words(verses, end_words=None):
     """Flatten to the display-word list, dropping pure annotation tokens (the
     rub-el-hizb etc.) that no one speaks -- keeping them would offset display
-    text against the timestamps."""
-    return [w for v in verses for w in quran.display_words(v["text_uthmani"])]
+    text against the timestamps. `end_words` keeps only that many words of
+    the LAST verse, for a recitation that stops mid-ayah (range-checked in
+    check_shapes)."""
+    words = [w for v in verses for w in quran.display_words(v["text_uthmani"])]
+    if end_words is None:
+        return words
+    last = len(quran.display_words(verses[-1]["text_uthmani"]))
+    return words[:len(words) - last + end_words]
 
 
 # ---------- caption building ------------------------------------------------
@@ -955,6 +974,19 @@ def check_shapes(cfg, path):
     if cfg["bar_color"] is not None and not re.fullmatch(
             r"#?[0-9A-Fa-f]{6}", str(cfg["bar_color"])):
         bad("bar_color must be \"#RRGGBB\", not %r" % cfg["bar_color"])
+    if not (_num(cfg["caption_transition"]) and cfg["caption_transition"] > 0):
+        bad("caption_transition must be seconds > 0, not %r"
+            % (cfg["caption_transition"],))
+    n = cfg["ayah_end_words"]
+    if n is not None:
+        s, a1 = cfg["surah"], cfg["ayah_end"]
+        if s is None or a1 is None:
+            bad("ayah_end_words counts words of ayah_end, so surah and "
+                "ayah_end must be set beside it")
+        last = len(spoken_words(fetch_verses(s, a1, a1)))
+        if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= last:
+            bad("ayah_end_words must be 1..%d for %s:%s, not %r"
+                % (last, s, a1, n))
     for key in ("groups", "nudge", "suppress"):
         if cfg[key] is not None and not isinstance(cfg[key], list):
             bad("%s must be a list, not %r" % (key, cfg[key]))
@@ -1090,7 +1122,7 @@ def run_config(config_path, output_override=None, vertical=False,
           % (quran.surah_name(surah), surah, a0, a1))
 
     verses = fetch_verses(surah, a0, a1)
-    words = spoken_words(verses)
+    words = spoken_words(verses, cfg["ayah_end_words"])
 
     if forced:
         print("[4/6] Using forced alignment (pipeline/align.py)...")

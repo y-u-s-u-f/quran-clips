@@ -1,16 +1,12 @@
 ---
 name: make-post
 description: >-
-  Make a Quran recitation clip/reel from a YouTube URL or local video.
-  Trigger on "make a post from <url>", "make a clip from this recitation",
-  "turn this into a reel". Runs fetch -> (transcribe) -> config -> align ->
-  crop -> generate. Styles: vertical | horizontal | bars.
+  Make a Quran recitation clip/reel from a YouTube URL or local video. Trigger on "make a post from <url>", "make a clip from this recitation", "turn this into a reel". Runs fetch -> (transcribe) -> config -> align -> crop -> generate. Styles: vertical | horizontal | bars.
 ---
 
 # make-post — make a reel
 
-Run the steps, author the YAML, fix what the output tells you. From repo root.
-Unfamiliar machine: `./install.sh --check` first.
+Run the steps, author the YAML, fix what the output tells you. From repo root. Unfamiliar machine: `./install.sh --check` first.
 
 ## Steps
 
@@ -26,19 +22,11 @@ ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate, always
 python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
 ```
 
-- Skip transcribe only when you know the verses AND the reciter never
-  restarts a phrase: without `whisper.json` align.py cannot repair an ibtidāʾ
-  restart, and the card silently opens late.
-- Name the span in the config. Omitted, align.py identifies it from Whisper
-  and writes it back beside `trim:` — reliable only on a short source; check
-  what it wrote.
-- `captions.srt` is the cheapest span finder: dedupe rolling windows (keep each
-  block's last line). Timings are ±1–2s — enough to pick a span, never to `trim:`.
-- Open `/tmp/c.png` and look, every time. crop.py's guards check its own numbers
-  against each other, not whether it found a real face.
-- Never pipe `generate.py` through `tail`: output is withheld until the process
-  exits, so a healthy 15-minute render reads as hung. `grep --line-buffered`, or
-  redirect to a file and read that.
+- Skip transcribe only when you know the verses AND the reciter never restarts a phrase: without `whisper.json` align.py cannot repair an ibtidāʾ restart, and the card silently opens late.
+- Name the span in the config. Omitted, align.py identifies it from Whisper and writes it back beside `trim:` — reliable only on a short source; check what it wrote.
+- `captions.srt` is the cheapest span finder: dedupe rolling windows (keep each block's last line). Timings are ±1–2s — enough to pick a span, never to `trim:`.
+- Open `/tmp/c.png` and look, every time. crop.py's guards check its own numbers against each other, not whether it found a real face.
+- Never pipe `generate.py` through `tail`: output is withheld until the process exits, so a healthy 15-minute render reads as hung. `grep --line-buffered`, or redirect to a file and read that.
 
 ## Config
 
@@ -57,14 +45,13 @@ groups:
     english: "..."                # vertical + horizontal; bars is Arabic-only
     line_split: 2                 # bars only; omit = auto
 # crop:, x_offset:, face_bottom: are written by crop.py --write
-# optional: suppress, nudge, verse_numbers, y_offset, signature_offset,
+# optional: ayah_end_words (recitation stops mid-ayah), suppress, nudge,
+#   verse_numbers, y_offset, signature_offset,
 #   arabic_font, english_font, arabic_scale, english_scale, text_width_frac,
-#   english_caps, vignette, dim, bar_color, grade, fx
+#   english_caps, vignette, dim, caption_transition, bar_color, grade, fx
 ```
 
-Unknown keys are refused inside `groups` (`n_words english line_split`) and
-`nudge` (`group start end`) entries too, as are bad shapes (`trim`, `crop`,
-fonts, `line_split` outside `1..n_words-1`).
+Unknown keys are refused inside `groups` (`n_words english line_split`) and `nudge` (`group start end`) entries too, as are bad shapes (`trim`, `crop`, fonts, `line_split` outside `1..n_words-1`, `ayah_end_words` without `surah` + `ayah_end` or outside 1 to the ayah's word count).
 
 Requirements:
 
@@ -82,88 +69,29 @@ Requirements:
 - `suppress:` anything that is not recitation.
 - Hand-write `crop:`/`x_offset:`/`face_bottom:` only if crop.py refused.
 
-Per style: `vertical` (1080×1920) needs `crop:` + `face_bottom:` — generate
-refuses a landscape source without a crop rather than centre-crop him blind.
-`horizontal` and `bars` (1920×1080) need `x_offset:`. `--vertical` letterboxes a
-1920×1080 style onto 1080×1920 in the same encode, shrinking the picture to a
-third of the frame (`pipeline/README.md`); native `vertical` avoids that trade.
-`generate.py --verify-only` prints the verification block and stops — use it
-to check a split before paying a render.
+Per style: `vertical` (1080×1920) needs `crop:` + `face_bottom:` — generate refuses a landscape source without a crop rather than centre-crop him blind. `horizontal` and `bars` (1920×1080) need `x_offset:`. `--vertical` letterboxes a 1920×1080 style onto 1080×1920 in the same encode, shrinking the picture to a third of the frame (`pipeline/README.md`); native `vertical` avoids that trade. `generate.py --verify-only` prints the verification block and stops — use it to check a split before paying a render.
 
 ## Verify English against BOTH translations
 
-`generate.py` prints each card's Arabic + English, then Saheeh + Taqi for every
-verse. **Check every card against both.** Card English must cover the same clause
-as its Arabic; where the editions agree on order, a contradiction means a
-mis-split — fix `groups`/`english:` and re-run. Do not accept unverified.
+`generate.py` prints each card's Arabic + English, then Saheeh + Taqi for every verse. **Check every card against both.** Card English must cover the same clause as its Arabic; where the editions agree on order, a contradiction means a mis-split — fix `groups`/`english:` and re-run. Do not accept unverified.
 
 ## Fixing
 
-**Trim / the opening word.** Open ON the first word. Auto-trim (omit `trim:`) is
-only safe when the source is roughly the reel; on a long recording it returns
-valid JSON while a trailing word is captured, and the only tell is a collapsed
-score. So: rough span from captions/whisper → hand `trim:` → read the scores (low
-mid-phrase madd is normal) → re-bound. Hand-set trim is never moved; align prints
-the head gap and calls out >0.25s. Also hand-set for deliberate excerpts and
-second takes. Haram audio has no true silence (~−35dB floor): find boundaries by
-RMS envelope dips (0.4–0.9s at −27…−34dB against speech ~−11dB), not
-`silencedetect`.
+**Trim / the opening word.** Open ON the first word. Auto-trim (omit `trim:`) is only safe when the source is roughly the reel; on a long recording it returns valid JSON while a trailing word is captured, and the only tell is a collapsed score. So: rough span from captions/whisper → hand `trim:` → read the scores (low mid-phrase madd is normal) → re-bound. Hand-set trim is never moved; align prints the head gap and calls out >0.25s. Also hand-set for deliberate excerpts and second takes. Haram audio has no true silence (~−35dB floor): find boundaries by RMS envelope dips (0.4–0.9s at −27…−34dB against speech ~−11dB), not `silencedetect`.
 
-**Restarted phrase (ibtidāʾ).** It gets its own card: same words, separate group.
-align.py corrects the onset from consecutive identical Whisper segments and prints
-it. Whisper sometimes collapses a restart into one long word — scan align output
-for duration outliers (3.1s beside 0.7–1.2s neighbours) before concluding there
-was none. Check the card start against the envelope before reaching for `nudge:`
-(0-based indices).
+**Restarted phrase (ibtidāʾ).** It gets its own card: same words, separate group. align.py corrects the onset from consecutive identical Whisper segments and prints it. Whisper sometimes collapses a restart into one long word — scan align output for duration outliers (3.1s beside 0.7–1.2s neighbours) before concluding there was none. Check the card start against the envelope before reaching for `nudge:` (0-based indices).
 
-**crop.py boxed a shoulder.** A draped, hooded or turned head can box clean and
-confident (fy=0.275) and still be wrong; bowed posture fails differently. Look at
-the annotation. Hand-solve by measuring crown / body / congregation / graphics over
-several frames: face centre at **0.275 of the window height** (`FACE_Y`),
-crown kept in frame. For
-`x_offset`, match the outer margins, or centre him in the free space if he runs off
-the edge — `(f-0.5)*1920`. For `face_bottom`, where his head box ends as a fraction
-of canvas height.
+**crop.py boxed a shoulder.** A draped, hooded or turned head can box clean and confident (fy=0.275) and still be wrong; bowed posture fails differently. Look at the annotation. Hand-solve by measuring crown / body / congregation / graphics over several frames: face centre at **0.275 of the window height** (`FACE_Y`), crown kept in frame. For `x_offset`, match the outer margins, or centre him in the free space if he runs off the edge — `(f-0.5)*1920`. For `face_bottom`, where his head box ends as a fraction of canvas height.
 
-**Text size is width-limited.** `fit_pt` shrinks the shared point size until the
-widest card fits the ink cap (0.51 W Arabic / 0.55 W English on landscape), so a
-big `arabic_scale` can silently resolve smaller than asked: 1.80 on a 4-word card
-fitted 111pt, not 130pt, with no error. Read generate.py's `arabic:` line — when
-`widest raw` equals `cap`, the cap is binding. Either split the widest groups or
-raise `text_width_frac`, and measure the widest card at the target size first so
-the new cap still leaves margin (130pt → 1143px = 0.595 W, so 0.62).
+**Text size is width-limited.** `fit_pt` shrinks the shared point size until the widest card fits the ink cap (0.51 W Arabic / 0.55 W English on landscape), so a big `arabic_scale` can silently resolve smaller than asked: 1.80 on a 4-word card fitted 111pt, not 130pt, with no error. Read generate.py's `arabic:` line — when `widest raw` equals `cap`, the cap is binding. Either split the widest groups or raise `text_width_frac`, and measure the widest card at the target size first so the new cap still leaves margin (130pt → 1143px = 0.595 W, so 0.62).
 
-**Bars caption lines.** Budget is 213pt with an 864px ink cap → 2–3 words a line.
-If the reported pt is under nominal, one long line is dragging the whole reel down.
-Lines should land within ~30px of each other; >60px is visible. Let auto-balance
-try first, then fix the card boundary (`n_words`) before `line_split`. A
-`line_split` is never re-wrapped: a line past the cap keeps the split and
-`fit_pt` shrinks the shared point size for EVERY card. There is no kashida.
-Single line only at a waqf or ayah end. Take ~3pt of loss over a broken clause; some cards
-won't balance, so pick the closer break and stop.
+**Bars caption lines.** Budget is 213pt with an 864px ink cap → 2–3 words a line. If the reported pt is under nominal, one long line is dragging the whole reel down. Lines should land within ~30px of each other; >60px is visible. Let auto-balance try first, then fix the card boundary (`n_words`) before `line_split`. A `line_split` is never re-wrapped: a line past the cap keeps the split and `fit_pt` shrinks the shared point size for EVERY card. There is no kashida. Single line only at a waqf or ayah end. Take ~3pt of loss over a broken clause; some cards won't balance, so pick the closer break and stop.
 
-**Bars timing previews.** `fx: {heat: false}` (cost: `OPTIMIZATIONS.md`), but
-never judge the LOOK without the full stack.
+**Bars timing previews.** `fx: {heat: false}` (cost: `OPTIMIZATIONS.md`), but never judge the LOOK without the full stack.
 
-**The picture is too dark.** The grade aims the band at mean luma 0.15-0.32, and
-a source lit darker than the reference reels lands under it — a Dubai taraweeh
-measured 0.05, where the reciter reads as a silhouette. Lift that reel's own
-config, `grade: {brightness: -0.12, gamma: 0.95}` (keys: brightness contrast
-saturation gamma, merged over the house numbers), not the constant in
-render_bars.py: measured across the bars reels, moving GRADE_EQ far
-enough to fix the dark ones pushes the correctly-exposed ones out the bright
-side. The grade also feeds the pill-colour derivation, so the bar hue moves with
-it. The scrim is not the lever — its whole range is worth about 3 luma here.
+**The picture is too dark.** The grade aims the band at mean luma 0.15-0.32, and a source lit darker than the reference reels lands under it — a Dubai taraweeh measured 0.05, where the reciter reads as a silhouette. Lift that reel's own config, `grade: {brightness: -0.12, gamma: 0.95}` (keys: brightness contrast saturation gamma, merged over the house numbers), not the constant in render_bars.py: measured across the bars reels, moving GRADE_EQ far enough to fix the dark ones pushes the correctly-exposed ones out the bright side. The grade also feeds the pill-colour derivation, so the bar hue moves with it. The scrim is not the lever — its whole range is worth about 3 luma here.
 
-**fetch: "Sign in to confirm you're not a bot", or low resolution.** The bot
-check is per exit IP and per player client; fetch walks the clients itself and
-passes over any that offers under 720p (without a PO token only `web_embedded`
-reaches 1080p). Read the printed `client` and `WxH` before blaming the proxy
-pool. If every client lands short fetch stops and says so; for a genuinely
-low-res source pin one with `--client`, which takes whatever it offers. Pool +
-`--proxy` goes static residential → datacentre → fail; rotating exits cannot
-download. Prefer a full download plus `trim:` over `--timestamps` through an
-authenticated proxy.
+**fetch: "Sign in to confirm you're not a bot", or low resolution.** The bot check is per exit IP and per player client; fetch walks the clients itself and passes over any that offers under 720p (without a PO token only `web_embedded` reaches 1080p). Read the printed `client` and `WxH` before blaming the proxy pool. If every client lands short fetch stops and says so; for a genuinely low-res source pin one with `--client`, which takes whatever it offers. Pool + `--proxy` goes static residential → datacentre → fail; rotating exits cannot download. Prefer a full download plus `trim:` over `--timestamps` through an authenticated proxy.
 
 ## Rules
 
@@ -172,8 +100,5 @@ authenticated proxy.
 - Trust fetch's stub gate; don't bypass it.
 - Decode-check before calling a render done.
 - Do not `open` artefacts; report the path.
-- Never publish unless asked (`--caption-only` is safe for review).
-  `--ig-only`/`--fb-only` are exclusive; `--surah` and `--ayat` go together. A
-  reel is tagged green in Finder once one platform posted; `--draft` and
-  `--caption-only` never tag.
+- Never publish unless asked (`--caption-only` is safe for review). `--ig-only`/`--fb-only` are exclusive; `--surah` and `--ayat` go together. A reel is tagged green in Finder once one platform posted; `--draft` and `--caption-only` never tag.
 - Don't delete or overwrite a different reel; the filename is its identity.

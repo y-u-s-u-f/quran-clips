@@ -4,7 +4,6 @@
 - [ ] Add more fonts, e.g. Lifta (`ARABIC_FONT_NAMES`/`ENGLISH_FONT_NAMES` + the renderer tables; measure a new Arabic face's ayah-ornament behaviour first).
 - [ ] Add more reel styles, e.g. word-by-word from `assets/quran/en.wbw.json` (`quran.words()` is None for 37:130 — refuse, don't offset).
 - [ ] Committed verse-split library (`groups:` per ayah, counts + English only), so a config names a span and inherits a reviewed split.
-- [ ] Decide caption changeover: current 0.45s crossfade overlaps cards; bars-style fade-out-then-in is the alternative. Then consider making the fades configurable.
 - [ ] Per-config audio controls (LUFS target, fades) and an intake loudness/clipping report in `fetch.py`.
 - [ ] One driver over align → crop → generate → publish with a resume point (subprocess per venv).
 - [ ] `generate.py --preview` (small, `veryfast`, fx off) for timing checks; `generate.py --all` to re-render stale reels.
