@@ -154,6 +154,9 @@ if [ "$CHECK_ONLY" = 0 ]; then
     fi
     "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null || {
         say "  installing ctc-forced-aligner + torch (first align will also download the ~1.2GB MMS model)"
+        # Python 3.15 wheels are only on the nightly index (2026-10).
+        "$FPY" -m pip -q install torch ||
+            "$FPY" -m pip -q install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
         "$FPY" -m pip -q install "$FPKG" pyyaml
     }
 fi

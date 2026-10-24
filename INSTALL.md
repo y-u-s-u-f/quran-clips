@@ -42,7 +42,8 @@ renders Arabic (see "Arabic shaping" below):
   `QC_ASR_BACKEND` in `.env` names. Runs the transcription subprocess only.
 * **`tools/align-venv`** — `ctc-forced-aligner` (torch, Meta's MMS model,
   ~1.2 GB on first use). Runs `align.py`. Installed from git: the PyPI
-  package of that name is an unrelated project.
+  package of that name is an unrelated project. Torch installs from PyPI first,
+  falling back to its nightly CPU index when that fails (needed for Python 3.15).
 
 `fetch.py`, `transcribe.py`, `quran.py`, `publish.py` and `letterbox.py` run
 on any plain `python3`.
