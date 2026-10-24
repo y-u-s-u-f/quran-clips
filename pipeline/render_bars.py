@@ -48,8 +48,12 @@ CANVAS_W, CANVAS_H = 1920, 1080
 # they must equal the canvas for the FX to cover the frame.
 BAND_W, BAND_H, BAND_Y = CANVAS_W, CANVAS_H, 0
 
-# Step 0 of the look: bring the band to mean luma 0.15-0.32 before any glow.
-GRADE_EQ = "brightness=-0.30:contrast=1.30:saturation=0.75:gamma=0.72"
+# Step 0 of the look: the band's exposure before any glow. Chosen by eye on
+# fatir-35-41-bars between -0.30 / gamma 0.72 (too dark) and -0.05 / 1.0.
+GRADE_EQ = "brightness=-0.15:contrast=1.30:saturation=0.75:gamma=0.9"
+# The bar colour is sampled at the -0.05 / 1.0 exposure the pills were chosen
+# at: sampling the darker GRADE_EQ turns every derived pill greener.
+BAR_SAMPLE_EQ = "brightness=-0.05:contrast=1.30:saturation=0.75:gamma=1"
 GRADE_CB = "rm=0.08:gm=0.02:bm=-0.10"
 GRADE_VIGNETTE = "a=PI/8"       # refs are NOT radially vignetted; the
                                 # directional darkening is the scrim below
@@ -179,38 +183,36 @@ def bbox_ls(text, font):
 # grade + bar colour
 # ---------------------------------------------------------------------------
 
-def grade_eq(grade=None):
+def grade_eq(grade=None, base=GRADE_EQ):
     """The eq= arguments for the picture grade.
 
-    GRADE_EQ is measured off the reference reels and is the look. A source
-    graded darker than those refs lands under the 0.15-0.32 band the grade
-    aims at (measured: this Dubai taraweeh sits at 0.05), and the fix belongs
-    in that source's config, not here -- moving the constant drags every reel
-    already sitting in the band out the bright side."""
+    GRADE_EQ is the house look. A reel whose source needs a different
+    exposure sets `grade:` in its own config, which is merged over it."""
     if not grade:
-        return GRADE_EQ
+        return base
     known = ("brightness", "contrast", "saturation", "gamma")
     unknown = sorted(set(grade) - set(known))
     if unknown:
         raise SystemExit("unknown grade key(s): %s -- expected %s"
                          % (", ".join(unknown), ", ".join(known)))
     vals = {}
-    for part in GRADE_EQ.split(":"):
+    for part in base.split(":"):
         k, _, v = part.partition("=")
         vals[k] = v
     vals.update({k: "%g" % float(v) for k, v in grade.items()})
     return ":".join("%s=%s" % (k, vals[k]) for k in known)
 
 
-def band_source_chain(crop, grade_on=True, grade=None):
+def band_source_chain(crop, grade_on=True, grade=None, base=GRADE_EQ):
     """[0:v] -> the graded 1920x1080 picture (no captions).
-    The grade also feeds the bar-colour derivation, so turning it off moves
-    the pill hue as well as the picture."""
+    The grade also feeds the bar-colour derivation (at BAR_SAMPLE_EQ), so
+    turning it off or overriding it moves the pill hue as well as the
+    picture."""
     pre = source_chain(crop, BAND_W, BAND_H)
     if not grade_on:
         return pre
     return "%s,eq=%s,colorbalance=%s,vignette=%s" % (
-        pre, grade_eq(grade), GRADE_CB, GRADE_VIGNETTE)
+        pre, grade_eq(grade, base), GRADE_CB, GRADE_VIGNETTE)
 
 
 def derive_bar_color(src, dur, crop, tmp, grade_on=True, grade=None):
@@ -230,7 +232,8 @@ def derive_bar_color(src, dur, crop, tmp, grade_on=True, grade=None):
     a = BAR_AUTO
     tile = int(a["sample_tile"])
     tile_png = os.path.join(tmp, "bar_color_sample.png")
-    vf = ("fps=%s," % a["sample_fps"] + band_source_chain(crop, grade_on, grade)
+    vf = ("fps=%s," % a["sample_fps"]
+          + band_source_chain(crop, grade_on, grade, BAR_SAMPLE_EQ)
           + ",scale=48:27,tile=%dx%d" % (tile, tile))
     run([FFMPEG, "-v", "error", "-y", "-t", "%.3f" % dur, "-i", src,
          "-vf", vf, "-frames:v", "1", tile_png])

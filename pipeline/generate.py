@@ -169,10 +169,8 @@ DEFAULTS = {
     # bars style only ----------------------------------------------------
     "bar_color": None,           # "#RRGGBB"; default: derived from the footage
     "grade": None,               # eq= overrides for the picture grade, e.g.
-                                 # {brightness: -0.12, gamma: 0.95}. The house
-                                 # numbers target mean luma 0.15-0.32; a source
-                                 # darker than the refs lands under it, and
-                                 # only that source's config should move. Keys:
+                                 # {brightness: -0.05, gamma: 1.0}, merged over
+                                 # the house grade in render_bars.py. Keys:
                                  # brightness contrast saturation gamma.
     "fx": None,                  # per-stage switches, e.g. {heat: false};
                                  # stages: grade scrim glow barglow textglow
@@ -243,9 +241,9 @@ an error rather than a silent no-op.
     #   caption_transition (seconds per card change, half fading the old
     #   card out, then half fading the new one in; 0.6 house)
     # bars style: bar_color ("#RRGGBB" | omit for auto),
-    #   grade: {brightness: -0.12, gamma: 0.95, ...} to move the picture
+    #   grade: {brightness: -0.05, gamma: 1.0, ...} to move the picture
     #   grade for THIS source only (keys: brightness contrast saturation
-    #   gamma; the house numbers target mean luma 0.15-0.32),
+    #   gamma; merged over the house grade),
     #   fx: {heat: false, ...} to switch stages off (grade scrim glow
     #   barglow textglow scan snow heat; heat off is the cheap preview)
 
