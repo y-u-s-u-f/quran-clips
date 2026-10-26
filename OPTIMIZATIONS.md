@@ -62,6 +62,8 @@ What the stages around the render pay before any pixel moves.
 - **Audio analysis passes**: 0.10s together.
 - **`align.py` memory**: already windowed; long auto-trim is a correctness hazard anyway.
 - **Letterbox pass at `slow`**: 54.97→58.32 dB vs the padded source for 10.9→17.5s CPU. Both are far above the 45 dB floor, and the input is already a crf-18 encode of the final pixels — the dB buys fidelity to a finished encode, not to the render.
+- **Scan's tint folded into its final `lutrgb`**: not identical in general -- `colorchannelmixer` rounds `lrintf` in float (half to even), `lutrgb`'s `round()` is double, half away from zero, so identity depends on the tint; it was worth ~6% of the glow+scan subset.
+- **Snow bake in a fork pool**: byte-identical and 8.8 -> 4.2s wall, but +65% CPU, once per bar colour (4.7s serial at the portrait canvas), and `fork` after importing Pillow on macOS is the hazard CPython moved its default off.
 - **Delete `trim_media`**: ~3.1s wall; seek into long source is cheaper to decode than the intermediate. Not worth the A/V-sync surface.
 
 ## Open
