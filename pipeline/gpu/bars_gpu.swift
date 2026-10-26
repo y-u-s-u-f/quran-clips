@@ -244,7 +244,10 @@ kernel void k_fill(device uchar* d [[buffer(0)]], constant int* prm [[buffer(1)]
 kernel void k_lut(device const uchar* s [[buffer(0)]], device uchar* d [[buffer(1)]],
                   device const uchar* lut [[buffer(2)]], constant int* prm [[buffer(3)]],
                   uint g [[thread_position_in_grid]]) {
-    if ((int)g < P(0)) d[g] = lut[s[g]];
+    // 4 samples a thread
+    int n = P(0), o = int(g) * 4; if (o >= n) return;
+    if (o + 4 <= n) { uchar4 v = ((device const uchar4*)s)[g]; ((device uchar4*)d)[g] = uchar4(lut[v.x], lut[v.y], lut[v.z], lut[v.w]); }
+    else for (int k = 0; o + k < n; k++) d[o + k] = lut[s[o + k]];
 }
 
 // --- swscale -------------------------------------------------------------
@@ -401,16 +404,22 @@ kernel void k_vign(device const uchar* R [[buffer(0)]], device const uchar* G [[
 }
 
 // --- blend / overlay / alpha --------------------------------------------
+// x / 255 for 0 <= x <= 255 * 255 (checked over the whole range)
+inline int4 div255(int4 x) { return (x * 32897) >> 23; }
 kernel void k_blend(device const uchar* a [[buffer(0)]], device const uchar* b [[buffer(1)]],
                     device uchar* d [[buffer(2)]], constant int* prm [[buffer(3)]],
                     uint i [[thread_position_in_grid]]) {
-    // n, mode (0 multiply, 1 screen, 2 addition)
-    if ((int)i >= P(0)) return;
-    int A = a[i], Bv = b[i], r;
-    if (P(1) == 0) r = (A * Bv) / 255;
-    else if (P(1) == 1) r = 255 - ((255 - A) * (255 - Bv)) / 255;
+    // n, mode (0 multiply, 1 screen, 2 addition); 4 samples a thread
+    int n = P(0), o = int(i) * 4; if (o >= n) return;
+    int4 A, Bv;
+    if (o + 4 <= n) { A = int4(((device const uchar4*)a)[i]); Bv = int4(((device const uchar4*)b)[i]); }
+    else { A = 0; Bv = 0; for (int k = 0; o + k < n; k++) { A[k] = a[o + k]; Bv[k] = b[o + k]; } }
+    int4 r;
+    if (P(1) == 0) r = div255(A * Bv);
+    else if (P(1) == 1) r = 255 - div255((255 - A) * (255 - Bv));
     else r = min(255, A + Bv);
-    d[i] = uchar(r);
+    if (o + 4 <= n) ((device uchar4*)d)[i] = uchar4(r);
+    else for (int k = 0; o + k < n; k++) d[o + k] = uchar(r[k]);
 }
 inline int fdiv255(int x) { return ((x + 128) * 257) >> 16; }
 inline int unpre(int x, int y) {
@@ -489,32 +498,51 @@ kernel void k_alpha_comp(device uchar* d [[buffer(0)]], device const uchar* s [[
 
 // --- gblur ----------------------------------------------------------------
 kernel void k_g_load(device const uchar* s [[buffer(0)]], device float* b [[buffer(1)]],
-                     constant int* prm [[buffer(2)]], uint i [[thread_position_in_grid]]) {
-    if ((int)i < P(0)) b[i] = float(s[i]);
+                     constant int* prm [[buffer(2)]], uint2 g [[thread_position_in_grid]]) {
+    // w, h: loads transposed, so the row pass walks memory the threads share
+    int w = P(0), h = P(1); if ((int)g.x >= w || (int)g.y >= h) return;
+    b[g.x * h + g.y] = float(s[g.y * w + g.x]);
+}
+kernel void k_g_tr(device const float* s [[buffer(0)]], device float* d [[buffer(1)]],
+                   constant int* prm [[buffer(2)]], uint2 g [[thread_position_in_grid]]) {
+    int w = P(0), h = P(1); if ((int)g.x >= w || (int)g.y >= h) return;
+    d[g.y * w + g.x] = s[g.x * h + g.y];
+}
+// One recursive pass along a line of n samples `stride` apart; the line's
+// first sample is p[0]. horiz_slice_c / do_vertical_columns, `+=` contracted
+// to fma; the running value stays in a register, the arithmetic is unchanged.
+inline void g_line(device float* p, int n, int stride, int steps, float nu, float bs) {
+    // loads go out 8 at a time ahead of the dependent chain: there are too
+    // few lines in flight to hide their latency otherwise
+    for (int st = 0; st < steps; st++) {
+        float v = p[0] * bs; p[0] = v;
+        int i = 1;
+        for (; i + 8 <= n; i += 8) {
+            float c[8];
+            for (int k = 0; k < 8; k++) c[k] = p[(i + k) * stride];
+            for (int k = 0; k < 8; k++) { v = fma(nu, v, c[k]); p[(i + k) * stride] = v; }
+        }
+        for (; i < n; i++) { v = fma(nu, v, p[i * stride]); p[i * stride] = v; }
+        v *= bs; p[(n - 1) * stride] = v;
+        i = n - 2;
+        for (; i - 7 >= 0; i -= 8) {
+            float c[8];
+            for (int k = 0; k < 8; k++) c[k] = p[(i - k) * stride];
+            for (int k = 0; k < 8; k++) { v = fma(nu, v, c[k]); p[(i - k) * stride] = v; }
+        }
+        for (; i >= 0; i--) { v = fma(nu, v, p[i * stride]); p[i * stride] = v; }
+    }
 }
 kernel void k_g_h(device float* b [[buffer(0)]], constant int* prm [[buffer(1)]],
                   constant float* fp [[buffer(2)]], uint y [[thread_position_in_grid]]) {
-    // w, h, steps ; nu, bscale   (horiz_slice_c, `+=` contracted to fma)
-    int w = P(0); if ((int)y >= P(1)) return;
-    device float* p = b + y * w;
-    float nu = fp[0], bs = fp[1];
-    for (int st = 0; st < P(2); st++) {
-        p[0] *= bs;
-        for (int x = 1; x < w; x++) p[x] = fma(nu, p[x - 1], p[x]);
-        p[w - 1] *= bs;
-        for (int x = w - 1; x > 0; x--) p[x - 1] = fma(nu, p[x], p[x - 1]);
-    }
+    // w, h, steps ; nu, bscale   on the transposed buffer
+    if ((int)y >= P(1)) return;
+    g_line(b + y, P(0), P(1), P(2), fp[0], fp[1]);
 }
 kernel void k_g_v(device float* b [[buffer(0)]], constant int* prm [[buffer(1)]],
                   constant float* fp [[buffer(2)]], uint x [[thread_position_in_grid]]) {
-    int w = P(0), h = P(1); if ((int)x >= w) return;
-    float nu = fp[0], bs = fp[1];
-    for (int st = 0; st < P(2); st++) {
-        b[x] *= bs;
-        for (int y = 1; y < h; y++) b[y * w + x] = fma(nu, b[(y - 1) * w + x], b[y * w + x]);
-        b[(h - 1) * w + x] *= bs;
-        for (int y = h - 1; y > 0; y--) b[(y - 1) * w + x] = fma(nu, b[y * w + x], b[(y - 1) * w + x]);
-    }
+    if ((int)x >= P(0)) return;
+    g_line(b + x, P(1), P(0), P(2), fp[0], fp[1]);
 }
 kernel void k_g_store(device const float* b [[buffer(0)]], device uchar* d [[buffer(1)]],
                       constant int* prm [[buffer(2)]], constant float* fp [[buffer(3)]],
@@ -584,27 +612,75 @@ func pipeline(_ name: String) -> MTLComputePipelineState {
 }
 
 func buf(_ n: Int) -> MTLBuffer { dev.makeBuffer(length: max(n, 16), options: .storageModeShared)! }
+// tables: written once on the CPU, only ever read by kernels
+var tables = Set<ObjectIdentifier>()
 func bufOf<T>(_ a: [T]) -> MTLBuffer {
-    a.withUnsafeBytes { dev.makeBuffer(bytes: $0.baseAddress!, length: max($0.count, 16), options: .storageModeShared)! }
+    let b = a.withUnsafeBytes { dev.makeBuffer(bytes: $0.baseAddress!, length: max($0.count, 16), options: .storageModeShared)! }
+    tables.insert(ObjectIdentifier(b))
+    return b
 }
 
 final class GPU {
     var cb: MTLCommandBuffer!
     var enc: MTLComputeCommandEncoder!
-    func begin() { cb = queue.makeCommandBuffer()!; enc = cb.makeComputeCommandEncoder(dispatchType: .serial)! }
-    func end() -> MTLCommandBuffer { enc.endEncoding(); cb.commit(); let c = cb!; cb = nil; enc = nil; return c }
+    var dispatches = 0, barriers = 0
+    // A concurrent encoder, with a barrier only before a dispatch that binds
+    // an image buffer some dispatch since the last barrier bound: independent
+    // work overlaps, dependent work stays in order.
+    var touched = Set<ObjectIdentifier>()
+    func begin() {
+        cb = queue.makeCommandBuffer()!; touched = []
+        enc = prof ? nil : cb.makeComputeCommandEncoder(dispatchType: .concurrent)!
+    }
+    func end() -> MTLCommandBuffer {
+        if !prof { enc.endEncoding() }
+        cb.commit(); let c = cb!; cb = nil; enc = nil
+        if prof {
+            c.waitUntilCompleted()
+            let d = try! sampler!.resolveCounterRange(0..<(2 * profNames.count))!
+            d.withUnsafeBytes { (r: UnsafeRawBufferPointer) in
+                let t = r.bindMemory(to: MTLCounterResultTimestamp.self)
+                for (i, k) in profNames.enumerated() { profT[k, default: 0] += Double(t[2 * i + 1].timestamp - t[2 * i].timestamp) * 1e-9 }
+            }
+            profNames = []
+        }
+        return c
+    }
+    // BARS_GPU_PROF: every dispatch in an encoder of its own, timed by the GPU's
+    // timestamp counter (ns on Apple GPUs)
+    let prof = ProcessInfo.processInfo.environment["BARS_GPU_PROF"] != nil
+    var profT: [String: Double] = [:], profNames: [String] = []
+    lazy var sampler: MTLCounterSampleBuffer? = {
+        let d = MTLCounterSampleBufferDescriptor()
+        d.counterSet = dev.counterSets!.first { $0.name == MTLCommonCounterSet.timestamp.rawValue }!
+        d.sampleCount = 4096; d.storageMode = .shared
+        return try! dev.makeCounterSampleBuffer(descriptor: d)
+    }()
     // buffers in order, then the int params (and optional float params) as the next slots
-    func run(_ name: String, _ bufs: [MTLBuffer], _ ip: [Int32], fp: [Float]? = nil, grid: (Int, Int)) {
+    func run(_ name: String, _ bufs: [MTLBuffer], _ ip: [Int32], fp: [Float]? = nil, grid: (Int, Int), tg: Int? = nil) {
         let ps = pipeline(name)
+        if prof {
+            let pd = MTLComputePassDescriptor()
+            pd.sampleBufferAttachments[0].sampleBuffer = sampler!
+            pd.sampleBufferAttachments[0].startOfEncoderSampleIndex = 2 * profNames.count
+            pd.sampleBufferAttachments[0].endOfEncoderSampleIndex = 2 * profNames.count + 1
+            enc = cb.makeComputeCommandEncoder(descriptor: pd)!
+            profNames.append("\(name) \(grid.0)x\(grid.1)")
+        }
         enc.setComputePipelineState(ps)
+        let ids = bufs.map { ObjectIdentifier($0) }.filter { !tables.contains($0) }
+        if ids.contains(where: touched.contains) { enc.memoryBarrier(scope: .buffers); touched = []; barriers += 1 }
+        touched.formUnion(ids)
         for (i, b) in bufs.enumerated() { enc.setBuffer(b, offset: 0, index: i) }
         var ipv = ip.isEmpty ? [0] : ip
         enc.setBytes(&ipv, length: ipv.count * 4, index: bufs.count)
         if var f = fp { enc.setBytes(&f, length: f.count * 4, index: bufs.count + 1) }
-        let tw = grid.1 == 1 ? min(256, ps.maxTotalThreadsPerThreadgroup) : 16
+        let tw = tg ?? (grid.1 == 1 ? min(256, ps.maxTotalThreadsPerThreadgroup) : 16)
         let th = grid.1 == 1 ? 1 : max(1, min(16, ps.maxTotalThreadsPerThreadgroup / 16))
         enc.dispatchThreads(MTLSize(width: grid.0, height: grid.1, depth: 1),
                             threadsPerThreadgroup: MTLSize(width: tw, height: th, depth: 1))
+        dispatches += 1
+        if prof { enc.endEncoding() }
     }
 }
 let gpu = GPU()
@@ -1519,7 +1595,7 @@ final class Graph {
             out!.meta = src.meta
             for pi in 0..<3 {
                 let (pw, ph) = src.dims(pi)
-                gpu.run("k_lut", [src.p[pi], out!.p[pi], pi == 0 ? ly : lc], [Int32(pw * ph)], grid: (pw * ph, 1))
+                gpu.run("k_lut", [src.p[pi], out!.p[pi], pi == 0 ? ly : lc], [Int32(pw * ph)], grid: ((pw * ph + 3) / 4, 1))
             }
             return out!
         }
@@ -1618,7 +1694,7 @@ final class Graph {
             if out == nil { out = Img(a.pf, a.w, a.h, a.meta) }
             for pi in 0..<a.p.count {
                 let (pw, ph) = a.dims(pi)
-                gpu.run("k_blend", [a.p[pi], b.p[pi], out!.p[pi]], [Int32(pw * ph), mode], grid: (pw * ph, 1))
+                gpu.run("k_blend", [a.p[pi], b.p[pi], out!.p[pi]], [Int32(pw * ph), mode], grid: ((pw * ph + 3) / 4, 1))
             }
             return out!
         }
@@ -1692,17 +1768,19 @@ final class Graph {
         if !bscale.isNormal { bscale = 1 }
         if !nu.isNormal { nu = 0 }
         let postscale = post * post
-        var out: Img?, fb: MTLBuffer?
+        var out: Img?, fb: [MTLBuffer]?
         return FuncNode([n], constant: true) { _, i in
             let src = i[0]
-            if out == nil { out = Img(src.pf, src.w, src.h, src.meta); fb = buf(src.w * src.h * 4) }
-            for pi in 0..<src.p.count {
-                let (w, h) = src.dims(pi)
-                gpu.run("k_g_load", [src.p[pi], fb!], [Int32(w * h)], grid: (w * h, 1))
-                gpu.run("k_g_h", [fb!], [Int32(w), Int32(h), Int32(steps)], fp: [nu, bscale], grid: (h, 1))
-                gpu.run("k_g_v", [fb!], [Int32(w), Int32(h), Int32(steps)], fp: [nu, bscale], grid: (w, 1))
-                gpu.run("k_g_store", [fb!, out!.p[pi]], [Int32(w * h)], fp: [postscale], grid: (w * h, 1))
+            let np = src.p.count, dims = (0..<np).map { src.dims($0) }
+            if out == nil {
+                out = Img(src.pf, src.w, src.h, src.meta)
+                fb = dims.flatMap { [buf($0.0 * $0.1 * 4), buf($0.0 * $0.1 * 4)] }
             }
+            for pi in 0..<np { gpu.run("k_g_load", [src.p[pi], fb![2 * pi]], [Int32(dims[pi].0), Int32(dims[pi].1)], grid: dims[pi]) }
+            for pi in 0..<np { gpu.run("k_g_h", [fb![2 * pi]], [Int32(dims[pi].0), Int32(dims[pi].1), Int32(steps)], fp: [nu, bscale], grid: (dims[pi].1, 1), tg: 32) }
+            for pi in 0..<np { gpu.run("k_g_tr", [fb![2 * pi], fb![2 * pi + 1]], [Int32(dims[pi].0), Int32(dims[pi].1)], grid: dims[pi]) }
+            for pi in 0..<np { gpu.run("k_g_v", [fb![2 * pi + 1]], [Int32(dims[pi].0), Int32(dims[pi].1), Int32(steps)], fp: [nu, bscale], grid: (dims[pi].0, 1), tg: 32) }
+            for pi in 0..<np { gpu.run("k_g_store", [fb![2 * pi + 1], out!.p[pi]], [Int32(dims[pi].0 * dims[pi].1)], fp: [postscale], grid: (dims[pi].0 * dims[pi].1, 1)) }
             return out!
         }
     }
@@ -1775,7 +1853,7 @@ final class Graph {
         return FuncNode([n], constant: true) { _, i in
             let src = i[0]
             if out == nil { out = Img(.rgb, src.w, src.h, src.meta) }
-            for pi in 0..<3 { gpu.run("k_lut", [src.p[pi], out!.p[pi], luts[pi]], [Int32(src.w * src.h)], grid: (src.w * src.h, 1)) }
+            for pi in 0..<3 { gpu.run("k_lut", [src.p[pi], out!.p[pi], luts[pi]], [Int32(src.w * src.h)], grid: ((src.w * src.h + 3) / 4, 1)) }
             return out!
         }
     }
@@ -1974,12 +2052,14 @@ var vt: VTWriter?
 var pending: [(MTLCommandBuffer, [MTLBuffer], Int, Img)] = []
 var stage: [[MTLBuffer]] = []
 var printedFmt = false
+var gpuBusy = 0.0
 
 func drain(_ upTo: Int) {
     while pending.count > upTo {
         let (cb, bufs, n, img) = pending.removeFirst()
         cb.waitUntilCompleted()
         if let e = cb.error { die("GPU: \(e)") }
+        gpuBusy += cb.gpuEndTime - cb.gpuStartTime
         if raw {
             for (k, b) in bufs.enumerated() {
                 let (pw, ph) = img.dims(img.dumpOrder[k])
@@ -2023,4 +2103,8 @@ for n in 0..<total {
 drain(0)
 fh?.closeFile()
 vt?.finish()
-FileHandle.standardError.write(String(format: "bars_gpu: %d frames in %.2fs\n", total, Date().timeIntervalSince(t0)).data(using: .utf8)!)
+for (k, v) in gpu.profT.sorted(by: { $0.value > $1.value }).prefix(40) {
+    FileHandle.standardError.write(String(format: "%8.3fs  %@\n", v, k).data(using: .utf8)!)
+}
+FileHandle.standardError.write(String(format: "bars_gpu: %d frames in %.2fs (GPU busy %.2fs)\n", total, Date().timeIntervalSince(t0), gpuBusy).data(using: .utf8)!)
+FileHandle.standardError.write(String(format: "bars_gpu: %d dispatches, %d barriers\n", gpu.dispatches, gpu.barriers).data(using: .utf8)!)
