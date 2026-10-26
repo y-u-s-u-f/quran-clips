@@ -2215,7 +2215,7 @@ final class ColorNode: Node {
 final class VTWriter {
     let writer: AVAssetWriter, input: AVAssetWriterInput, adaptor: AVAssetWriterInputPixelBufferAdaptor
     let w: Int, h: Int
-    init(path: String, w: Int, h: Int, quality: Double) {
+    init(path: String, w: Int, h: Int, quality: Double, gop: Int) {
         self.w = w; self.h = h
         try? FileManager.default.removeItem(atPath: path)
         writer = try! AVAssetWriter(outputURL: URL(fileURLWithPath: path), fileType: .mov)
@@ -2224,6 +2224,7 @@ final class VTWriter {
             AVVideoWidthKey: w, AVVideoHeightKey: h,
             AVVideoCompressionPropertiesKey: [
                 AVVideoQualityKey: quality,
+                AVVideoMaxKeyFrameIntervalKey: gop,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
                 AVVideoExpectedSourceFrameRateKey: 30,
             ] as [String: Any],
@@ -2367,8 +2368,8 @@ for n in 0..<total {
     } else {
         guard img.pf == .yuv420 else { die("VideoToolbox output needs yuv420p, got \(img.pf)") }
         if vt == nil {
-            guard let q = plan["vt_quality"] as? Double else { die("plan has no vt_quality") }
-            vt = VTWriter(path: outPath, w: img.w, h: img.h, quality: q)
+            guard let q = plan["vt_quality"] as? Double, let gop = plan["vt_gop"] as? Int else { die("plan has no vt_quality / vt_gop") }
+            vt = VTWriter(path: outPath, w: img.w, h: img.h, quality: q, gop: gop)
         }
         copyPlane(img.p[0], sb[0], w: img.w, h: img.h, sstride: img.w, dstride: img.w)
         let cn = ((img.w + 1) / 2) * ((img.h + 1) / 2)

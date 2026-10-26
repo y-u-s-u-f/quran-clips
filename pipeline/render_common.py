@@ -49,6 +49,17 @@ GPU_BIN = os.path.join(os.path.dirname(_HERE), "tools", "render_gpu")
 # The text styles are mostly static, and VideoToolbox spends its bits on them
 # less well than x264: matching x264 there costs 25-75% more file.
 VT_QUALITY = {"bars": 0.68, "vertical": 0.76, "horizontal": 0.76}
+# Frames between IDR frames, 5s at 30fps (VideoToolbox's own default puts
+# one every ~28 frames). Same quality, same PSNR to 0.06 dB, smaller files:
+# hujurat-4-5 horizontal 12.42 -> 10.37 MB, --vertical 6.16 -> 5.02,
+# vertical 29.16 -> 24.23, bars --vertical 9.77 -> 9.08; ahzab-56-56
+# horizontal 13.42 -> 10.58. 5s is the longest closed GOP the Meta upload
+# guides name (2-5s). HEVC (VideoToolbox, its default GOP) at equal PSNR
+# was 23-33% under H.264's default-GOP files on the full-canvas text reels,
+# but only 0-18% under these (bars and horizontal --vertical: none), for a
+# codec change -- and an HEVC GOP that may be open -- Meta's ingest would
+# have to take on trust. H.264 stays.
+VT_GOP = 150
 
 # `--vertical` delivery: a landscape picture PORTRAIT_W wide on a 1080x1920
 # canvas, black above and below. PORTRAIT_PAD is appended inside the style's
@@ -171,7 +182,7 @@ def encode(in_argv, filter_complex, dur, out, meta, tmp, style):
     video = os.path.join(tmp, "gpu-video.mov")
     with open(plan_path, "w") as f:
         json.dump({"in_argv": in_argv, "fc": filter_complex, "dur": dur,
-                   "vt_quality": VT_QUALITY[style]}, f)
+                   "vt_quality": VT_QUALITY[style], "vt_gop": VT_GOP}, f)
     p = subprocess.run([GPU_BIN, plan_path, video], stdout=subprocess.PIPE,
                        text=True)
     if p.returncode != 0:
