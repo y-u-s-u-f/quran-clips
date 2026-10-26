@@ -27,6 +27,7 @@ Changing one of these needs the guard it was verified with: PSNR for anything th
 - **Grade plate and signature are single-frame inputs** (text styles). Only the cards are looped, because only they fade; overlay's `eof_action=repeat` holds the other two for the whole reel -- same pixels, no per-frame PNG decode.
 - **Wipe mask over the bar box** plus 16 sigma of the feather blur each side, not the canvas -- framemd5-identical, landscape and portrait.
 - **PNG plates held by the `loop` filter**, not `-loop 1` (which re-decodes the PNG every frame) -- framemd5-identical. With the wipe mask: 6 alternating pairs of the hujurat landscape encode alone, 216 -> 184s wall, 1001 -> 897s CPU (every pair lower, by 30-204s CPU).
+- **`trim_media` cached** under `tools/cache/trim`, keyed on the source and ffmpeg binary (path, size, mtime) and the whole argv; the cut is deterministic (same md5 across runs and against an uncached cut). A re-render whose window has not moved saves the cut: 5.4-6.6s wall, ~32s CPU on the 26.2s hujurat window -- a quarter of a text-style render.
 - **`derive_bar_color`: `fps=1` first** — 8.57→1.89s CPU. Pin `bar_color:` to skip (vignette dither can move one LSB).
 - **`trim_media`: `veryfast`/crf 10** — 50.39 dB vs lossless. crf 14 is *worse* (49.46); size ≠ fidelity across presets.
 - **`heat` perlin maps pre-baked** (`heat_layers`, longest-map reuse) — 47.1 dB.

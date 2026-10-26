@@ -35,9 +35,11 @@ So the normal layout needs none of the three spelled out:
     sources/<id>/my-reel.yaml      ->  reels/my-reel.mp4
 """
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -80,6 +82,10 @@ FFPROBE = envvar("QC_FFPROBE", "ffprobe")
 # What a fetched source may be called; resolve_paths takes the first present.
 SOURCE_NAMES = tuple("source" + e for e in (".mp4", ".mkv", ".webm", ".mov",
                                            ".m4a", ".mp3", ".wav"))
+
+# Beside the bars heat/snow caches: machine-local, gitignored with tools/, and
+# outside /tmp so the macOS sweep does not re-bill the cut. Safe to delete.
+TRIM_CACHE = os.path.join(ROOT, "tools", "cache", "trim")
 
 ARABIC_FONT_NAMES = ("uthmanic_hafs", "thuluth")     # render_text.ARABIC_FONTS
 ENGLISH_FONT_NAMES = ("albertus", "gentium")         # render_text.ENGLISH_FONTS
@@ -320,15 +326,42 @@ def trim_media(path, out_path, start, end, thumb=False):
     encode, but the picture 32px wide. The block reads the window's duration
     and silences, never a pixel -- yet the duration IS the video's frame
     timing (26.19s against the audio's 26.14s on hujurat-4-5), and it sets
-    the last card's end, so an audio-only cut would print a different block."""
+    the last card's end, so an audio-only cut would print a different block.
+
+    The full cut is cached under TRIM_CACHE and that file is returned instead
+    of `out_path`: the encode is deterministic, so a re-render of a reel whose
+    window has not moved copies nothing and encodes nothing. The key is
+    everything that decides the bytes -- the source's path, size and mtime,
+    the ffmpeg binary's, and the whole argv -- so an edited source, a moved
+    window, a changed setting or an upgraded ffmpeg misses."""
+    src = os.path.abspath(path)
     cmd = [FFMPEG, "-y", "-v", "error", "-ss", "%.3f" % start]
     if end is not None:
         cmd += ["-to", "%.3f" % end]
-    cmd += ["-i", path, "-c:v", "libx264", "-pix_fmt", "yuv420p"]
+    cmd += ["-i", src, "-c:v", "libx264", "-pix_fmt", "yuv420p"]
     cmd += (["-vf", "scale=32:-2", "-preset", "ultrafast"] if thumb
             else ["-preset", "veryfast", "-crf", "10"])
-    run(cmd + ["-c:a", "aac", "-b:a", "192k", out_path])
-    return out_path
+    cmd += ["-c:a", "aac", "-b:a", "192k"]
+    if thumb:
+        run(cmd + [out_path])
+        return out_path
+    key = [(p, os.stat(p).st_size, os.stat(p).st_mtime_ns)
+           for p in (src, shutil.which(FFMPEG) or FFMPEG)] + cmd
+    cached = os.path.join(TRIM_CACHE, "trim_%s.mp4" % hashlib.sha256(
+        repr(key).encode()).hexdigest()[:16])
+    if not os.path.exists(cached):
+        os.makedirs(TRIM_CACHE, exist_ok=True)
+        # Same part-file rename as the bars heat/snow caches: the cache is
+        # keyed by name alone, so a cut killed mid-encode must not be left
+        # where a later run would take it for a complete window.
+        part = "%s.%d.part.mp4" % (os.path.splitext(cached)[0], os.getpid())
+        try:
+            run(cmd + [part])
+            os.replace(part, cached)
+        finally:
+            if os.path.exists(part):
+                os.remove(part)
+    return cached
 
 
 def extract_audio(src, out_wav):
