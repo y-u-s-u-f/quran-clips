@@ -13,6 +13,9 @@
 #      faster-whisper everywhere else (QC_ASR_BACKEND overrides, read from
 #      the shell or .env like every script reads it)
 #   3b. builds tools/align-venv -- ctc-forced-aligner (torch) for align.py
+#   3c. builds tools/bars_gpu   -- the bars style's Metal renderer, from
+#       pipeline/gpu/bars_gpu.swift with swiftc (macOS; rebuilt when older
+#       than the source)
 #   4. checks the vision API settings pipeline/crop.py uses (optional)
 #   5. copies .env.example -> .env when absent
 #   6. prints a doctor-style summary of what resolved and what is missing
@@ -164,6 +167,28 @@ if [ -x "$FPY" ] && "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null; the
     ok+=("align venv   $FPY (ctc-forced-aligner)")
 else
     bad+=("align venv: cannot import ctc_forced_aligner -- align.py cannot run (generate.py still works off whisper.json). $FPY -m pip install $FPKG pyyaml")
+fi
+
+# ---------------------------------------------------------------------------
+# 3c. bars GPU renderer (Metal + VideoToolbox; generate.py's default for bars)
+# ---------------------------------------------------------------------------
+say "== bars gpu"
+GSRC="$ROOT/pipeline/gpu/bars_gpu.swift"
+GBIN="$ROOT/tools/bars_gpu"
+if [ "$CHECK_ONLY" = 0 ] && have swiftc && { [ ! -x "$GBIN" ] || [ "$GSRC" -nt "$GBIN" ]; }; then
+    say "  swiftc -O $GSRC"
+    # the log holds deprecation warnings (AVFoundation calls deprecated on
+    # macOS 27, not removed); only an error stops the build
+    mkdir -p "$ROOT/tools"
+    swiftc -O "$GSRC" -o "$GBIN" 2>"$ROOT/tools/bars_gpu.log" ||
+        { grep -A3 "error:" "$ROOT/tools/bars_gpu.log"; rm -f "$GBIN"; }
+fi
+if [ -x "$GBIN" ] && [ ! "$GSRC" -nt "$GBIN" ]; then
+    ok+=("bars gpu     $GBIN")
+elif have swiftc; then
+    bad+=("bars gpu: $GBIN missing or older than $GSRC -- bars renders need it (or --renderer ffmpeg). Re-run ./install.sh")
+else
+    bad+=("bars gpu: no swiftc (Xcode command line tools: xcode-select --install) -- bars renders need tools/bars_gpu (or --renderer ffmpeg)")
 fi
 
 # ---------------------------------------------------------------------------

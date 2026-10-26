@@ -641,7 +641,6 @@ func bufOf<T>(_ a: [T]) -> MTLBuffer {
 final class GPU {
     var cb: MTLCommandBuffer!
     var enc: MTLComputeCommandEncoder!
-    var dispatches = 0, barriers = 0
     // A concurrent encoder, with a barrier only before a dispatch that binds
     // an image buffer some dispatch since the last barrier bound: independent
     // work overlaps, dependent work stays in order.
@@ -687,7 +686,7 @@ final class GPU {
         }
         enc.setComputePipelineState(ps)
         let ids = bufs.map { ObjectIdentifier($0) }.filter { !tables.contains($0) }
-        if ids.contains(where: touched.contains) { enc.memoryBarrier(scope: .buffers); touched = []; barriers += 1 }
+        if ids.contains(where: touched.contains) { enc.memoryBarrier(scope: .buffers); touched = [] }
         touched.formUnion(ids)
         for (i, b) in bufs.enumerated() { enc.setBuffer(b, offset: 0, index: i) }
         var ipv = ip.isEmpty ? [0] : ip
@@ -697,7 +696,6 @@ final class GPU {
         let th = grid.1 == 1 ? 1 : max(1, min(16, ps.maxTotalThreadsPerThreadgroup / 16))
         enc.dispatchThreads(MTLSize(width: grid.0, height: grid.1, depth: 1),
                             threadsPerThreadgroup: MTLSize(width: tw, height: th, depth: 1))
-        dispatches += 1
         if prof { enc.endEncoding() }
     }
 }
@@ -2069,12 +2067,11 @@ func dependsOnFps(_ n: Node) -> FpsNode? {
 let fpsNode = dependsOnFps(outNode)
 let firstPts = Int(fpsNode?.first ?? 0)
 let count = fpsNode?.map.count ?? graph.srcTimeline.0.count
-// `-r 30` (cfr) as the delivered encode runs it: the first frame is
-// repeated back to pts 0, and `-t dur` ends the output
-let cfr = tap == nil
-var schedule: [Int] = (cfr ? Array(repeating: firstPts, count: firstPts) : []) + (0..<count).map { firstPts + $0 }
+// The delivered encode (`-r 30 -t dur`) starts the file at the stream's
+// first frame and keeps the frames that start before `dur` (measured:
+// hujurat-4-5's begins at pts 1 and its mp4 holds pts 1..785 from 0).
 let tLimit = durationUs(String(format: "%.3f", dur))
-schedule = Array(schedule.prefix { _ in true }.enumerated().filter { Int64($0.offset) * 1_000_000 < tLimit * 30 }.map { $0.element })
+var schedule = (0..<count).filter { Int64($0) * 1_000_000 < tLimit * 30 }.map { firstPts + $0 }
 if let f = frameLimit { schedule = Array(schedule.prefix(f)) }
 let total = schedule.count
 
@@ -2139,4 +2136,3 @@ for (k, v) in gpu.profT.sorted(by: { $0.value > $1.value }).prefix(40) {
     FileHandle.standardError.write(String(format: "%8.3fs  %@\n", v, k).data(using: .utf8)!)
 }
 FileHandle.standardError.write(String(format: "bars_gpu: %d frames in %.2fs (GPU busy %.2fs)\n", total, Date().timeIntervalSince(t0), gpuBusy).data(using: .utf8)!)
-FileHandle.standardError.write(String(format: "bars_gpu: %d dispatches, %d barriers\n", gpu.dispatches, gpu.barriers).data(using: .utf8)!)

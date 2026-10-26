@@ -150,9 +150,26 @@ def encode(in_argv, filter_complex, dur, out, meta=None):
             "[aout]", "-t", "%.3f" % dur,
             "-c:v", "libx264", "-crf", str(ENCODE["crf"]),
             "-preset", ENCODE["preset"], "-pix_fmt", "yuv420p",
-            "-r", str(FPS), "-c:a", "aac", "-b:a", ENCODE["audio_bitrate"]]
-    for k, v in (meta or {}).items():
-        cmd += ["-metadata", "%s=%s" % (k, v)]
-    cmd += ["-movflags", "+faststart", out]
-    if subprocess.run(cmd).returncode != 0:
+            "-r", str(FPS)]
+    if subprocess.run(cmd + _deliver(meta, out)).returncode != 0:
         raise SystemExit("ffmpeg render failed")
+
+
+def mux(video, in_argv, filter_complex, dur, out, meta=None):
+    """The delivered file from a picture encoded elsewhere (render_bars'
+    GPU renderer): `video` stream-copied beside the [0:a] -> [aout] chain of
+    the same graph, run on the same first input `encode` would read."""
+    first = in_argv[:in_argv.index("-i") + 2]
+    audio = next(c for c in filter_complex.split(";") if c.startswith("[0:a]"))
+    cmd = [FFMPEG, "-y", "-hide_banner"] + first
+    cmd += ["-i", video, "-filter_complex", audio, "-map", "1:v", "-map",
+            "[aout]", "-t", "%.3f" % dur, "-c:v", "copy"]
+    if subprocess.run(cmd + _deliver(meta, out)).returncode != 0:
+        raise SystemExit("ffmpeg mux failed")
+
+
+def _deliver(meta, out):
+    tail = ["-c:a", "aac", "-b:a", ENCODE["audio_bitrate"]]
+    for k, v in (meta or {}).items():
+        tail += ["-metadata", "%s=%s" % (k, v)]
+    return tail + ["-movflags", "+faststart", out]

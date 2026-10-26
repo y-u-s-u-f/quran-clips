@@ -1103,8 +1103,10 @@ def resolve_span(cfg, asr_words):
 
 
 def run_config(config_path, output_override=None, vertical=False,
-               verify_only=False):
+               verify_only=False, renderer=None):
     cfg = load_config(config_path)
+    if renderer == "gpu" and cfg["style"] != "bars":
+        raise SystemExit("--renderer gpu: only the bars style has a GPU renderer")
     cfg = resolve_paths(cfg, config_path, output_override)
     tmp = cfg["tmp_dir"]
     os.makedirs(tmp, exist_ok=True)
@@ -1205,6 +1207,7 @@ def run_config(config_path, output_override=None, vertical=False,
     plan = {"cfg": cfg, "src": source, "info": info,
             "arabic": arabic, "english": english,
             "tmp": tmp, "out": cfg["output"], "portrait": vertical,
+            "renderer": renderer,
             "meta": output_meta(surah, a0, a1, cfg["reciter"])}
 
     print("[6/6] Rendering (%s style)..." % cfg["style"])
@@ -1232,6 +1235,9 @@ def main(argv=None):
                          "the render's own encode")
     ap.add_argument("--verify-only", action="store_true",
                     help="stop after the verification block; nothing rendered")
+    ap.add_argument("--renderer", choices=("gpu", "ffmpeg"),
+                    help="bars only: tools/bars_gpu (the default) or the "
+                         "ffmpeg filtergraph it ports")
     # These runs are long and normally watched: line-buffer so progress reaches
     # a pipe or a log as it happens, not all at once at exit.
     sys.stdout.reconfigure(line_buffering=True)
@@ -1241,7 +1247,8 @@ def main(argv=None):
         return 0
     if not a.config:
         ap.error("config path required (or --print-schema)")
-    result = run_config(a.config, a.output, a.vertical, a.verify_only)
+    result = run_config(a.config, a.output, a.vertical, a.verify_only,
+                        a.renderer)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
