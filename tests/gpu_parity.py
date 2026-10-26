@@ -16,9 +16,8 @@ wrapping to two lines and stroking the Allah macron) it builds
                crop (the cover-scale path, at the source's own size)
 
 renders each to raw yuv420p frames and compares every frame's md5 with
-tests/golden/gpu-<case>.framemd5 -- exact, no tolerance. The goldens were
-recorded when the ffmpeg graph was still runnable and every frame of every
-case was identical to ffmpeg 9.0.2's own render of the same graph.
+tests/golden/gpu-<case>.framemd5 -- exact, no tolerance. Every frame of
+every golden is identical to ffmpeg 9.0.2's own render of the same graph.
 
 The footage is synthesized (testsrc2 at 30000/1001 in an mp4 with B-frames,
 so the edit list and the fps mapping are exercised, tagged BT.709 like the

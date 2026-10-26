@@ -214,9 +214,11 @@ def mux(video, audio, dur, out, meta, tags):
     """The delivered file: both streams copied. `meta` ({title, comment,
     artist}) is written here: publish.py captions a reel from these tags
     alone. VideoToolbox writes no VUI, so `tags` (render_gpu's report of the
-    last frame) go into the SPS the way an ffmpeg encode tags the same frame:
-    video_format 5, the range flag, the colour description, the sample
-    aspect ratio."""
+    last frame) go into the SPS as libx264 tagged the same frames: video_format
+    5, the range flag, the colour description, the sample aspect ratio. Bars'
+    matrix is unspecified: its untagged baked layers (snow, heat) drop the
+    source's BT.709 at the filters that merge them, so its RGB -> YUV runs on
+    swscale's BT.601 default (todo.md)."""
     vui = ("h264_metadata=video_format=5:video_full_range_flag=%d:"
            "colour_primaries=%d:transfer_characteristics=%d:"
            "matrix_coefficients=%d:sample_aspect_ratio=%d/%d"
