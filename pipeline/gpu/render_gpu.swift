@@ -12,7 +12,7 @@
 // to ffmpeg's. Only the filters and argument forms the two style renderers
 // emit are implemented; anything else is a loud error, never a guess.
 //
-// usage: render_gpu PLAN.json OUT [--raw] [--tap LABEL] [--frames N]
+// usage: render_gpu PLAN.json OUT [--raw] [--tap LABEL]
 //   OUT    video-only H.264 (VideoToolbox) .mov, or with --raw the
 //          uncompressed planes of every frame (ffmpeg plane order)
 //   --tap  render LABEL instead of [vout]; prints its pixel format
@@ -724,12 +724,6 @@ kernel void k_mixer(device const uchar* R [[buffer(0)]], device const uchar* G [
     oG[i] = uchar(clamp(L[768 + r] + L[1024 + g] + L[1280 + b], 0, 255));
     oB[i] = uchar(clamp(L[1536 + r] + L[1792 + g] + L[2048 + b], 0, 255));
 }
-kernel void k_scroll(device const uchar* s [[buffer(0)]], device uchar* d [[buffer(1)]],
-                     constant int* prm [[buffer(2)]], uint2 g [[thread_position_in_grid]]) {
-    // w, h, pos_v, pos_h
-    int x = g.x, y = g.y; if (x >= P(0) || y >= P(1)) return;
-    d[y * P(0) + x] = s[((y + P(2)) % P(1)) * P(0) + (x + P(3)) % P(0)];
-}
 kernel void k_displace(device const uchar* s [[buffer(0)]], device const uchar* xm [[buffer(1)]],
                        device const uchar* ym [[buffer(2)]], device uchar* d [[buffer(3)]],
                        constant int* prm [[buffer(4)]], uint2 g [[thread_position_in_grid]]) {
@@ -745,7 +739,7 @@ kernel void k_nv12(device const uchar* U [[buffer(0)]], device const uchar* V [[
 }
 """
 
-let dev: MTLDevice = MTLCreateSystemDefaultDevice() ?? { die("no Metal device") }()
+let dev: MTLDevice = MTLCreateSystemDefaultDevice() ?? { die("no Metal device: rendering needs macOS with Metal") }()
 let queue = dev.makeCommandQueue()!
 let library: MTLLibrary = {
     let o = MTLCompileOptions()
@@ -1265,7 +1259,6 @@ final class Sws {
         }
     }
 
-    // `shift`: per plane, the rows a folded vertical scroll moves the source by
     // For every grey level: rgb2uv's value (each chroma plane) is one
     // constant, hscale16 maps it to one constant, and vgbrp's chroma term
     // is then exactly 0.
@@ -1295,6 +1288,7 @@ final class Sws {
         return true
     }
 
+    // `shift`: per plane, the rows a folded vertical scroll moves the source by
     func run(_ s: Img, shift: [Int] = [0, 0, 0]) -> Img {
         if shift != [0, 0, 0] && (kind != .scaled || s.pf != .yuv420) { die("scroll into this scale not ported") }
         switch kind {
@@ -1478,7 +1472,8 @@ final class VideoIn {
         open()
     }
     func open() {
-        reader = try! AVAssetReader(asset: asset)
+        guard let r = try? AVAssetReader(asset: asset) else { die("cannot read \(spec.path)") }
+        reader = r
         output = AVAssetReaderTrackOutput(track: track, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange])
         output.alwaysCopiesSampleData = false
@@ -1533,7 +1528,7 @@ final class VideoIn {
 // The source's presentation timeline (from the compressed samples, no
 // decode) and its frame duration, for fps= mapping. -t keeps pts < t.
 func probeTimeline(_ v: VideoIn) -> ([CMTime], CMTime) {
-    let r = try! AVAssetReader(asset: v.asset)
+    guard let r = try? AVAssetReader(asset: v.asset) else { die("cannot read \(v.spec.path)") }
     let o = AVAssetReaderTrackOutput(track: v.track, outputSettings: nil)
     r.add(o); r.startReading()
     var ts: [CMTime] = [], fdur = CMTime.zero
@@ -1755,10 +1750,9 @@ final class Graph {
 
     func pfOf(_ name: String) -> PF {
         switch name {
-        case "gbrp", "rgb24": return .rgb
-        case "rgba", "argb", "gbrap": return .rgba
+        case "gbrp": return .rgb
+        case "rgba": return .rgba
         case "yuv420p": return .yuv420
-        case "yuva420p": return .yuva420
         case "gray": return .gray
         default: die("pixel format \(name) not ported")
         }
@@ -1903,9 +1897,8 @@ final class Graph {
                 return UInt8(256.0 * v)
             }
         }
-        let gammaG = 1.0
-        let ly = bufOf(lutFor(contrast: contrast, brightness: brightness, gamma: gamma * gammaG))
-        let lc = bufOf(lutFor(contrast: saturation, brightness: 0, gamma: (1.0 / gammaG).squareRoot()))
+        let ly = bufOf(lutFor(contrast: contrast, brightness: brightness, gamma: gamma))
+        let lc = bufOf(lutFor(contrast: saturation, brightness: 0, gamma: 1))
         var out: Img?
         return FuncNode([n]) { _, i in
             let src = i[0]
@@ -2009,7 +2002,7 @@ final class Graph {
         var out: Img?
         return FuncNode(ins, constant: true) { _, i in
             let a = i[0], b = i[1]
-            guard a.pf == b.pf || (a.pf == .gray && b.pf == .gray), a.w == b.w, a.h == b.h else { die("blend input mismatch \(a.pf) \(b.pf)") }
+            guard a.pf == b.pf, a.w == b.w, a.h == b.h else { die("blend input mismatch \(a.pf) \(b.pf)") }
             if out == nil { out = Img(a.pf, a.w, a.h, fsMeta(i)) }
             out!.gray = a.gray && b.gray
             for pi in 0..<a.p.count {
@@ -2027,9 +2020,7 @@ final class Graph {
         let c = s.kv["c"] ?? s.kv["color"] ?? "black"
         let size = (s.kv["s"] ?? s.kv["size"]!).split(separator: "x").map { Int($0)! }
         guard c == "black" || c == "white" else { die("color \(c) not ported") }
-        let white = c == "white"
-        let node = ColorNode(w: size[0], h: size[1], white: white)
-        return node
+        return ColorNode(w: size[0], h: size[1], white: c == "white")
     }
 
     func overlay(_ s: FSpec, _ ins: [Node]) -> Node {
@@ -2210,21 +2201,9 @@ final class Graph {
         let st = ScrollState(Float(num(s.kv["vertical"] ?? s.kv["v"] ?? "0")))
         // scroll,scale: the scale reads the source rows the scroll would move
         let fs = chains[ci].filters
-        if fi + 1 < fs.count, fs[fi + 1].name == "scale" { scrollInto[[ci, fi + 1]] = st; return n }
-        var out: Img?
-        return FuncNode([n], sequential: true) { k, i in
-            let src = i[0]
-            let v = st.step(k, src.h)
-            if out == nil { out = Img(src.pf, src.w, src.h, src.meta) }
-            for pi in 0..<src.p.count {
-                let (pw, ph) = src.dims(pi)
-                let sub = (src.pf == .yuv420 && pi > 0) ? 1 : 0
-                let pv = (v + (1 << sub) - 1) >> sub
-                gpu.run("k_scroll", [src.p[pi], out!.p[pi]], [Int32(pw), Int32(ph), Int32(pv), 0], grid: (pw, ph))
-            }
-            out!.meta = src.meta
-            return out!
-        }
+        guard fi + 1 < fs.count, fs[fi + 1].name == "scale" else { die("scroll not followed by scale not ported") }
+        scrollInto[[ci, fi + 1]] = st
+        return n
     }
 
     func displace(_ s: FSpec, _ ins: [Node]) -> Node {
@@ -2323,7 +2302,8 @@ final class VTWriter {
     init(path: String, w: Int, h: Int, quality: Double, gop: Int) {
         self.w = w; self.h = h
         try? FileManager.default.removeItem(atPath: path)
-        writer = try! AVAssetWriter(outputURL: URL(fileURLWithPath: path), fileType: .mov)
+        guard let wr = try? AVAssetWriter(outputURL: URL(fileURLWithPath: path), fileType: .mov) else { die("cannot write \(path)") }
+        writer = wr
         input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: w, AVVideoHeightKey: h,
@@ -2381,11 +2361,11 @@ func value(_ name: String) -> String? {
 }
 let raw = flag("--raw")
 let tap = value("--tap")
-let frameLimit = value("--frames").map { Int($0)! }
-guard args.count == 2 else { die("usage: render_gpu PLAN.json OUT [--raw] [--tap LABEL] [--frames N]") }
-let planData = try! Data(contentsOf: URL(fileURLWithPath: args[0]))
-let plan = try! JSONSerialization.jsonObject(with: planData) as! [String: Any]
-let fc = plan["fc"] as! String, inArgv = plan["in_argv"] as! [String], dur = plan["dur"] as! Double
+guard args.count == 2 else { die("usage: render_gpu PLAN.json OUT [--raw] [--tap LABEL]") }
+guard let planData = FileManager.default.contents(atPath: args[0]),
+      let plan = (try? JSONSerialization.jsonObject(with: planData)) as? [String: Any],
+      let fc = plan["fc"] as? String, let inArgv = plan["in_argv"] as? [String], let dur = plan["dur"] as? Double
+else { die("\(args[0]): not a plan with fc, in_argv and dur") }
 let outPath = args[1]
 
 let graph = Graph(fc: fc, specs: parseInputs(inArgv))
@@ -2426,7 +2406,6 @@ if tap == nil {
 } else {
     schedule = (0..<count).filter { Int64($0) * 1_000_000 < tLimit * 30 }.map { firstPts + $0 }
 }
-if let f = frameLimit { schedule = Array(schedule.prefix(f)) }
 let total = schedule.count
 
 FileManager.default.createFile(atPath: outPath, contents: nil)
