@@ -36,18 +36,20 @@ GPU_BIN = os.path.join(os.path.dirname(_HERE), "tools", "render_gpu")
 # against each reel's lossless frames (PSNR-Y dB / MB):
 #   bars --vertical  hujurat-4-5: x264 48.87 / 8.8; VT 0.65 47.83 / 7.5,
 #                    0.67 48.59 / 9.0, 0.68 48.98 / 9.8, 0.70 49.58 / 11.1
-#   horizontal       hujurat-4-5: x264 47.20 / 11.8; VT 0.68 45.94 / 10.9,
-#                    0.72 47.07 / 14.3, 0.74 47.61 / 16.1 (0.75 is the same
-#                    stream); ahzab-56-56: x264 48.28 / 10.1, VT 0.72 47.53,
-#                    0.74 48.06 / 12.4
-#   ... --vertical   hujurat-4-5: x264 51.32 / 3.6; VT 0.72 50.98, 0.74 51.58
-#                    / 5.6
-#   vertical         hujurat-4-5: x264 45.06 / 16.5; VT 0.68 43.49 / 18.0,
-#                    0.72 44.81 / 23.5, 0.74 45.45 / 26.6; ahzab-56-56 on a
-#                    hand-set 9:16 crop: x264 48.09 / 11.2, VT 0.74 47.99 / 13.9
+#   horizontal       hujurat-4-5: x264 48.47 / 9.7; VT 0.70 47.15 / 8.8,
+#                    0.72 47.76 / 10.3, 0.74 48.30 / 11.5 (0.75 is the same
+#                    stream), 0.76 48.65 / 12.4; ahzab-56-56: x264 48.28 /
+#                    10.1, VT 0.74 48.06 / 12.4, 0.76 48.41 / 13.3
+#   ... --vertical   hujurat-4-5: x264 51.35 / 3.6; VT 0.74 51.59 / 5.7, 0.76
+#                    52.02 / 6.1; ahzab-56-56: x264 51.47 / 3.6, VT 0.74 51.42
+#                    / 5.8, 0.76 51.87 / 6.3
+#   vertical         hujurat-4-5: x264 45.06 / 16.6; VT 0.72 44.81 / 23.5,
+#                    0.74 45.45 / 26.8, 0.76 45.92 / 29.0; ahzab-56-56 on a
+#                    hand-set 9:16 crop: x264 48.09 / 11.2, VT 0.74 47.99 /
+#                    13.9, 0.76 48.38 / 15.0
 # The text styles are mostly static, and VideoToolbox spends its bits on them
-# less well than x264: matching x264 there costs 20-60% more file than x264.
-VT_QUALITY = {"bars": 0.68, "vertical": 0.74, "horizontal": 0.74}
+# less well than x264: matching x264 there costs 25-75% more file.
+VT_QUALITY = {"bars": 0.68, "vertical": 0.76, "horizontal": 0.76}
 
 # ffmpeg's per-input packet queue defaults to 8. Both styles feed ONE
 # filtergraph from many inputs (source + a looped PNG per caption layer +
