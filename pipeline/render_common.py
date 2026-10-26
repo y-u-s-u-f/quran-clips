@@ -37,8 +37,9 @@ THREAD_QUEUE_SIZE = 4096
 # canvas, black above and below. PORTRAIT_PAD is appended inside the style's
 # own graph before format=yuv420p, so the portrait file is the SAME single
 # encode -- letterboxing the finished mp4 afterwards (letterbox.py) costs a
-# whole second lossy generation. It only pads: bars composes a portrait render
-# at PORTRAIT_W already, and render_text scales its 1920 canvas down first.
+# whole second lossy generation. It only pads: both landscape styles compose
+# a portrait render at PORTRAIT_W already (render_bars.geometry,
+# render_text.geometry).
 # letterbox.py keeps its own copy of the scale+pad: it stays standalone and
 # must not import Pillow through this module.
 PORTRAIT_W, PORTRAIT_H = 1080, 1920

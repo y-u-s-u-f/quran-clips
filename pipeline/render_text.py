@@ -29,6 +29,9 @@ reel re-renders identically on a machine with no vision model at all):
 
 `x_offset` / `y_offset` are px nudges on top of both, as in the bars style.
 
+`horizontal --vertical` composes the whole look at 1080x608, the size the
+portrait file shows the picture, and pads it to 1080x1920 (geometry()).
+
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
 import math
@@ -44,24 +47,24 @@ FONT_DIR = os.path.join(ROOT, "assets", "fonts")
 sys.path.insert(0, HERE)
 
 from render_common import (FADE_IN_S, FADE_OUT_S, FPS,  # noqa: E402
-                           PORTRAIT_PAD, PORTRAIT_W, PROBE,
+                           PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W, PROBE,
                            THREAD_QUEUE_SIZE,
-                           audio_fades, encode, fit_pt, loudnorm_filter,
-                           measure_loudness, norm_ar, source_chain,
-                           trim_to_ink)
+                           audio_fades, encode, fit_pt,
+                           loudnorm_filter, measure_loudness, norm_ar,
+                           source_chain, trim_to_ink)
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
              "laid out unjoined, left to right. Use tools/render-venv/bin/python.")
-
-# `--vertical` of the landscape canvas: down to the portrait width, then pad.
-PORTRAIT = "scale=%d:-2,%s" % (PORTRAIT_W, PORTRAIT_PAD)
 
 # ---------------------------------------------------------------------------
 # Style constants, derived from pixel measurements of the three landscape
 # reference reels. A constant that cannot hold on both canvases is keyed by
 # orientation and carries its reason.
 # ---------------------------------------------------------------------------
+# The canvases every pixel-sized constant below is written at. A
+# `horizontal --vertical` render composes on a smaller one and carries them
+# to it -- see geometry().
 CANVAS = {"vertical": (1080, 1920), "horizontal": (1920, 1080)}
 
 ARABIC_FONTS = {
@@ -150,6 +153,24 @@ SIGNATURE_ALPHA = 0.87
 # aligner never sees display text and no letter or pronunciation diacritic is
 # lost. Escapes, not literals -- invariant 1: no Arabic is retyped in source.
 DISPLAY_STRIP_CHARS = {"\u06DF", "\u06ED", "\u0640"}
+
+
+def geometry(orientation, portrait):
+    """The canvas a render composes on, and the one factor `k` every
+    pixel-sized constant here (point sizes and their floors, the shadow
+    offset, the macron's floor, the config's px offsets) is carried to it by.
+    Canvas fractions follow W and H on their own; the 48x27 grade grid is a
+    count, not a size, so the ramps keep their softness.
+
+    `horizontal --vertical` composes at the size the portrait file shows the
+    picture -- PORTRAIT_W wide, 608 rows -- and only pads it (PORTRAIT_PAD),
+    like bars; every other case is its own CANVAS with k the integer 1, so
+    no value changes type. `vertical` is already the 1080x1920 file."""
+    W, H = CANVAS[orientation]
+    if not (portrait and W > H):
+        return {"W": W, "H": H, "k": 1}
+    k = PORTRAIT_W / W
+    return {"W": PORTRAIT_W, "H": 2 * round(H * k / 2), "k": k}
 
 
 def truetype(path, pt):
@@ -317,9 +338,9 @@ def wrap_english(text, font, tracking_px, max_w, stroke_macron=True,
     return out
 
 
-def draw_en_line(layer, x0, baseline, toks, font, tracking_px, fill):
+def draw_en_line(layer, x0, baseline, toks, font, tracking_px, fill, k=1):
     """One tracked line, drawn a glyph at a time because Pillow has no letter-
-    spacing. `x0` is the pen, not the centre."""
+    spacing. `x0` is the pen, not the centre; `k` is geometry()'s factor."""
     d = ImageDraw.Draw(layer)
     x = x0
     for ch, mac in toks:
@@ -332,7 +353,7 @@ def draw_en_line(layer, x0, baseline, toks, font, tracking_px, fill):
             cap_h = cb[3] - cb[1]
             bar_w = adv * 0.55           # centred, ~55% of the glyph, above cap
             bx = x + (adv - bar_w) / 2.0
-            by = baseline - cap_h - max(2, cap_h * 0.14)
+            by = baseline - cap_h - max(2 * k, cap_h * 0.14)
             th = max(1, int(round(cap_h * 0.08)))
             d.rectangle([bx, by, bx + bar_w, by + th], fill=fill)
         x += adv + tracking_px
@@ -342,7 +363,7 @@ def draw_en_line(layer, x0, baseline, toks, font, tracking_px, fill):
 # layout -- pure numbers; draw_layers() consumes exactly these
 # ---------------------------------------------------------------------------
 
-def layout(orientation, phrases, english, cfg, face_bottom):
+def layout(orientation, phrases, english, cfg, face_bottom, geo):
     """WHERE the Arabic anchor and every English baseline goes.
 
     The vertical anchor is SOLVED, not configured: `ar_cy` anchors the ARABIC
@@ -357,10 +378,14 @@ def layout(orientation, phrases, english, cfg, face_bottom):
     What it is solved AGAINST is the difference between the two shapes:
     landscape centres the block's MIDDLE on the frame; portrait puts its TOP
     below the reciter's chin, which is the number `face_bottom` carries.
+
+    On geo's canvas; the English is wrapped on the CANVAS one whatever geo
+    is, so a reel's portrait file breaks its lines where the landscape one
+    does -- hinting at a smaller size can tip a near-tie the other way.
     """
-    W, H = CANVAS[orientation]
+    W, H, k = geo["W"], geo["H"], geo["k"]
     short = min(W, H)
-    cx = W // 2 + int(cfg["x_offset"])
+    cx = W // 2 + int(cfg["x_offset"] * k)
 
     ar_path = ARABIC_FONTS[cfg["arabic_font"]]
     en_spec = ENGLISH_FONTS[cfg["english_font"]]
@@ -369,21 +394,30 @@ def layout(orientation, phrases, english, cfg, face_bottom):
     texts = [norm_ar(p["text"], DISPLAY_STRIP_CHARS) for p in phrases]
     width_frac = cfg["text_width_frac"]
     max_ar_w = (width_frac or AR_WIDTH_FRAC[orientation]) * W
-    nominal = ARABIC["nominal_pt"] * cfg["arabic_scale"]
+    nominal = ARABIC["nominal_pt"] * cfg["arabic_scale"] * k
     probe = truetype(ar_path, max(1, int(nominal)))
     raw = [ar_bbox(t, probe) for t in texts]
     widest = max([1.0] + [b[2] - b[0] for b in raw])
-    pt = fit_pt(nominal, ARABIC["min_pt"] * cfg["arabic_scale"], max_ar_w,
-                widest)
+    pt = fit_pt(nominal, ARABIC["min_pt"] * cfg["arabic_scale"] * k,
+                max_ar_w, widest)
     ar_font = truetype(ar_path, pt)
 
-    cap_pt = max(12, int(round(ENGLISH["cap_pt"] * cfg["english_scale"])))
+    def cap_size(k):
+        return max(int(12 * k),
+                   int(round(ENGLISH["cap_pt"] * cfg["english_scale"] * k)))
+
+    def tracking_of(pt):
+        return ENGLISH["tracking_pct"] / 100.0 * pt
+
+    cap_pt = cap_size(k)
     en_font = truetype(en_spec["path"], cap_pt)
-    tracking = ENGLISH["tracking_pct"] / 100.0 * cap_pt
-    max_en_w = (width_frac or EN_WIDTH_FRAC[orientation]) * W
+    tracking = tracking_of(cap_pt)
     caps = cfg["english_caps"]
-    en_lines = [wrap_english(e["text"], en_font, tracking, max_en_w, stroke,
-                             caps)
+    wrap_pt = cap_size(1)
+    wrap_font = en_font if k == 1 else truetype(en_spec["path"], wrap_pt)
+    en_frac = width_frac or EN_WIDTH_FRAC[orientation]
+    en_lines = [wrap_english(e["text"], wrap_font, tracking_of(wrap_pt),
+                             en_frac * CANVAS[orientation][0], stroke, caps)
                 for e in english]
     cap_bb = en_font.getbbox("H")
     cap_h = cap_bb[3] - cap_bb[1]
@@ -434,9 +468,10 @@ def layout(orientation, phrases, english, cfg, face_bottom):
         ar_cy -= overrun
         placed_on += ", lifted %dpx to clear %.2f H" % (overrun,
                                                         BLOCK_BOTTOM_FRAC)
-    ar_cy = int(round(ar_cy)) + int(cfg["y_offset"])
+    ar_cy = int(round(ar_cy)) + int(cfg["y_offset"] * k)
 
     out = {"pt": pt, "cap_pt": cap_pt, "ar_font": ar_font, "en_font": en_font,
+           "k": k,
            "cx": cx, "ar_cy": ar_cy, "tracking": tracking, "widest": widest,
            "max_ar_w": max_ar_w, "stroke_macron": stroke, "caps": caps,
            "placed_on": placed_on, "overrun": max(0.0, overrun), "phrases": []}
@@ -452,11 +487,12 @@ def layout(orientation, phrases, english, cfg, face_bottom):
 # drawing
 # ---------------------------------------------------------------------------
 
-def with_shadow(ink, W, H):
+def with_shadow(ink, W, H, k=1):
     """The ink plus ONE hard drop shadow struck from its merged alpha: a solid
     black layer through that alpha, pushed down-right, ink over it -- a lift
-    off the footage, not an outline ring."""
-    off = SHADOW["offset_px"]
+    off the footage, not an outline ring. Never under 1px on a smaller
+    canvas."""
+    off = max(1, round(SHADOW["offset_px"] * k))
     solid = Image.new("RGBA", (W, H), SHADOW["color"] + (SHADOW["alpha"],))
     sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     sh.paste(solid, (off, off), ink.getchannel("A"))
@@ -480,9 +516,10 @@ def draw_layers(lay, W, H, out_dir):
             toks = en_tokens(ln, lay["stroke_macron"], lay["caps"])
             w = en_width(toks, lay["en_font"], lay["tracking"])
             draw_en_line(ink, lay["cx"] - w / 2.0, y, toks, lay["en_font"],
-                         lay["tracking"], ENGLISH["color"] + (ENGLISH["alpha"],))
+                         lay["tracking"], ENGLISH["color"] + (ENGLISH["alpha"],),
+                         lay["k"])
         path = os.path.join(out_dir, "phrase%d.png" % p["i"])
-        card, x0, y0 = trim_to_ink(with_shadow(ink, W, H))
+        card, x0, y0 = trim_to_ink(with_shadow(ink, W, H, lay["k"]))
         card.save(path)
         bb = p["ar_bbox"]
         report.append({"path": path, "box": (x0, y0),
@@ -556,7 +593,7 @@ def grade_plate(lay, W, H, vignette, dim, tmp):
     return path
 
 
-def signature_card(text, font_path, W, H, tmp, offset=0):
+def signature_card(text, font_path, W, H, tmp, offset=0, k=1):
     """`offset` moves the line vertically only (+ lower / - higher); the
     signature is ALWAYS horizontally centered -- no x knob on purpose.
 
@@ -565,15 +602,16 @@ def signature_card(text, font_path, W, H, tmp, offset=0):
     type would cost the most of any of them: 13.1s -> 10.1s CPU and 371 -> 220
     MB peak RSS on a 23s reel."""
     font = ImageFont.truetype(font_path,
-                              max(12, int(min(W, H) * SIGNATURE_SIZE_FRAC)))
+                              max(int(12 * k),
+                                  int(min(W, H) * SIGNATURE_SIZE_FRAC)))
     bbox = PROBE.textbbox((0, 0), text, font=font)
     ink = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ImageDraw.Draw(ink).text(
         (W // 2 - (bbox[2] - bbox[0]) // 2 - bbox[0],
          int(H * SIGNATURE_Y_FRAC) - (bbox[3] - bbox[1]) // 2 - bbox[1]
-         + int(offset)),
+         + int(offset * k)),
         text, font=font, fill=(255, 255, 255, 255))
-    card = with_shadow(ink, W, H)
+    card = with_shadow(ink, W, H, k)
     card.putalpha(card.getchannel("A").point(
         lambda a: int(round(a * SIGNATURE_ALPHA))))
     card, x0, y0 = trim_to_ink(card)
@@ -695,7 +733,7 @@ def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
     parts.append(";[%s]fade=t=in:st=0:d=%s,fade=t=out:st=%.3f:d=%s%s,"
                  "format=yuv420p[vout]"
                  % (base, FADE_IN_S, dur - FADE_OUT_S, FADE_OUT_S,
-                    "," + PORTRAIT if portrait else ""))
+                    "," + PORTRAIT_PAD if portrait else ""))
     parts.append(";[0:a]%s,%s[aout]" % (ln, afade))
     return "".join(parts), argv
 
@@ -709,18 +747,26 @@ def render(plan):
     src, tmp = plan["src"], plan["tmp"]
     phrases, english = plan["arabic"], plan["english"]
     orientation = cfg["style"]
-    W, H = CANVAS[orientation]
+    # A portrait delivery of a landscape canvas composes small and pads
+    # inside this one graph; the `vertical` canvas is already 1080x1920.
+    geo = geometry(orientation, plan.get("portrait"))
+    W, H = geo["W"], geo["H"]
+    portrait = geo["k"] != 1
     dur = info["duration"]
 
     crop, note = reframe(orientation, info, cfg.get("crop"))
     face_bottom = cfg.get("face_bottom")
-    lay = layout(orientation, phrases, english, cfg, face_bottom)
+    lay = layout(orientation, phrases, english, cfg, face_bottom, geo)
 
     print("      %dx%d | %s" % (W, H, note))
+    if portrait:
+        print("      portrait delivery: composed at %dx%d, then %s (in-graph)"
+              % (W, H, PORTRAIT_PAD))
     print("      arabic: %s @ %dpt (nominal %d, widest raw %dpx, cap %dpx) | "
           "english: %s @ %dpt"
           % (cfg["arabic_font"], lay["pt"],
-             int(ARABIC["nominal_pt"] * cfg["arabic_scale"]), lay["widest"],
+             int(ARABIC["nominal_pt"] * cfg["arabic_scale"] * geo["k"]),
+             lay["widest"],
              lay["max_ar_w"], cfg["english_font"], lay["cap_pt"]))
     print("      block x=%d (%.3f W), Arabic anchor y=%d (%.3f H) -- on %s"
           % (lay["cx"], lay["cx"] / float(W), lay["ar_cy"],
@@ -745,15 +791,9 @@ def render(plan):
     grade_png = grade_plate(lay, W, H, cfg["vignette"], cfg["dim"], tmp)
     sig = (signature_card(cfg["signature"],
                           ENGLISH_FONTS[cfg["english_font"]]["path"], W, H,
-                          tmp, cfg["signature_offset"])
+                          tmp, cfg["signature_offset"], geo["k"])
            if cfg["signature"] else None)
     sched = schedule(phrases, dur, cfg["caption_transition"])
-
-    # A portrait delivery of a landscape canvas pads inside this one graph;
-    # the `vertical` canvas is already 1080x1920 and needs nothing.
-    portrait = bool(plan.get("portrait")) and W > H
-    if portrait:
-        print("      portrait delivery: %s (in-graph)" % PORTRAIT)
 
     print("      loudnorm pass 1...")
     ln = loudnorm_filter(measure_loudness(src, dur))
@@ -766,4 +806,7 @@ def render(plan):
         "P%d in@%.2f out@%.2f" % (i + 1, ti, to)
         for i, (ti, _, to, _) in enumerate(sched)))
     encode(in_argv, fc, dur, out, plan.get("meta"))
-    print("      %s | %dx%d | %s" % (os.path.relpath(out, ROOT), W, H, note))
+    print("      %s | %dx%d%s | %s"
+          % (os.path.relpath(out, ROOT), W, H,
+             " padded to %dx%d" % (PORTRAIT_W, PORTRAIT_H) if portrait else "",
+             note))
