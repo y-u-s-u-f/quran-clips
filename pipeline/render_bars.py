@@ -742,20 +742,28 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
             # feathered front to clear both ends completely.
             trav = (x1 - x0) + 2 * feather + 40
             a = t_in + d_in                       # entry complete
-            # A full-frame white plate slid over black: entering, its LEFT
-            # edge is the front (right edge pinned); leaving, its RIGHT edge
-            # is the front, dragged off to the left. min(0,...) keeps the
-            # plate flush during the steady phase. (drawbox is unusable: its
-            # `t` is box thickness, not time.)
+            # A white plate slid over black: entering, its LEFT edge is the
+            # front (right edge pinned); leaving, its RIGHT edge is the front,
+            # dragged off to the left. min(0,...) keeps the plate flush during
+            # the steady phase. (drawbox is unusable: its `t` is box
+            # thickness, not time.) The sweep is in canvas columns but only
+            # spans the bar box plus 16 sigma of the feather blur each side
+            # (MX0..MX1): only the box is ever read, the mask is constant down
+            # a column, and past that margin the blur's edge replication
+            # agrees with the full-canvas mask to the last bit (framemd5).
+            bx, _by, bw, bh = boxes[i]["bar"]
+            MX0 = max(0, bx - int(4 * feather))
+            MX1 = min(W, bx + bw + int(4 * feather))
             fi = f"{x1:.1f}-{trav:.1f}*(t-{t_in:.3f})/{d_in:.3f}"
             fo = f"{x1:.1f}-{trav:.1f}*(t-{t_out:.3f})/{d_out:.3f}"
-            xe = f"if(lt(t,{a:.3f}),max(0,{fi}),min(0,{fo}-{W}))"
-            g_.chain(None, f"color=c=black:s={W}x{H}:r={FPS}", f"kb{i + 1}")
-            g_.chain(None, f"color=c=white:s={W}x{H}:r={FPS}", f"kw{i + 1}")
+            xe = f"if(lt(t,{a:.3f}),max(0,{fi}-{MX0}),min(0,{fo}-{MX1}))"
+            ms = f"{MX1 - MX0}x{bh}"
+            g_.chain(None, f"color=c=black:s={ms}:r={FPS}", f"kb{i + 1}")
+            g_.chain(None, f"color=c=white:s={ms}:r={FPS}", f"kw{i + 1}")
             g_.chain([f"kb{i + 1}", f"kw{i + 1}"],
                      [f"overlay=x='{xe}':y=0:shortest=1",
                       f"gblur=sigma={feather / 4.0:.2f}:steps=2",
-                      "format=gray"],
+                      "format=gray", f"crop={bw}:{bh}:{bx - MX0}:0"],
                      f"m{i + 1}")
             # The pill alone rides the sweep; the text dissolves.
             masks = {"bar": f"m{i + 1}"}
@@ -766,15 +774,10 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
             lbl = f"{name}{i + 1}"
             ox, oy, ow, oh = boxes[i][name]
             if name in masks:
-                # The mask stays a full-canvas plate -- its sweep expression
-                # is in canvas columns and the feather blur's boundaries are
-                # part of the look -- and is CROPPED to the layer it gates.
-                # A crop is exact, so the mask the layer sees is unchanged.
-                g_.chain(masks[name], f"crop={ow}:{oh}:{ox}:{oy}", f"mc{lbl}")
                 g_.chain(ph_in[sidx - ph_base], ["format=rgba", "split=2"],
                          [f"p{lbl}", f"pa{lbl}"])
                 g_.chain(f"pa{lbl}", "alphaextract", f"a{lbl}")
-                g_.chain([f"a{lbl}", f"mc{lbl}"],
+                g_.chain([f"a{lbl}", masks[name]],
                          "blend=all_mode=multiply:shortest=1", f"am{lbl}")
                 g_.chain([f"p{lbl}", f"am{lbl}"], "alphamerge", f"x{lbl}")
             else:
