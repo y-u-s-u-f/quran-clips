@@ -262,10 +262,11 @@ kernel void k_lut(device const uchar* s [[buffer(0)]], device uchar* d [[buffer(
 kernel void k_hscale8(device const uchar* s [[buffer(0)]], device short* d [[buffer(1)]],
                       device const int* fpos [[buffer(2)]], device const short* f [[buffer(3)]],
                       constant int* prm [[buffer(4)]], uint2 g [[thread_position_in_grid]]) {
-    // srcW, dstW, H, fsize   (hScale8To15 / ff_hscale8to15_*_neon)
+    // srcW, dstW, H, fsize, row shift   (hScale8To15 / ff_hscale8to15_*_neon);
+    // the shift reads row (y + shift) % H, a vertical `scroll` folded in
     int x = g.x, y = g.y; if (x >= P(1) || y >= P(2)) return;
     int fs = P(3), pos = fpos[x], v = 0;
-    device const uchar* r = s + y * P(0);
+    device const uchar* r = s + ((y + P(4)) % P(2)) * P(0);
     for (int j = 0; j < fs; j++) { int i = pos + j; if (i < P(0)) v += int(r[i]) * int(f[x * fs + j]); }
     d[y * P(1) + x] = short(min(v >> 7, 32767));
 }
@@ -379,12 +380,10 @@ kernel void k_vplane(device const short* s [[buffer(0)]], device uchar* d [[buff
     d[y * w + x] = uchar(clamp(v >> 19, 0, 255));
 }
 inline int clipu30(int a) { return (a & ~((1 << 30) - 1)) ? (((~a) >> 31) & ((1 << 30) - 1)) : a; }
-kernel void k_vgbrp(device const short* Y [[buffer(0)]], device const short* U [[buffer(1)]],
-                    device const short* V [[buffer(2)]], device uchar* R [[buffer(3)]],
-                    device uchar* G [[buffer(4)]], device uchar* B [[buffer(5)]],
-                    device const int* lpos [[buffer(6)]], device const short* lf [[buffer(7)]],
-                    device const int* cpos [[buffer(8)]], device const short* cf [[buffer(9)]],
-                    constant int* prm [[buffer(10)]], uint2 g [[thread_position_in_grid]]) {
+inline void vgbrp(device const short* Y, device const short* U, device const short* V,
+                  device uchar* R, device uchar* G, device uchar* B,
+                  device const int* lpos, device const short* lf, device const int* cpos, device const short* cf,
+                  constant int* prm, uint2 g, device const uchar* lut) {
     // W, H, lfs, cfs, yoff, ycoef, v2r, v2g, u2g, u2b   (yuv2gbrp_full_X_c)
     int x = g.x, y = g.y, w = P(0); if (x >= w || y >= P(1)) return;
     int lfs = P(2), cfs = P(3), lp = lpos[y], cp = cpos[y];
@@ -399,7 +398,26 @@ kernel void k_vgbrp(device const short* Y [[buffer(0)]], device const short* U [
     int r = yy + v * P(6), gg = yy + v * P(7) + u * P(8), b = yy + u * P(9);
     if ((r | gg | b) & 0xC0000000) { r = clipu30(r); gg = clipu30(gg); b = clipu30(b); }
     int o = y * w + x;
-    R[o] = uchar(r >> 22); G[o] = uchar(gg >> 22); B[o] = uchar(b >> 22);
+    if (lut) { R[o] = lut[r >> 22]; G[o] = lut[256 + (gg >> 22)]; B[o] = lut[512 + (b >> 22)]; }
+    else { R[o] = uchar(r >> 22); G[o] = uchar(gg >> 22); B[o] = uchar(b >> 22); }
+}
+kernel void k_vgbrp(device const short* Y [[buffer(0)]], device const short* U [[buffer(1)]],
+                    device const short* V [[buffer(2)]], device uchar* R [[buffer(3)]],
+                    device uchar* G [[buffer(4)]], device uchar* B [[buffer(5)]],
+                    device const int* lpos [[buffer(6)]], device const short* lf [[buffer(7)]],
+                    device const int* cpos [[buffer(8)]], device const short* cf [[buffer(9)]],
+                    constant int* prm [[buffer(10)]], uint2 g [[thread_position_in_grid]]) {
+    vgbrp(Y, U, V, R, G, B, lpos, lf, cpos, cf, prm, g, nullptr);
+}
+// k_vgbrp, then a following lutrgb's three tables (r, g, b at 0, 256, 512)
+kernel void k_vgbrp_lut(device const short* Y [[buffer(0)]], device const short* U [[buffer(1)]],
+                        device const short* V [[buffer(2)]], device uchar* R [[buffer(3)]],
+                        device uchar* G [[buffer(4)]], device uchar* B [[buffer(5)]],
+                        device const int* lpos [[buffer(6)]], device const short* lf [[buffer(7)]],
+                        device const int* cpos [[buffer(8)]], device const short* cf [[buffer(9)]],
+                        device const uchar* lut [[buffer(10)]],
+                        constant int* prm [[buffer(11)]], uint2 g [[thread_position_in_grid]]) {
+    vgbrp(Y, U, V, R, G, B, lpos, lf, cpos, cf, prm, g, lut);
 }
 kernel void k_vrgba(device const short* Y [[buffer(0)]], device const short* U [[buffer(1)]],
                     device const short* V [[buffer(2)]], device uchar* R [[buffer(3)]],
@@ -843,6 +861,9 @@ final class Img {
     // The only rows of these buffers that can change from frame to frame
     // (pad's band); nil: any row.
     var live: Range<Int>?
+    // planes 0-2 hold the same bytes (a mixer whose three rows agree)
+    var gray = false
+    func gray(_ g: Bool) -> Img { gray = g; return self }
     init(_ pf: PF, _ w: Int, _ h: Int, _ meta: Meta, planes: [MTLBuffer]? = nil) {
         self.pf = pf; self.w = w; self.h = h; self.meta = meta
         p = planes ?? (0..<Img.nplanes(pf)).map { i in
@@ -1153,6 +1174,13 @@ final class Sws {
     var tabY: MTLBuffer?, tabT: MTLBuffer?
     var alphaFilled = false
     var primed: [ObjectIdentifier]?
+    // a lutrgb folded into the RGB output (r, g, b tables back to back)
+    var postLut: MTLBuffer?
+    // an RGB -> RGB scale whose chroma path is provably exactly neutral for
+    // R = G = B input, so its output planes are equal too
+    var keepsGray = false
+    // hU/hV hold the constant a grey frame's chroma path writes
+    var greyChroma = false
 
     init(src: Img, dstPF: PF, w: Int, h: Int, flags: Int) {
         self.src = (src.pf, src.w, src.h, src.meta)
@@ -1228,6 +1256,7 @@ final class Sws {
         for (k, f) in [("hl", hl), ("hc", hc), ("vl", vl), ("vc", vc)] {
             if let f = f { bufs[k + "p"] = bufOf(f.pos); bufs[k + "f"] = bufOf(f.coef) }
         }
+        if srgb && dstPF == .rgb, let hc = hc, let vc = vc { keepsGray = neutralChroma(hc, vc) }
         bufs["hY"] = buf(w * srcH * 2)
         if dstPF != .gray { bufs["hU"] = buf(chrDstW * chrSrcH * 2); bufs["hV"] = buf(chrDstW * chrSrcH * 2) }
         if srgb {
@@ -1236,14 +1265,45 @@ final class Sws {
         }
     }
 
-    func run(_ s: Img) -> Img {
+    // `shift`: per plane, the rows a folded vertical scroll moves the source by
+    // For every grey level: rgb2uv's value (each chroma plane) is one
+    // constant, hscale16 maps it to one constant, and vgbrp's chroma term
+    // is then exactly 0.
+    func neutralChroma(_ hc: SwsFilter, _ vc: SwsFilter) -> Bool {
+        let t = rgb2yuvTable(dmeta.csp)
+        for (a, b, c) in [(t.ru, t.gu, t.bu), (t.rv, t.gv, t.bv)] {
+            let k = UInt32(bitPattern: a) &+ UInt32(bitPattern: b) &+ UInt32(bitPattern: c)
+            var vals = Set<Int>()
+            for x in 0..<256 {
+                if chrHalf { vals.insert(Int(UInt16(truncatingIfNeeded: (k &* UInt32(2 * x) &+ (0x4001 << 9)) >> 10))) }
+                else { vals.insert(Int(UInt16(truncatingIfNeeded: Int32(bitPattern: k &* UInt32(x) &+ (0x4001 << 8)) >> 9))) }
+            }
+            guard vals.count == 1, let cu = vals.first else { return false }
+            var hv = Set<Int>()
+            for x in 0..<chrDstW {
+                var acc = 0
+                for j in 0..<hc.size where Int(hc.pos[x]) + j < chrSrcW { acc += cu * Int(hc.coef[x * hc.size + j]) }
+                hv.insert(min(acc >> 13, 32767))
+            }
+            guard hv.count == 1, let h = hv.first else { return false }
+            for y in 0..<chrDstH {
+                var acc = (1 << 9) - (128 << 19)
+                for j in 0..<vc.size { acc += h * Int(vc.coef[y * vc.size + j]) }
+                if acc >> 10 != 0 { return false }
+            }
+        }
+        return true
+    }
+
+    func run(_ s: Img, shift: [Int] = [0, 0, 0]) -> Img {
+        if shift != [0, 0, 0] && (kind != .scaled || s.pf != .yuv420) { die("scroll into this scale not ported") }
         switch kind {
         case .pass: return s
-        case .dropAlpha: return Img(.rgb, s.w, s.h, dmeta, planes: Array(s.p[0..<3]))
+        case .dropAlpha: return Img(.rgb, s.w, s.h, dmeta, planes: Array(s.p[0..<3])).gray(s.gray)
         case .addAlpha:
             if out == nil { out = Img(.rgba, dw, dh, dmeta, planes: [buf(16), buf(16), buf(16), buf(dw * dh)]); fillPlane(out!.p[3], dw * dh, 255) }
             out!.p[0] = s.p[0]; out!.p[1] = s.p[1]; out!.p[2] = s.p[2]
-            return Img(.rgba, dw, dh, dmeta, planes: out!.p)
+            return Img(.rgba, dw, dh, dmeta, planes: out!.p).gray(s.gray)
         default: break
         }
         if out == nil { out = Img(dstPF, dw, dh, dmeta) }
@@ -1301,12 +1361,13 @@ final class Sws {
                     [Int32(srcW), Int32(dw), Int32(srcH), Int32(hl.size), 13], grid: (dw, srcH))
         } else {
             gpu.run("k_hscale8", [s.p[0], bufs["hY"]!, bufs["hlp"]!, bufs["hlf"]!],
-                    [Int32(srcW), Int32(dw), Int32(srcH), Int32(hl.size)], grid: (dw, srcH))
+                    [Int32(srcW), Int32(dw), Int32(srcH), Int32(hl.size), Int32(shift[0])], grid: (dw, srcH))
         }
         if let (c, off) = rangeLum {
             gpu.run("k_lumtojpeg", [bufs["hY"]!], [Int32(dw * srcH), c, off], grid: (dw * srcH, 1))
         }
-        if let hc = hc {
+        if let hc = hc, !(s.gray && keepsGray && greyChroma) {
+            greyChroma = s.gray && keepsGray
             if srgb {
                 let t = rgb2yuvTable(dmeta.csp)
                 gpu.run("k_rgb2uv", [s.p[0], s.p[1], s.p[2], bufs["iU"]!, bufs["iV"]!],
@@ -1319,7 +1380,7 @@ final class Sws {
             } else {
                 for (i, k) in [(1, "hU"), (2, "hV")] {
                     gpu.run("k_hscale8", [s.p[i], bufs[k]!, bufs["hcp"]!, bufs["hcf"]!],
-                            [Int32(chrSrcW), Int32(chrDstW), Int32(chrSrcH), Int32(hc.size)], grid: (chrDstW, chrSrcH))
+                            [Int32(chrSrcW), Int32(chrDstW), Int32(chrSrcH), Int32(hc.size), Int32(shift[i])], grid: (chrDstW, chrSrcH))
                 }
             }
         }
@@ -1335,10 +1396,11 @@ final class Sws {
             }
         case .rgb:
             let y = y2r!, vc = self.vc!
-            gpu.run("k_vgbrp", [bufs["hY"]!, bufs["hU"]!, bufs["hV"]!, o.p[0], o.p[1], o.p[2],
-                                bufs["vlp"]!, bufs["vlf"]!, bufs["vcp"]!, bufs["vcf"]!],
+            gpu.run(postLut == nil ? "k_vgbrp" : "k_vgbrp_lut", [bufs["hY"]!, bufs["hU"]!, bufs["hV"]!, o.p[0], o.p[1], o.p[2],
+                                bufs["vlp"]!, bufs["vlf"]!, bufs["vcp"]!, bufs["vcf"]!] + (postLut.map { [$0] } ?? []),
                     [Int32(dw), Int32(dh), Int32(vl.size), Int32(vc.size), y.yOff, y.yCoef, y.v2r, y.v2g, y.u2g, y.u2b],
                     grid: (dw, dh))
+            o.gray = s.gray && keepsGray && postLut == nil
         case .rgba:
             let vc = self.vc!
             gpu.run("k_vrgba", [bufs["hY"]!, bufs["hU"]!, bufs["hV"]!, o.p[0], o.p[1], o.p[2],
@@ -1514,16 +1576,18 @@ func loadPNG(_ path: String) -> Img {
     let img = Img(hasA ? .rgba : .rgb, w, h, m)
     let ptrs = img.p.map { $0.contents().assumingMemoryBound(to: UInt8.self) }
     let step = bpp / 8
+    var gray = true
     data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
         let b = raw.bindMemory(to: UInt8.self)
         for y in 0..<h {
             for x in 0..<w {
                 let o = y * row + x * step
                 for c in 0..<(hasA ? 4 : 3) { ptrs[c][y * w + x] = b[o + c] }
+                if b[o] != b[o + 1] || b[o] != b[o + 2] { gray = false }
             }
         }
     }
-    return img
+    return img.gray(gray)
 }
 
 // ---------------------------------------------------------------------------
@@ -1620,8 +1684,6 @@ func fsMeta(_ imgs: [Img]) -> Meta {
     return m
 }
 
-func lut256(_ f: (Int) -> Int) -> MTLBuffer { bufOf((0..<256).map { UInt8(clamping: f($0)) }) }
-
 final class Graph {
     var labels: [String: Node] = [:]
     var inputs: [InputNode] = []
@@ -1629,6 +1691,10 @@ final class Graph {
     let chains: [Chain]
     var consumers: [String: [(Int, Int)]] = [:]
     var srcTimeline: ([CMTime], CMTime) = ([], .zero)
+    // filters folded into a neighbour (chain index, filter index): a
+    // lutrgb into the scale before it, a scroll into the scale after it
+    var folded = Set<[Int]>()
+    var scrollInto: [[Int]: ScrollState] = [:]
 
     init(fc: String, specs: [InSpec]) {
         chains = parseGraph(fc)
@@ -1674,6 +1740,7 @@ final class Graph {
         var cur: [Node] = c.ins.map { labels[$0]! }
         for (fi, s) in c.filters.enumerated() {
             let ins = cur
+            if folded.contains([ci, fi]) { continue }
             cur = make(s, ins, ci, fi)
             // framesync filters run on the gcd of their inputs' time bases; overlay keeps the main's
             let fsync = ["blend", "displace", "alphamerge"].contains(s.name)
@@ -1716,7 +1783,7 @@ final class Graph {
             return Array(repeating: ins[0], count: n)
         case "setsar":
             return [FuncNode(ins, constant: true) { _, i in
-                let o = Img(i[0].pf, i[0].w, i[0].h, i[0].meta, planes: i[0].p); o.meta.sar = (1, 1); return o }]
+                let o = Img(i[0].pf, i[0].w, i[0].h, i[0].meta, planes: i[0].p).gray(i[0].gray); o.meta.sar = (1, 1); return o }]
         case "format":
             let pf = pfOf(s.pos.first ?? s.kv["pix_fmts"]!)
             return [need(ins[0], [pf], prefer: pf)]
@@ -1741,11 +1808,11 @@ final class Graph {
         case "alphamerge":
             return [FuncNode([need(ins[0], [.rgba], prefer: .rgba), need(ins[1], [.gray], prefer: .gray)], constant: true) { _, i in
                 guard i[0].w == i[1].w && i[0].h == i[1].h else { die("alphamerge size mismatch") }
-                return Img(.rgba, i[0].w, i[0].h, fsMeta(i), planes: [i[0].p[0], i[0].p[1], i[0].p[2], i[1].p[0]]) }]
+                return Img(.rgba, i[0].w, i[0].h, fsMeta(i), planes: [i[0].p[0], i[0].p[1], i[0].p[2], i[1].p[0]]).gray(i[0].gray) }]
         case "fade": return [fade(s, ins[0])]
         case "colorchannelmixer": return [mixer(s, ins[0])]
         case "lutrgb": return [lutrgb(s, ins[0])]
-        case "scroll": return [scroll(s, ins[0])]
+        case "scroll": return [scroll(s, ins[0], ci, fi)]
         case "displace": return [displace(s, ins)]
         case "pad": return [pad(s, ins[0])]
         default: die("filter \(s.name) not ported")
@@ -1763,6 +1830,7 @@ final class Graph {
             if (w, h, x, y) == (src.w, src.h, 0, 0) { return src }
             if src.pf == .yuv420 || src.pf == .yuva420 { x &= ~1; y &= ~1 }
             if out == nil { out = Img(src.pf, w, h, src.meta) }
+            out!.gray = src.gray
             for pi in 0..<src.p.count {
                 let sub = (src.pf == .yuv420 || src.pf == .yuva420) && (pi == 1 || pi == 2) ? 1 : 0
                 let (pw, ph) = out!.dims(pi), (sw, _) = src.dims(pi)
@@ -1778,8 +1846,17 @@ final class Graph {
         let foar = s.kv["force_original_aspect_ratio"] ?? "disable"
         guard ["disable", "increase"].contains(foar) else { die("force_original_aspect_ratio=\(foar) not ported") }
         let want = downstreamFormat(ci, after: fi).map { pfOf($0) }
+        // scale[,format=gbrp],lutrgb: the tables applied as the scale writes
+        let fs = chains[ci].filters
+        var j = fi + 1
+        if j < fs.count, fs[j].name == "format", want == .rgb, pfOf(fs[j].pos.first ?? fs[j].kv["pix_fmts"]!) == .rgb { j += 1 }
+        var postLut: MTLBuffer?
+        if want == .rgb, j < fs.count, fs[j].name == "lutrgb" {
+            postLut = bufOf(lutTables(fs[j]).flatMap { $0 }); folded.insert([ci, j])
+        }
+        let scrolled = scrollInto[[ci, fi]]
         var sws: Sws?
-        return FuncNode([n], constant: true) { _, i in
+        return FuncNode([n], constant: scrolled == nil, sequential: scrolled != nil) { k, i in
             let src = i[0]
             var w = Int(num(s.opt("w", 0)!)), h = Int(num(s.opt("h", 1)!))
             guard w > 0 && h > 0 else { die("scale \(w)x\(h) not ported") }
@@ -1789,8 +1866,10 @@ final class Graph {
                 let th = Int(rescale(Int64(w), Int64(src.h), 1, Int64(src.w), 1))
                 w = max(tw, w); h = max(th, h)
             }
-            if sws == nil { sws = Sws(src: src, dstPF: want ?? src.pf, w: w, h: h, flags: flags) }
-            return sws!.run(src)
+            if sws == nil { sws = Sws(src: src, dstPF: want ?? src.pf, w: w, h: h, flags: flags); sws!.postLut = postLut }
+            guard let sc = scrolled else { return sws!.run(src) }
+            let v = sc.step(k, src.h)
+            return sws!.run(src, shift: (0..<3).map { pi in pi == 0 ? v : (v + 1) >> 1 })
         }
     }
 
@@ -1932,6 +2011,7 @@ final class Graph {
             let a = i[0], b = i[1]
             guard a.pf == b.pf || (a.pf == .gray && b.pf == .gray), a.w == b.w, a.h == b.h else { die("blend input mismatch \(a.pf) \(b.pf)") }
             if out == nil { out = Img(a.pf, a.w, a.h, fsMeta(i)) }
+            out!.gray = a.gray && b.gray
             for pi in 0..<a.p.count {
                 let (pw, ph) = a.dims(pi)
                 gpu.run("k_blend", [a.p[pi], b.p[pi], out!.p[pi]], [Int32(pw * ph), mode], grid: ((pw * ph + 3) / 4, 1))
@@ -1977,6 +2057,7 @@ final class Graph {
             let x = norm(xe.eval(vars)), y = norm(ye.eval(vars))
             if out == nil { out = Img(main.pf, main.w, main.h, main.meta) }
             let o = out!
+            o.gray = main.gray && ov.gray
             let inside = x < main.w && x + ov.w >= 0 && y < main.h && y + ov.h >= 0
             if main.pf == .rgba && main.w % 4 == 0 && inside {
                 gpu.run("k_ovl_rgba4", main.p + o.p + ov.p, [main.w / 4, main.h, ov.w, ov.h, x, y].map { Int32($0) },
@@ -2017,11 +2098,15 @@ final class Graph {
         var out: Img?, fb: [MTLBuffer]?
         return FuncNode([n], constant: true) { _, i in
             let src = i[0]
-            let np = src.p.count, dims = (0..<np).map { src.dims($0) }
+            // identical planes blur identically: blur one, alias the rest
+            let one = src.gray && src.pf == .rgb
+            let np = one ? 1 : src.p.count, dims = (0..<np).map { src.dims($0) }
             if out == nil {
                 out = Img(src.pf, src.w, src.h, src.meta)
+                if one { out!.p = [out!.p[0], out!.p[0], out!.p[0]]; out!.gray = true }
                 fb = dims.flatMap { [buf($0.0 * $0.1 * 4), buf($0.0 * $0.1 * 4)] }
             }
+            precondition(one == out!.gray, "gblur input changed greyness")
             for pi in 0..<np { gpu.run("k_g_load", [src.p[pi], fb![2 * pi]], [Int32(dims[pi].0), Int32(dims[pi].1)], grid: dims[pi]) }
             for pi in 0..<np { gpu.run("k_g_h", [fb![2 * pi]], [Int32(dims[pi].0), Int32(dims[pi].1), Int32(steps)], fp: [nu, bscale], grid: (dims[pi].1, 1), tg: 32) }
             for pi in 0..<np { gpu.run("k_g_tr", [fb![2 * pi], fb![2 * pi + 1]], [Int32(dims[pi].0), Int32(dims[pi].1)], grid: dims[pi]) }
@@ -2053,7 +2138,7 @@ final class Graph {
                 guard src.pf == .rgba else { die("alpha fade on \(src.pf) not ported") }
                 if outImg == nil { outImg = Img(.rgba, src.w, src.h, src.meta, planes: [buf(16), buf(16), buf(16), buf(src.w * src.h)]) }
                 gpu.run("k_fade_a", [src.p[3], outImg!.p[3]], [Int32(src.w * src.h), Int32(f), 0, 32768], grid: (src.w * src.h, 1))
-                return Img(.rgba, src.w, src.h, src.meta, planes: [src.p[0], src.p[1], src.p[2], outImg!.p[3]])
+                return Img(.rgba, src.w, src.h, src.meta, planes: [src.p[0], src.p[1], src.p[2], outImg!.p[3]]).gray(src.gray)
             }
             if src.pf == .rgba {
                 // a black fade on packed RGB takes filter_slice_luma over every
@@ -2062,7 +2147,7 @@ final class Graph {
                 for pi in 0..<4 {
                     gpu.run("k_fade_a", [src.p[pi], outImg!.p[pi]], [Int32(src.w * src.h), Int32(f), 0, 32768], grid: (src.w * src.h, 1))
                 }
-                return outImg!
+                return outImg!.gray(src.gray)
             }
             guard src.pf == .yuv420 else { die("fade on \(src.pf) not ported") }
             if outImg == nil { outImg = Img(.yuv420, src.w, src.h, src.meta) }
@@ -2084,50 +2169,52 @@ final class Graph {
             L += (0..<256).map { Int32(lrint(Double($0) * c)) }
         }
         let bl = bufOf(L)
+        let gray = L[0..<768] == L[768..<1536] && L[0..<768] == L[1536..<2304]
         let n = need(n0, [.rgb], prefer: .rgb)
         var out: Img?
         return FuncNode([n], constant: true) { _, i in
             let src = i[0]
-            if out == nil { out = Img(.rgb, src.w, src.h, src.meta) }
+            if out == nil { out = Img(.rgb, src.w, src.h, src.meta); out!.gray = gray }
             gpu.run("k_mixer", [src.p[0], src.p[1], src.p[2], out!.p[0], out!.p[1], out!.p[2], bl], [Int32(src.w * src.h)], grid: (src.w * src.h, 1))
             return out!
         }
     }
 
-    func lutrgb(_ s: FSpec, _ n0: Node) -> Node {
+    func lutTables(_ s: FSpec) -> [[UInt8]] {
         for k in s.kv.keys where !["r", "g", "b"].contains(k) { die("lutrgb \(k) not ported") }
-        let luts = ["r", "g", "b"].map { c -> MTLBuffer in
+        return ["r", "g", "b"].map { c in
             let e = Expr.parse(s.kv[c] ?? "val")
-            return lut256 { v in
+            return (0..<256).map { v in
                 let r = e.eval(["val": Double(v), "maxval": 255, "minval": 0])
-                return min(max(Int(r), 0), 255)
+                return UInt8(min(max(Int(r), 0), 255))
             }
         }
+    }
+
+    func lutrgb(_ s: FSpec, _ n0: Node) -> Node {
+        let tables = lutTables(s), luts = tables.map { bufOf($0) }
+        let same = tables[0] == tables[1] && tables[0] == tables[2]
         let n = need(n0, [.rgb], prefer: .rgb)
         var out: Img?
         return FuncNode([n], constant: true) { _, i in
             let src = i[0]
             if out == nil { out = Img(.rgb, src.w, src.h, src.meta) }
+            out!.gray = src.gray && same
             for pi in 0..<3 { gpu.run("k_lut", [src.p[pi], out!.p[pi], luts[pi]], [Int32(src.w * src.h)], grid: ((src.w * src.h + 3) / 4, 1)) }
             return out!
         }
     }
 
-    func scroll(_ s: FSpec, _ n: Node) -> Node {
+    func scroll(_ s: FSpec, _ n: Node, _ ci: Int, _ fi: Int) -> Node {
         for k in s.kv.keys where k != "vertical" && k != "v" { die("scroll \(k) not ported") }
-        let vspeed = Float(num(s.kv["vertical"] ?? s.kv["v"] ?? "0"))
-        var vpos: Float = .nan, frames = 0
+        let st = ScrollState(Float(num(s.kv["vertical"] ?? s.kv["v"] ?? "0")))
+        // scroll,scale: the scale reads the source rows the scroll would move
+        let fs = chains[ci].filters
+        if fi + 1 < fs.count, fs[fi + 1].name == "scale" { scrollInto[[ci, fi + 1]] = st; return n }
         var out: Img?
         return FuncNode([n], sequential: true) { k, i in
             let src = i[0]
-            if vpos.isNaN { vpos = (1 - 0) * Float(src.h) }
-            precondition(k == frames, "scroll frames out of order")
-            vpos = fmodf(vpos, Float(src.h))
-            var v = Int(vpos)
-            if v < 0 { v += src.h }
-            // `v_pos += v_speed * height` contracts to fmaf
-            vpos = fmaf(vspeed, Float(src.h), vpos)
-            frames += 1
+            let v = st.step(k, src.h)
             if out == nil { out = Img(src.pf, src.w, src.h, src.meta) }
             for pi in 0..<src.p.count {
                 let (pw, ph) = src.dims(pi)
@@ -2182,6 +2269,24 @@ final class Graph {
     }
 }
 
+// vf_scroll's vertical position, one step per frame of its stream, in order
+final class ScrollState {
+    let speed: Float
+    var pos: Float = .nan, frames = 0
+    init(_ speed: Float) { self.speed = speed }
+    func step(_ k: Int, _ h: Int) -> Int {
+        precondition(k == frames, "scroll frames out of order")
+        frames += 1
+        if pos.isNaN { pos = Float(h) }
+        pos = fmodf(pos, Float(h))
+        var v = Int(pos)
+        if v < 0 { v += h }
+        // `v_pos += v_speed * height` contracts to fmaf
+        pos = fmaf(speed, Float(h), pos)
+        return v
+    }
+}
+
 // A color= plate, materialised in whichever format its consumer asks for.
 final class ColorNode: Node {
     let w: Int, h: Int, white: Bool
@@ -2202,7 +2307,7 @@ final class ColorNode: Node {
             }
             fillPlane(img.p[i], pw * ph, v)
         }
-        made[pf] = img
+        made[pf] = img.gray(pf == .rgba)
         return img
     }
     // a plate read directly (alphamerge's main) is RGB+alpha
