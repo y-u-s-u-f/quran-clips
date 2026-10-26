@@ -28,8 +28,9 @@ graph makes are pinned by tests/gpu_parity.py.
 The recipe, recovered from the golden:
 x_offset -384 (0.30 W of the 1920 canvas), dur 23.720, crop 48,30,1280x720,
 tint (191,140,54) recovered from the golden's glow scalars via rr/0.35*255,
-every switch on, and the golden's own loudnorm chain so the audio leg is fixed
-rather than measured. The style burns no signature, so there is none to set.
+every switch on. The graph is the picture only: the sound is
+render_common.start_audio's. The style burns no signature, so there is none
+to set.
 """
 import argparse
 import difflib
@@ -68,14 +69,6 @@ X_OFFSET = -384
 CROP = {"x": 48, "y": 30, "w": 1280, "h": 720}
 TINT_RGB = (191, 140, 54)
 
-# The golden's own audio leg, so nothing here has to decode a media file:
-# loudnorm's numbers are measured off the source and would otherwise make
-# the fixture depend on footage that is not tracked.
-LOUDNORM = ("loudnorm=I=-14.0:TP=-1.0:LRA=11.0:measured_I=-8.81:"
-            "measured_TP=0.19:measured_LRA=3.80:measured_thresh=-18.94:"
-            "offset=0.63:linear=true:print_format=summary")
-AFADE = "afade=t=in:st=0:d=0.3,afade=t=out:st=23.220:d=0.5"
-
 
 def phrases_from_clip():
     """The archived recipe's cards, in this pipeline's phrase shape.
@@ -110,7 +103,7 @@ def build(portrait):
         sched, _cuts = RB.schedule(phrases, DUR)
         fc, argv = RB.build_graph(
             "SOURCE", DUR, CROP, rep, sched, [c / 255.0 for c in TINT_RGB],
-            on, "SNOW", "SCRIM", LOUDNORM, AFADE, ["HEATX", "HEATY"],
+            on, "SNOW", "SCRIM", ["HEATX", "HEATY"],
             portrait=portrait)
         return fc, "\n".join(a.replace(tmp, "TMP") for a in argv)
 

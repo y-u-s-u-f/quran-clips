@@ -12,6 +12,7 @@ Imported by render_text.py, render_bars.py and fx.py; not a standalone CLI.
 import json
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 from PIL import Image, ImageDraw
 
@@ -163,16 +164,35 @@ def audio_fades(dur):
             % (FADE_IN_S, dur - FADE_OUT_S, FADE_OUT_S))
 
 
+def start_audio(src, dur, tmp):
+    """The delivered sound -- both loudnorm passes and the fades, AAC in
+    tmp/audio.m4a -- started on a thread, so it runs while the picture
+    renders: `encode` waits for it only to mux (hujurat-4-5 horizontal: the
+    0.9s pass 1 and the 0.3s pass 2 were a fifth of the render's wall)."""
+    def run():
+        path = os.path.join(tmp, "audio.m4a")
+        cmd = [FFMPEG, "-y", "-v", "error", "-ss", "0.000", "-t", "%.3f" % dur,
+               "-i", src, "-vn", "-af", "%s,%s" % (
+                   loudnorm_filter(measure_loudness(src, dur)),
+                   audio_fades(dur)),
+               "-t", "%.3f" % dur, "-c:a", "aac", "-b:a", AUDIO["bitrate"],
+               path]
+        if subprocess.run(cmd).returncode:
+            raise SystemExit("ffmpeg audio failed")
+        return path
+    return ThreadPoolExecutor(1).submit(run)
+
+
 # ---------------------------------------------------------------------------
 # the delivery encode
 # ---------------------------------------------------------------------------
 
-def encode(in_argv, filter_complex, dur, out, meta, tmp, style):
+def encode(in_argv, filter_complex, dur, out, meta, tmp, style, audio):
     """The style's finished graph out to `out`: `in_argv` is the input list
-    its build_graph returned, and the graph ends on [vout] + [aout].
-    tools/render_gpu renders [vout] to a picture-only VideoToolbox H.264,
-    then `mux` adds the sound, the colour tags and the mp4 tags. A missing
-    or stale binary is an install problem, never a fallback."""
+    its build_graph returned, and the graph ends on [vout]. tools/render_gpu
+    renders it to a picture-only VideoToolbox H.264, then `mux` adds
+    `audio` (start_audio's future), the colour tags and the mp4 tags. A
+    missing or stale binary is an install problem, never a fallback."""
     if not os.access(GPU_BIN, os.X_OK):
         raise SystemExit("tools/render_gpu missing: run ./install.sh")
     if os.path.getmtime(GPU_SRC) > os.path.getmtime(GPU_BIN):
@@ -187,28 +207,24 @@ def encode(in_argv, filter_complex, dur, out, meta, tmp, style):
                        text=True)
     if p.returncode != 0:
         raise SystemExit("render_gpu failed")
-    mux(video, in_argv, filter_complex, dur, out, meta, json.loads(p.stdout))
+    mux(video, audio.result(), dur, out, meta, json.loads(p.stdout))
 
 
-def mux(video, in_argv, filter_complex, dur, out, meta, tags):
-    """The delivered file: `video` stream-copied beside the graph's
-    [0:a] -> [aout] chain, run on its first input. `meta` ({title, comment,
+def mux(video, audio, dur, out, meta, tags):
+    """The delivered file: both streams copied. `meta` ({title, comment,
     artist}) is written here: publish.py captions a reel from these tags
     alone. VideoToolbox writes no VUI, so `tags` (render_gpu's report of the
     last frame) go into the SPS the way an ffmpeg encode tags the same frame:
     video_format 5, the range flag, the colour description, the sample
     aspect ratio."""
-    first = in_argv[:in_argv.index("-i") + 2]
-    audio = next(c for c in filter_complex.split(";") if c.startswith("[0:a]"))
     vui = ("h264_metadata=video_format=5:video_full_range_flag=%d:"
            "colour_primaries=%d:transfer_characteristics=%d:"
            "matrix_coefficients=%d:sample_aspect_ratio=%d/%d"
            % ((tags["color_range"] == 1, tags["color_primaries"],
                tags["color_trc"], tags["colorspace"]) + tuple(tags["sar"])))
-    cmd = [FFMPEG, "-y", "-hide_banner"] + first
-    cmd += ["-i", video, "-filter_complex", audio, "-map", "1:v", "-map",
-            "[aout]", "-t", "%.3f" % dur, "-c:v", "copy", "-bsf:v", vui,
-            "-c:a", "aac", "-b:a", AUDIO["bitrate"]]
+    cmd = [FFMPEG, "-y", "-v", "error", "-i", video, "-i", audio,
+           "-map", "0:v", "-map", "1:a", "-t", "%.3f" % dur, "-c", "copy",
+           "-bsf:v", vui]
     for k, v in (meta or {}).items():
         cmd += ["-metadata", "%s=%s" % (k, v)]
     if subprocess.run(cmd + ["-movflags", "+faststart", out]).returncode:

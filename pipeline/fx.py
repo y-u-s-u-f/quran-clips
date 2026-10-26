@@ -29,14 +29,6 @@ from render_common import FFMPEG
 # filtergraph builder
 # ---------------------------------------------------------------------------
 
-class Ref(str):
-    """An input pad reference such as "0:v"."""
-
-    @property
-    def a(self):
-        return Ref(str(self).split(":")[0] + ":a")
-
-
 class _Chain(object):
     __slots__ = ("ins", "filters", "outs")
 
@@ -79,13 +71,13 @@ class Graph(object):
 
     def input(self, path, **kw):
         """Record an input; kwargs become the pre -i options in the order
-        given. Returns the video pad ref; use .a for audio."""
+        given. Returns the video pad label."""
         idx = self._ninputs
         self._ninputs += 1
         for k, val in kw.items():
             self._argv += ["-" + k, str(val)]
         self._argv += ["-i", path]
-        return Ref("%d:v" % idx)
+        return "%d:v" % idx
 
     def chain(self, ins, filters, outs):
         """Append "[in]...filters...[out]...". `ins=None` declares a source

@@ -33,8 +33,7 @@ import fx as FX  # noqa: E402
 from generate import run  # noqa: E402
 from render_common import (FADE_IN_S, FADE_OUT_S, FFMPEG,  # noqa: E402
                            FPS, PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W,
-                           PROBE, audio_fades, encode, fit_pt,
-                           loudnorm_filter, measure_loudness, norm_ar,
+                           PROBE, encode, fit_pt, norm_ar, start_audio,
                            source_chain, trim_to_ink)
 
 if not features.check("raqm"):
@@ -739,7 +738,7 @@ def schedule(phrases, dur):
 # ---------------------------------------------------------------------------
 
 def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
-                ln, afade, heat_paths=None, grade=None, portrait=False):
+                heat_paths=None, grade=None, portrait=False):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1..2n]=bar,text
     per phrase, then snow, then scrim, then the two heat maps. The heat pair
     goes LAST so optional maps never renumber earlier inputs.
@@ -878,7 +877,6 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
              f"fade=t=out:st={dur - FADE_OUT_S:.3f}:d={FADE_OUT_S}"] \
         + ([PORTRAIT_PAD] if portrait else []) + ["format=yuv420p"]
     g_.chain(band_lbl, fades, "vout")
-    g_.chain(vin.a, [f for f in (ln, afade) if f], "aout")
     return g_.render()
 
 
@@ -891,6 +889,7 @@ def render(plan):
     src, tmp = plan["src"], plan["tmp"]
     phrases = plan["arabic"]
     dur = info["duration"]
+    audio = start_audio(src, dur, tmp)
 
     crop = cfg.get("crop")
     on = switches(cfg.get("fx"))
@@ -937,11 +936,8 @@ def render(plan):
         print("      ! HARD CUT at changeover(s): %s"
               % ", ".join("P%d->P%d" % (c, c + 1) for c in cuts))
 
-    print("      loudnorm pass 1...")
-    ln = loudnorm_filter(measure_loudness(src, dur))
-
     fc, in_argv = build_graph(src, dur, crop, rep, sched, tint, on, snow_path,
-                              scrim, ln, audio_fades(dur), heat_paths, grade,
+                              scrim, heat_paths, grade,
                               portrait)
 
     out = plan["out"]
@@ -950,7 +946,7 @@ def render(plan):
     print("      " + " | ".join(
         "P%d %s in@%.2f+%.2f out@%.2f+%.2f" % (i + 1, k, ti, di, to, do)
         for i, (k, ti, di, to, do) in enumerate(sched)))
-    encode(in_argv, fc, dur, out, plan.get("meta"), tmp, "bars")
+    encode(in_argv, fc, dur, out, plan.get("meta"), tmp, "bars", audio)
     print("      %s | %dx%d%s | bar #%02X%02X%02X (drawn #%02X%02X%02X)"
           % ((os.path.relpath(out, ROOT), geo["W"], geo["H"],
               " padded to %dx%d" % (PORTRAIT_W, PORTRAIT_H) if portrait

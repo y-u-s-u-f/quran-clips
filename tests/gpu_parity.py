@@ -87,8 +87,7 @@ def bars_graph(src, portrait, tmp):
     heat = RB.heat_layers(WINDOW)
     fc, argv = RB.build_graph(
         src, WINDOW, GP.CROP, rep, sched, [c / 255.0 for c in GP.TINT_RGB],
-        on, snow, RB.scrim_plate(tmp, geo), GP.LOUDNORM,
-        RB.audio_fades(WINDOW), heat, portrait=portrait)
+        on, snow, RB.scrim_plate(tmp, geo), heat, portrait=portrait)
     return fc, argv, {"snow": snow, "heatx": heat[0], "heaty": heat[1]}
 
 
@@ -109,8 +108,7 @@ def text_graph(src, style, portrait, crop, x_offset, face_bottom, tmp):
                             RT.ENGLISH_FONTS[cfg["english_font"]]["path"],
                             W, H, sub, 0, geo["k"])
     sched = RT.schedule(ph, WINDOW, cfg["caption_transition"])
-    fc, argv = RT.build_graph(src, WINDOW, crop, W, H, grade, rep, sched,
-                              GP.LOUDNORM, RT.audio_fades(WINDOW), sig,
+    fc, argv = RT.build_graph(src, WINDOW, crop, W, H, grade, rep, sched, sig,
                               geo["k"] != 1)
     return fc, argv, {}
 

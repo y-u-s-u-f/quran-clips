@@ -1631,7 +1631,7 @@ final class Graph {
     var srcTimeline: ([CMTime], CMTime) = ([], .zero)
 
     init(fc: String, specs: [InSpec]) {
-        chains = parseGraph(fc).filter { !$0.ins.contains("0:a") }
+        chains = parseGraph(fc)
         inSpecs = specs
         for (ci, c) in chains.enumerated() { for l in c.ins { consumers[l, default: []].append((ci, 0)) } }
         inputs = specs.map { InputNode($0) }

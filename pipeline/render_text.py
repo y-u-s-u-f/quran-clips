@@ -49,8 +49,7 @@ sys.path.insert(0, HERE)
 
 from render_common import (FADE_IN_S, FADE_OUT_S, FPS,  # noqa: E402
                            PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W, PROBE,
-                           audio_fades, encode, fit_pt,
-                           loudnorm_filter, measure_loudness, norm_ar,
+                           encode, fit_pt, norm_ar, start_audio,
                            source_chain, trim_to_ink)
 
 if not features.check("raqm"):
@@ -680,8 +679,8 @@ def reframe(orientation, info, crop):
         "portrait" if portrait else "landscape")
 
 
-def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
-                sig=None, portrait=False):
+def build_graph(src, dur, crop, W, H, grade_png, cards, sched, sig=None,
+                portrait=False):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1]=grade plate,
     [2..]=one card per phrase, then the signature (last, so dropping it cannot
     shift any other index).
@@ -728,7 +727,6 @@ def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
                  "format=yuv420p[vout]"
                  % (base, FADE_IN_S, dur - FADE_OUT_S, FADE_OUT_S,
                     "," + PORTRAIT_PAD if portrait else ""))
-    parts.append(";[0:a]%s,%s[aout]" % (ln, afade))
     return "".join(parts), argv
 
 
@@ -741,6 +739,7 @@ def render(plan):
     src, tmp = plan["src"], plan["tmp"]
     phrases, english = plan["arabic"], plan["english"]
     orientation = cfg["style"]
+    audio = start_audio(src, info["duration"], tmp)
     # A portrait delivery of a landscape canvas composes small and pads
     # inside this one graph; the `vertical` canvas is already 1080x1920.
     geo = geometry(orientation, plan.get("portrait"))
@@ -789,17 +788,14 @@ def render(plan):
            if cfg["signature"] else None)
     sched = schedule(phrases, dur, cfg["caption_transition"])
 
-    print("      loudnorm pass 1...")
-    ln = loudnorm_filter(measure_loudness(src, dur))
-
-    fc, in_argv = build_graph(src, dur, crop, W, H, grade_png, rep, sched, ln,
-                              audio_fades(dur), sig, portrait)
+    fc, in_argv = build_graph(src, dur, crop, W, H, grade_png, rep, sched,
+                              sig, portrait)
 
     out = plan["out"]
     print("      " + " | ".join(
         "P%d in@%.2f out@%.2f" % (i + 1, ti, to)
         for i, (ti, _, to, _) in enumerate(sched)))
-    encode(in_argv, fc, dur, out, plan.get("meta"), tmp, orientation)
+    encode(in_argv, fc, dur, out, plan.get("meta"), tmp, orientation, audio)
     print("      %s | %dx%d%s | %s"
           % (os.path.relpath(out, ROOT), W, H,
              " padded to %dx%d" % (PORTRAIT_W, PORTRAIT_H) if portrait else "",
