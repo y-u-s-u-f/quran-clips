@@ -6,10 +6,10 @@
 - [ ] Committed verse-split library (`groups:` per ayah, counts + English only), so a config names a span and inherits a reviewed split.
 - [ ] Per-config audio controls (LUFS target, fades) and an intake loudness/clipping report in `fetch.py`.
 - [ ] One driver over align → crop → generate → publish with a resume point (subprocess per venv).
-- [ ] `generate.py --preview` (small, `veryfast`, fx off) for timing checks; `generate.py --all` to re-render stale reels.
+- [ ] `generate.py --preview` (small, fx off) for timing checks; `generate.py --all` to re-render stale reels.
 - [ ] Pre-publish check: full decode, canvas/fps/duration, loudness, non-black cover, AAC.
 - [ ] `publish.py`: retry Graph 5xx / rate limits; show progress during the Instagram container poll.
-- [ ] Progress on the final render encode (`-progress`); line-buffer `crop.py`, `transcribe.py`, `publish.py`.
+- [ ] Progress during the render (`tools/render_gpu` frame count); line-buffer `crop.py`, `transcribe.py`, `publish.py`.
 - [ ] `crop.py --annotate`: contact sheet of every sampled frame, not just the middle one.
 - [ ] Reel ledger: table of `reels/*.mp4` from their tags (span, reciter, style, posted).
 - [ ] Caption sidecar (`reels/<name>.srt`) from the burned cards.

@@ -55,7 +55,7 @@ for tool in ffmpeg ffprobe yt-dlp; do
         ok+=("$(printf '%-12s %s' "$tool" "$(command -v "$tool")")")
     else
         case "$tool" in
-            ffmpeg|ffprobe) bad+=("$tool: not found -- rendering and probing need it. brew install ffmpeg / apt install ffmpeg");;
+            ffmpeg|ffprobe) bad+=("$tool: not found -- cutting, probing, audio and the mux need it. brew install ffmpeg / apt install ffmpeg");;
             yt-dlp)         bad+=("yt-dlp: not found -- fetch.py needs it for YouTube sources (local files still work). brew install yt-dlp / apt install yt-dlp");;
         esac
     fi
@@ -170,7 +170,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3c. GPU renderer (Metal + VideoToolbox; generate.py's default for every style)
+# 3c. GPU renderer (Metal + VideoToolbox; the only renderer, every style)
 # ---------------------------------------------------------------------------
 say "== gpu renderer"
 GSRC="$ROOT/pipeline/gpu/render_gpu.swift"
@@ -186,9 +186,9 @@ fi
 if [ -x "$GBIN" ] && [ ! "$GSRC" -nt "$GBIN" ]; then
     ok+=("gpu render   $GBIN")
 elif have swiftc; then
-    bad+=("gpu render: $GBIN missing or older than $GSRC -- renders need it (or --renderer ffmpeg). Re-run ./install.sh")
+    bad+=("gpu render: $GBIN missing or older than $GSRC -- every render needs it. Re-run ./install.sh")
 else
-    bad+=("gpu render: no swiftc (Xcode command line tools: xcode-select --install) -- renders need tools/render_gpu (or --renderer ffmpeg)")
+    bad+=("gpu render: no swiftc (Xcode command line tools: xcode-select --install) -- every render needs tools/render_gpu (macOS + Metal only)")
 fi
 
 # ---------------------------------------------------------------------------

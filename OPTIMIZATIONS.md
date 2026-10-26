@@ -8,16 +8,11 @@ Read the rejected list before proposing anything. Numbers: `sources/hajri-23-tar
 |---|---|---|
 | `bars` (GPU), heat + snow cached | **~41s** | ~19s |
 | `bars --vertical` (GPU), heat + snow cached | **~18s** | ~16s |
-| `bars --renderer ffmpeg` | ~164s | ~851s |
-| `bars --vertical --renderer ffmpeg` | ~61s | ~314s |
 | `horizontal` (GPU) | **~6.0s** | ~3.3s |
 | `horizontal --vertical` (GPU) | **~5.9s** | ~3.2s |
 | `vertical` (GPU) | **~6.2s** | ~3.3s |
-| `horizontal --renderer ffmpeg` | ~12.4s | ~70s |
-| `horizontal --vertical --renderer ffmpeg` | ~7.4s | ~39s |
-| `vertical --renderer ffmpeg` | ~13.3s | ~77s |
 
-Apple M1 (4 performance + 4 efficiency cores, 16 GB), ffmpeg 9.0.2, every render paying its own `trim_media` cut. MEASURE THESE COOLED AND ALONE: medians of alternating runs with 60s idle before each. Even so an ffmpeg bars render here spreads +-20% run to run (162-279s landscape) -- the scheduler puts ffmpeg's threads on efficiency cores whenever the desktop wants a performance one, which shows up as MORE CPU-seconds for the same work -- so a difference under ~15% needs paired runs to be believed. The previous profile (14 cores) read 72s / 516s for landscape bars; the numbers are not comparable across machines.
+Apple M1 (4 performance + 4 efficiency cores, 16 GB), ffmpeg 9.0.2, every render paying its own `trim_media` cut. MEASURE THESE COOLED AND ALONE: medians of runs with 60s idle before each. The renderer is GPU-bound, so it does not have the scheduler spread a CPU render has here (an ffmpeg bars render spread +-20% run to run on this machine: the scheduler puts its threads on efficiency cores whenever the desktop wants a performance one). The same graphs run through ffmpeg 9.0.2 + x264 crf 18 / faster, before render_gpu replaced it, measured on this machine: bars 164s / 851s CPU, bars --vertical 61s / 314s, horizontal 12.4s / 70s, horizontal --vertical 7.4s / 39s, vertical 13.3s / 77s.
 
 The bars rows are medians of 2 alternating GPU/ffmpeg runs with 60s idle before each, snow cached (2026-10). Longer reels scale with duration: `fatihah-1-1-7-bars --vertical` (52.5s, the longest config) 33.0s / 20.1s CPU on the GPU against 127.6s / 638s through ffmpeg, `shuara-26-105-111-bars --vertical` (41.6s) 27.6s / 13.6s against 102.1s / 498s. The GPU renderer is GPU-bound (~19ms of GPU per portrait frame, ~44ms landscape, CPU mostly idle), so its numbers do not have the ffmpeg path's scheduler spread.
 
@@ -33,7 +28,7 @@ A first run on a machine adds one 60s perlin bake per axis plus the snow bake. T
 
 - **Every style renders on the GPU** (`tools/render_gpu`, `pipeline/gpu/render_gpu.swift`): the style's own graph interpreted in Metal, exact ports of each ffmpeg filter. Text styles: every delivered frame of hujurat-4-5 vertical / horizontal / horizontal `--vertical` (786 each) and ahzab-56-56 horizontal / `--vertical` / vertical (900 each) is framemd5-identical to the ffmpeg graph's at `-r 30`; VideoToolbox at `render_common.VT_QUALITY` 0.76 reads 45.9-52.0 dB PSNR-Y against the lossless frames where x264 reads 45.1-51.5 (0.1-0.9 dB above it on all six, files 28-75% larger: VideoToolbox spends bits on a mostly static picture less well than x264). 1.2x less wall on `horizontal --vertical`, ~2x on the full-canvas reels, 12-23x less CPU. Bars: every frame of all four measured reels (hujurat-4-5 portrait + landscape, fatihah-1-1-7, shuara-26-105-111) is bit-identical to the ffmpeg graph's before encode; picture encoded at `VT_QUALITY` 0.68, delivered PSNR-Y against the lossless frames 45.9-51.0 dB where x264 crf 18 / faster reads 46.0-51.4, within 0.35 dB either way. 3.3-4.0x less wall, 20-45x less CPU. Inside it: gblur's recursive line passes on a transposed buffer (each SIMD group walks memory its threads share), the running value in a register and loads issued 8 ahead, 32-thread groups so few lines still spread over every core -- 36.8 -> 16.5s of GPU on hujurat portrait, bit-identical. Barriers only before a dispatch that touches a buffer bound since the last one (15.1 -> 14.9s, within noise; removing every barrier measured no faster, so the remaining cost is the ~276 kernels per frame themselves).
 
-Changing one of these needs the guard it was verified with: PSNR for anything that moves a pixel, `tests/graph_parity.py --bless` for a bars graph edit, `tests/wrap_parity.py` for the English wrap.
+Changing one of these needs the guard it was verified with: `tests/gpu_parity.py` (exact frames) for anything in the renderer, PSNR + stills before `--bless` for anything that moves a pixel, `tests/graph_parity.py --bless` for a bars graph edit, `tests/wrap_parity.py` for the English wrap.
 
 - **Ink-cropped + `enable`-gated overlays** (bars + text captions/signature). Bit-identical vs full canvas. Text style isolated: 4.08→1.64s wall, 1618→633 MB. Signature: 13.1→10.1s CPU, 371→220 MB.
 - **Grade plate and signature are single-frame inputs** (text styles). Only the cards are looped, because only they fade; overlay's `eof_action=repeat` holds the other two for the whole reel -- same pixels, no per-frame PNG decode.
@@ -72,7 +67,6 @@ What the stages around the render pay before any pixel moves.
 
 - **render_gpu: 16-wide gblur load batches** instead of 8: 16.5 -> 16.9s. **4-wide blend/lut** threads: 15.1 -> 14.7s, kept (no division in the blend either: `x/255` as `(x*32897)>>23`, exact over 0..65025).
 
-- **`-thread_queue_size 4096`**: 4096→64 moves RSS 24 MB; md5 unchanged.
 - **`scrim_plate` pixel loop**: 0.10s.
 - **`align_words` skeleton precompute**: ms at ~50×60.
 - **`heat` lutrgb before 2× upscale**: *worse* (28.4→29.2s CPU).

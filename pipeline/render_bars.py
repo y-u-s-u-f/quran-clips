@@ -10,9 +10,8 @@ Constants measured from reference reels; size 213pt / 96px pill / 0.45 W
 ink. The refs were measured on 720- and 1080-wide pictures and every constant
 here carries to this canvas's 1920 by the matching factor; each one names its
 own. Golden: tests/graph_parity.py, landscape and portrait.
-The graph runs on tools/render_gpu (render_common.encode_gpu) unless
-`--renderer ffmpeg`. Cost: OPTIMIZATIONS.md. `fx: {heat: false}` for timing
-previews.
+The graph is tools/render_gpu's input (render_common.encode). Cost:
+OPTIMIZATIONS.md. `fx: {heat: false}` for timing previews.
 
 Called by generate.py; not a standalone CLI.
 """
@@ -34,7 +33,7 @@ import fx as FX  # noqa: E402
 from generate import run  # noqa: E402
 from render_common import (FADE_IN_S, FADE_OUT_S, FFMPEG,  # noqa: E402
                            FPS, PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W,
-                           PROBE, audio_fades, encode, encode_gpu, fit_pt,
+                           PROBE, audio_fades, encode, fit_pt,
                            loudnorm_filter, measure_loudness, norm_ar,
                            source_chain, trim_to_ink)
 
@@ -758,10 +757,9 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     ph_base = 1
     g_ = FX.Graph()
     vin = g_.input(src, ss="0.000", t="%.3f" % dur)
-    # The PNG plates are single-frame inputs repeated by `hold`: `-loop 1`
-    # would re-read and re-decode each one at every frame. framerate=FPS
-    # stays -- without it the held frames tick at image2's default 1/25 and
-    # every fade moves. Bounded a frame past the reel, like any looped input.
+    # The PNG plates are single-frame inputs repeated by `hold`, bounded a
+    # frame past the reel. framerate=FPS is the time base every fade is
+    # timed on: without it the held frames tick at image2's default 1/25.
     hold = f"loop=loop={math.ceil(dur * FPS)}:size=1:start=0"
     ph_in = [g_.input(png, framerate=FPS) for png in phrase_pngs]
     snow_in = g_.input(snow_path, stream_loop=-1) if snow_path else None
@@ -952,10 +950,7 @@ def render(plan):
     print("      " + " | ".join(
         "P%d %s in@%.2f+%.2f out@%.2f+%.2f" % (i + 1, k, ti, di, to, do)
         for i, (k, ti, di, to, do) in enumerate(sched)))
-    if (plan.get("renderer") or "gpu") == "gpu":
-        encode_gpu(in_argv, fc, dur, out, plan.get("meta"), tmp, "bars")
-    else:
-        encode(in_argv, fc, dur, out, plan.get("meta"))
+    encode(in_argv, fc, dur, out, plan.get("meta"), tmp, "bars")
     print("      %s | %dx%d%s | bar #%02X%02X%02X (drawn #%02X%02X%02X)"
           % ((os.path.relpath(out, ROOT), geo["W"], geo["H"],
               " padded to %dx%d" % (PORTRAIT_W, PORTRAIT_H) if portrait

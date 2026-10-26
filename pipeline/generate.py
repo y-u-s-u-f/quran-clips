@@ -309,7 +309,7 @@ def trim_media(path, out_path, start, end, thumb=False):
     every aligned word against the audio the viewer hears.
 
     `veryfast`/crf 10 rather than `slow`/crf 16: this file is a THROWAWAY the
-    renderer re-encodes at crf 18 minutes later, so nothing about it matters
+    renderer decodes and re-encodes moments later, so nothing about it matters
     except that it not lose what the final encode would have kept -- and a
     faster preset buys that back with bits, which cost disk here and nothing
     else. Measured against a LOSSLESS cut of the same 27.5s 1080p window:
@@ -495,7 +495,7 @@ def _enforce_monotonic(stamps):
 
 def output_meta(surah, a0, a1, reciter):
     """The reel's identity, written into the mp4's own tags by the delivery
-    encode (render_common.encode).
+    mux (render_common.mux).
 
     pipeline/publish.py builds a post's caption from these and nothing else,
     so a reel stays publishable with no config beside it, no filename
@@ -1103,7 +1103,7 @@ def resolve_span(cfg, asr_words):
 
 
 def run_config(config_path, output_override=None, vertical=False,
-               verify_only=False, renderer=None):
+               verify_only=False):
     cfg = load_config(config_path)
     cfg = resolve_paths(cfg, config_path, output_override)
     tmp = cfg["tmp_dir"]
@@ -1205,7 +1205,6 @@ def run_config(config_path, output_override=None, vertical=False,
     plan = {"cfg": cfg, "src": source, "info": info,
             "arabic": arabic, "english": english,
             "tmp": tmp, "out": cfg["output"], "portrait": vertical,
-            "renderer": renderer,
             "meta": output_meta(surah, a0, a1, cfg["reciter"])}
 
     print("[6/6] Rendering (%s style)..." % cfg["style"])
@@ -1233,9 +1232,6 @@ def main(argv=None):
                          "the render's own encode")
     ap.add_argument("--verify-only", action="store_true",
                     help="stop after the verification block; nothing rendered")
-    ap.add_argument("--renderer", choices=("gpu", "ffmpeg"),
-                    help="tools/render_gpu (the default) or the ffmpeg "
-                         "filtergraph it ports")
     # These runs are long and normally watched: line-buffer so progress reaches
     # a pipe or a log as it happens, not all at once at exit.
     sys.stdout.reconfigure(line_buffering=True)
@@ -1245,8 +1241,7 @@ def main(argv=None):
         return 0
     if not a.config:
         ap.error("config path required (or --print-schema)")
-    result = run_config(a.config, a.output, a.vertical, a.verify_only,
-                        a.renderer)
+    result = run_config(a.config, a.output, a.vertical, a.verify_only)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

@@ -1,16 +1,16 @@
 // pipeline/gpu/render_gpu.swift -- every style's filtergraph on the GPU.
 //
 // render_bars.py and render_text.py build their looks as ffmpeg filtergraphs;
-// this binary runs THAT graph -- the same -filter_complex string and input
-// argv, read from a JSON plan -- on Metal, so every constant stays in Python
-// and the graph stays the spec. No style is named here: a style is the set of
-// filters its graph uses. Each filter is a port of its ffmpeg 9.0.2 C (or,
-// where the arm64 build dispatches to it, NEON) implementation in the same
-// order and precision: swscale's initFilter / hscale / vscale / yuv2rgb, eq's
-// LUT, colorbalance's float path, vignette's dither LCG, gblur's IIR, ... --
-// pinned against ffmpeg by tests/gpu_parity.py. Only the filters and
-// argument forms the two renderers emit are implemented; anything else is a
-// loud error, never a guess.
+// this binary is the renderer that runs them -- the -filter_complex string
+// and input argv, read from a JSON plan -- on Metal, so every constant stays
+// in Python and the graph stays the spec. No style is named here: a style is
+// the set of filters its graph uses. Each filter is a port of its ffmpeg 9.0.2
+// C (or, where the arm64 build dispatches to it, NEON) implementation in the
+// same order and precision: swscale's initFilter / hscale / vscale / yuv2rgb,
+// eq's LUT, colorbalance's float path, vignette's dither LCG, gblur's IIR,
+// ... -- frames pinned by tests/gpu_parity.py's goldens, recorded identical
+// to ffmpeg's. Only the filters and argument forms the two style renderers
+// emit are implemented; anything else is a loud error, never a guess.
 //
 // usage: render_gpu PLAN.json OUT [--raw] [--tap LABEL] [--frames N]
 //   OUT    video-only H.264 (VideoToolbox) .mov, or with --raw the
@@ -1246,7 +1246,6 @@ func parseInputs(_ argv: [String]) -> [InSpec] {
         case "-framerate": cur.framerate = Int(v)
         case "-stream_loop": cur.loop = v == "-1"
         case "-loop": if v != "1" { die("-loop \(v) not ported") }   // image2: the one PNG, every frame
-        case "-thread_queue_size": break
         default: die("input option \(a) not ported")
         }
         i += 2

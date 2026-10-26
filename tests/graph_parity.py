@@ -16,9 +16,10 @@ The graph text carries every number that decides a pixel (geometry, sigmas,
 gains, fade times, each caption layer's ink box and enable window). The input
 argv is fixtured beside each (tests/golden/bars-argv.txt,
 bars-portrait-argv.txt), one argument per
-line with the per-run overlay directory written as TMP: it decides no pixel,
-but it is where the ffmpeg rules live -- every `-loop 1` input bounded,
-`-thread_queue_size` on every input -- and a refactor can drop one silently.
+line with the per-run overlay directory written as TMP: it is the rest of
+tools/render_gpu's input spec -- input order, `-t`, `-framerate`,
+`-stream_loop` -- and a refactor can move one silently. The pixels the
+graph makes are pinned by tests/gpu_parity.py.
 
     NO ARABIC IS TYPED HERE. The caption text is read out of
     tests/golden/at-tawbah-128-128.yaml, the recipe the golden was recorded

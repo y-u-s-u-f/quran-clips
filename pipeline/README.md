@@ -25,8 +25,8 @@ pipeline/       fetch transcribe quran align crop generate letterbox publish
                 + render_text render_bars fx render_common (imported by generate)
                 + gpu/render_gpu.swift (every style's GPU renderer -> tools/render_gpu)
 assets/         fonts + mushaf/translation editions
-tests/          graph_parity.py (bars goldens), gpu_parity.py (GPU vs the
-                ffmpeg graph, every style), wrap_parity.py (English wrap)
+tests/          graph_parity.py (bars goldens), gpu_parity.py (render_gpu's
+                frames, every style), wrap_parity.py (English wrap)
 ```
 
 ## Config
@@ -47,7 +47,7 @@ All 30fps and fixed-size; a weak source is upscaled, never delivered small.
 - **`horizontal`** — 1920×1080, the SAME renderer and the same look; block centred vertically, column opposite him (`x_offset`).
 - **`bars`** — 1920×1080, Thuluth on pills (213pt / 96px / 0.45 W ink), wipe then sequential crossfades, full FX (`fx.py`). Never burns a signature. Golden: `tests/graph_parity.py`. `fx: {heat: false}` for timing previews.
 
-Every style renders on `tools/render_gpu`, a Metal port of the style's own ffmpeg graph (bit-identical frames, VideoToolbox H.264 at `render_common.VT_QUALITY`, keyed by style); `generate.py --renderer ffmpeg` runs the graph itself, x264 crf 18. `tests/gpu_parity.py` holds the two together.
+Every style renders on `tools/render_gpu` (macOS + Metal only), which runs the style's own ffmpeg filtergraph string as its input spec, an exact port of each filter, and encodes VideoToolbox H.264 at `render_common.VT_QUALITY`, keyed by style. ffmpeg renders no frame; `tests/gpu_parity.py` pins the frames.
 
 `generate.py --vertical` delivers a 1920×1080 style as 1080×1920, black above and below, inside the render's own encode. The picture is 1080×608, about a third of the frame, so bars' Arabic arrives on the phone at 120pt nominal instead of 213; the native `vertical` style avoids that trade. Both `horizontal` and `bars` compose their whole look at 1080×608 (`render_text.geometry`, `render_bars.geometry`), which is cheaper and looks the same at the size it is shown (`OPTIMIZATIONS.md`). `letterbox.py` does the same to an already-finished file (and refuses a portrait one).
 

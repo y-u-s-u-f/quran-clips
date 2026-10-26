@@ -3,9 +3,9 @@
 The look lives in the renderer that owns it (invariant 4): fonts, colours,
 pill geometry and every measured constant behind them stay in render_text.py
 and render_bars.py. This is the other half -- the FILE every style hands to
-publish.py (1080p30 h264 crf 18, AAC 192k, two-pass loudnorm to -14 LUFS, one
-pair of head and tail fades) and the plumbing both of them build with: the
-source reframe, the input queue size, the ink helpers.
+publish.py (1080p30 H.264 from VideoToolbox, AAC 192k, two-pass loudnorm to
+-14 LUFS, one pair of head and tail fades) and the plumbing both of them
+build with: the source reframe, the ink helpers.
 
 Imported by render_text.py, render_bars.py and fx.py; not a standalone CLI.
 """
@@ -21,19 +21,18 @@ FPS = 30
 # One pair for picture and sound: the frame fades from/to black exactly as
 # the audio fades in and out (all three reference reels).
 FADE_IN_S, FADE_OUT_S = 0.3, 0.5
-AUDIO = {"lufs": -14.0, "tp": -1.0, "lra": 11.0}
-# The encode is the largest cost of a text-style render. `faster` holds 46+ dB
-# PSNR against a lossless render of the same graph on all three hujurat styles.
-ENCODE = {"crf": 18, "preset": "faster", "audio_bitrate": "192k"}
+AUDIO = {"lufs": -14.0, "tp": -1.0, "lra": 11.0, "bitrate": "192k"}
 
-# Every style's graph runs on tools/render_gpu (pipeline/gpu/render_gpu.swift)
-# unless `--renderer ffmpeg`; tests/gpu_parity.py holds the two to each other.
+# Every style's graph is the input spec of tools/render_gpu
+# (pipeline/gpu/render_gpu.swift), which renders it on Metal;
+# tests/gpu_parity.py pins its frames.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 GPU_SRC = os.path.join(_HERE, "gpu", "render_gpu.swift")
 GPU_BIN = os.path.join(os.path.dirname(_HERE), "tools", "render_gpu")
-# VideoToolbox H.264 quality for the GPU renderer's picture, per style: the
-# lowest that matches the ffmpeg path's x264 crf 18 / faster. Measured
-# against each reel's lossless frames (PSNR-Y dB / MB):
+# VideoToolbox H.264 quality for the picture, per style: the lowest whose
+# PSNR matches x264 crf 18 / faster on the same frames, the delivery
+# quality this pipeline is held to. Measured against each reel's lossless
+# frames (PSNR-Y dB / MB):
 #   bars --vertical  hujurat-4-5: x264 48.87 / 8.8; VT 0.65 47.83 / 7.5,
 #                    0.67 48.59 / 9.0, 0.68 48.98 / 9.8, 0.70 49.58 / 11.1
 #   horizontal       hujurat-4-5: x264 48.47 / 9.7; VT 0.70 47.15 / 8.8,
@@ -50,14 +49,6 @@ GPU_BIN = os.path.join(os.path.dirname(_HERE), "tools", "render_gpu")
 # The text styles are mostly static, and VideoToolbox spends its bits on them
 # less well than x264: matching x264 there costs 25-75% more file.
 VT_QUALITY = {"bars": 0.68, "vertical": 0.76, "horizontal": 0.76}
-
-# ffmpeg's per-input packet queue defaults to 8. Both styles feed ONE
-# filtergraph from many inputs (source + a looped PNG per caption layer +
-# plates/maps), and past roughly a dozen the graph DEADLOCKS: one input's
-# queue fills, blocking the demuxer in tq_send, while the filter and encoder
-# threads sit in tq_receive on a DIFFERENT input -- 0% CPU forever, no moov
-# atom. Costs memory only; changes no output byte.
-THREAD_QUEUE_SIZE = 4096
 
 # `--vertical` delivery: a landscape picture PORTRAIT_W wide on a 1080x1920
 # canvas, black above and below. PORTRAIT_PAD is appended inside the style's
@@ -165,31 +156,14 @@ def audio_fades(dur):
 # the delivery encode
 # ---------------------------------------------------------------------------
 
-def encode(in_argv, filter_complex, dur, out, meta=None):
-    """Run the style's finished graph out to `out`. `in_argv` is the input
-    list its build_graph returned, and the graph must end on [vout] + [aout].
-
-    `meta` ({title, comment, artist}) is written here, in the same pass:
-    publish.py captions a reel from these tags alone, and a separate remux
-    afterwards is one more read and write of the delivered file."""
-    cmd = [FFMPEG, "-y", "-hide_banner"] + in_argv
-    cmd += ["-filter_complex", filter_complex, "-map", "[vout]", "-map",
-            "[aout]", "-t", "%.3f" % dur,
-            "-c:v", "libx264", "-crf", str(ENCODE["crf"]),
-            "-preset", ENCODE["preset"], "-pix_fmt", "yuv420p",
-            "-r", str(FPS)]
-    if subprocess.run(cmd + _deliver(meta, out)).returncode != 0:
-        raise SystemExit("ffmpeg render failed")
-
-
-def encode_gpu(in_argv, filter_complex, dur, out, meta, tmp, style):
-    """`encode`'s file from the same graph through tools/render_gpu (picture
-    only, VideoToolbox H.264), then `mux` for the sound, the colour tags and
-    the mp4 tags. No silent fallback: a missing or stale binary is an install
-    problem."""
+def encode(in_argv, filter_complex, dur, out, meta, tmp, style):
+    """The style's finished graph out to `out`: `in_argv` is the input list
+    its build_graph returned, and the graph ends on [vout] + [aout].
+    tools/render_gpu renders [vout] to a picture-only VideoToolbox H.264,
+    then `mux` adds the sound, the colour tags and the mp4 tags. A missing
+    or stale binary is an install problem, never a fallback."""
     if not os.access(GPU_BIN, os.X_OK):
-        raise SystemExit("tools/render_gpu missing: run ./install.sh "
-                         "(or render with --renderer ffmpeg)")
+        raise SystemExit("tools/render_gpu missing: run ./install.sh")
     if os.path.getmtime(GPU_SRC) > os.path.getmtime(GPU_BIN):
         raise SystemExit("tools/render_gpu is older than %s: run ./install.sh"
                          % os.path.relpath(GPU_SRC))
@@ -206,12 +180,13 @@ def encode_gpu(in_argv, filter_complex, dur, out, meta, tmp, style):
 
 
 def mux(video, in_argv, filter_complex, dur, out, meta, tags):
-    """The delivered file from a picture encoded elsewhere: `video`
-    stream-copied beside the [0:a] -> [aout] chain of the same graph, run on
-    the same first input `encode` would read. VideoToolbox writes no VUI, so
-    `tags` (render_gpu's report of the last frame) go into the SPS the way
-    x264 writes them from the same frame: video_format 5, the range flag, the
-    colour description, the sample aspect ratio."""
+    """The delivered file: `video` stream-copied beside the graph's
+    [0:a] -> [aout] chain, run on its first input. `meta` ({title, comment,
+    artist}) is written here: publish.py captions a reel from these tags
+    alone. VideoToolbox writes no VUI, so `tags` (render_gpu's report of the
+    last frame) go into the SPS the way an ffmpeg encode tags the same frame:
+    video_format 5, the range flag, the colour description, the sample
+    aspect ratio."""
     first = in_argv[:in_argv.index("-i") + 2]
     audio = next(c for c in filter_complex.split(";") if c.startswith("[0:a]"))
     vui = ("h264_metadata=video_format=5:video_full_range_flag=%d:"
@@ -221,13 +196,9 @@ def mux(video, in_argv, filter_complex, dur, out, meta, tags):
                tags["color_trc"], tags["colorspace"]) + tuple(tags["sar"])))
     cmd = [FFMPEG, "-y", "-hide_banner"] + first
     cmd += ["-i", video, "-filter_complex", audio, "-map", "1:v", "-map",
-            "[aout]", "-t", "%.3f" % dur, "-c:v", "copy", "-bsf:v", vui]
-    if subprocess.run(cmd + _deliver(meta, out)).returncode != 0:
-        raise SystemExit("ffmpeg mux failed")
-
-
-def _deliver(meta, out):
-    tail = ["-c:a", "aac", "-b:a", ENCODE["audio_bitrate"]]
+            "[aout]", "-t", "%.3f" % dur, "-c:v", "copy", "-bsf:v", vui,
+            "-c:a", "aac", "-b:a", AUDIO["bitrate"]]
     for k, v in (meta or {}).items():
-        tail += ["-metadata", "%s=%s" % (k, v)]
-    return tail + ["-movflags", "+faststart", out]
+        cmd += ["-metadata", "%s=%s" % (k, v)]
+    if subprocess.run(cmd + ["-movflags", "+faststart", out]).returncode:
+        raise SystemExit("ffmpeg mux failed")

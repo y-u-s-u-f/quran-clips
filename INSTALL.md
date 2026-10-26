@@ -1,6 +1,6 @@
 # Installing quran-clips
 
-macOS or Linux. One script does the whole setup and is safe to re-run:
+macOS: rendering runs on Metal (`tools/render_gpu`), so there is no rendering on Linux; fetch, transcription, alignment and publishing run there too. One script does the whole setup and is safe to re-run:
 
 ```sh
 ./install.sh            # install everything
@@ -23,9 +23,9 @@ sudo apt install ffmpeg yt-dlp python3-venv
 | tool | needed by | notes |
 |---|---|---|
 | `python3` | everything | 3.10+ |
-| `ffmpeg` / `ffprobe` | rendering, probing, audio | the bars `heat` effect needs ffmpeg's `perlin` source (ffmpeg ≥ 7.1); older builds work with `fx: {heat: false}` in the reel config |
+| `ffmpeg` / `ffprobe` | cutting, probing, audio, the mux, the bars bakes | the bars `heat` effect needs ffmpeg's `perlin` source (ffmpeg ≥ 7.1); older builds work with `fx: {heat: false}` in the reel config |
 | `yt-dlp` | `fetch.py` for YouTube sources | local files work without it |
-| `swiftc` | building `tools/render_gpu`, every style's renderer | macOS: `xcode-select --install`. Without Metal (Linux) render with `generate.py --renderer ffmpeg` |
+| `swiftc` | building `tools/render_gpu`, every style's renderer | macOS: `xcode-select --install`. No Metal (Linux): no rendering |
 
 ## 2. The three Python environments
 
@@ -37,7 +37,7 @@ sudo apt install ffmpeg yt-dlp python3-venv
 
 `fetch.py`, `transcribe.py`, `quran.py`, `publish.py` and `letterbox.py` run on any plain `python3`.
 
-`install.sh` also compiles `pipeline/gpu/render_gpu.swift` to `tools/render_gpu` (Metal + VideoToolbox), and recompiles it whenever the source is newer. `generate.py` refuses a missing or stale binary rather than fall back; `tests/gpu_parity.py` checks a new machine's GPU against the ffmpeg graph.
+`install.sh` also compiles `pipeline/gpu/render_gpu.swift` to `tools/render_gpu` (Metal + VideoToolbox), and recompiles it whenever the source is newer. `generate.py` refuses a missing or stale binary rather than fall back; `tests/gpu_parity.py` checks a new machine's GPU against the frame goldens (pinned on an M1; another Mac may differ in the last bit -- see AGENTS.md invariant 4).
 
 ### Arabic shaping (RAQM) — the one thing worth understanding
 

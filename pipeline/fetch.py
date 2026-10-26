@@ -199,7 +199,7 @@ def cap_fps(src, dst):
     print("  fps     : %.3f -> %d (re-encoded once, at intake)"
           % (video_info(src)[2], MAX_FPS))
     # crf 16: this copy becomes the master every reel is cut from, so it is
-    # encoded well above the crf 18 the reels themselves are delivered at.
+    # encoded well above the crf 18 equivalent the reels are delivered at.
     acodec = ["-c:a", "copy"] if audio_codec(src) == "aac" else \
         ["-c:a", "aac", "-b:a", "192k"]
     tmp = dst + ".part.mp4"

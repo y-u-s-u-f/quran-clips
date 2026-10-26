@@ -8,7 +8,8 @@ emitted filtergraph byte-identical to the frozen golden. The measurement notes
 justifying every number (bars.yaml, FX_RECIPE.md) are in git history.
 
 Contents:
-  Graph            a small chain/label builder for -filter_complex
+  Graph            a small chain/label builder for the filtergraph
+                   tools/render_gpu runs
   Ctx              attribute bag the effects read canvas/band facts from
   Glow ... Heat    the six switchable band stages
   render_snow      the Node Video "Snow" procedural shader, evaluated with
@@ -21,7 +22,7 @@ import sys
 
 from PIL import Image, ImageChops
 
-from render_common import FFMPEG, THREAD_QUEUE_SIZE
+from render_common import FFMPEG
 
 
 # ---------------------------------------------------------------------------
@@ -77,14 +78,13 @@ class Graph(object):
         self._ninputs = 0
 
     def input(self, path, **kw):
-        """Record an ffmpeg input; kwargs become the pre -i options in the
-        order given. Returns the video pad ref; use .a for audio."""
+        """Record an input; kwargs become the pre -i options in the order
+        given. Returns the video pad ref; use .a for audio."""
         idx = self._ninputs
         self._ninputs += 1
         for k, val in kw.items():
             self._argv += ["-" + k, str(val)]
-        self._argv += ["-thread_queue_size", str(THREAD_QUEUE_SIZE),
-                       "-i", path]
+        self._argv += ["-i", path]
         return Ref("%d:v" % idx)
 
     def chain(self, ins, filters, outs):

@@ -31,8 +31,7 @@ reel re-renders identically on a machine with no vision model at all):
 
 `horizontal --vertical` composes the whole look at 1080x608, the size the
 portrait file shows the picture, and pads it to 1080x1920 (geometry()).
-The graph runs on tools/render_gpu (render_common.encode_gpu) unless
-`--renderer ffmpeg`.
+The graph is tools/render_gpu's input (render_common.encode).
 
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
@@ -50,8 +49,7 @@ sys.path.insert(0, HERE)
 
 from render_common import (FADE_IN_S, FADE_OUT_S, FPS,  # noqa: E402
                            PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W, PROBE,
-                           THREAD_QUEUE_SIZE,
-                           audio_fades, encode, encode_gpu, fit_pt,
+                           audio_fades, encode, fit_pt,
                            loudnorm_filter, measure_loudness, norm_ar,
                            source_chain, trim_to_ink)
 
@@ -696,20 +694,14 @@ def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
 
     Only the cards are looped, because only they fade: `fade` needs a frame
     at every timestamp to ramp over. The grade plate and the signature never
-    change, so each is ONE decoded frame that overlay's default
-    eof_action=repeat holds for the whole reel -- same pixels, no per-frame
-    PNG decode. Every looped input is bounded by the output's `-t`: a
-    `-loop 1` input never EOFs, and overlay's default eof_action would leave
-    the graph with no end at all -- the encode runs forever into a file with
-    no moov atom.
+    change, so each is ONE frame that overlay's default eof_action=repeat
+    holds for the whole reel. The output's `-t` bounds the looped cards.
     """
-    tqs = ["-thread_queue_size", str(THREAD_QUEUE_SIZE)]
-    argv = ["-ss", "0.000", "-t", "%.3f" % dur] + tqs + ["-i", src]
-    argv += tqs + ["-i", grade_png]
+    argv = ["-ss", "0.000", "-t", "%.3f" % dur, "-i", src, "-i", grade_png]
     for c in cards:
-        argv += ["-framerate", str(FPS), "-loop", "1"] + tqs + ["-i", c["path"]]
+        argv += ["-framerate", str(FPS), "-loop", "1", "-i", c["path"]]
     if sig:
-        argv += tqs + ["-i", sig[0]]
+        argv += ["-i", sig[0]]
 
     parts = ["[0:v]%s,setsar=1,fps=%d,format=rgba[bg];"
              "[1:v]format=rgba[grd];[bg][grd]overlay=0:0:format=auto[b0]"
@@ -807,10 +799,7 @@ def render(plan):
     print("      " + " | ".join(
         "P%d in@%.2f out@%.2f" % (i + 1, ti, to)
         for i, (ti, _, to, _) in enumerate(sched)))
-    if (plan.get("renderer") or "gpu") == "gpu":
-        encode_gpu(in_argv, fc, dur, out, plan.get("meta"), tmp, orientation)
-    else:
-        encode(in_argv, fc, dur, out, plan.get("meta"))
+    encode(in_argv, fc, dur, out, plan.get("meta"), tmp, orientation)
     print("      %s | %dx%d%s | %s"
           % (os.path.relpath(out, ROOT), W, H,
              " padded to %dx%d" % (PORTRAIT_W, PORTRAIT_H) if portrait else "",
