@@ -239,6 +239,12 @@ kernel void k_copy(device const uchar* s [[buffer(0)]], device uchar* d [[buffer
     int x = g.x, y = g.y; if (x >= P(0) || y >= P(1)) return;
     d[(y + P(7)) * P(5) + x + P(6)] = s[(y + P(4)) * P(2) + x + P(3)];
 }
+kernel void k_copy4(device const uchar4* s [[buffer(0)]], device uchar4* d [[buffer(1)]],
+                    constant int* prm [[buffer(2)]], uint2 g [[thread_position_in_grid]]) {
+    // k_copy's params, every width, stride and x offset in 4-byte units
+    int x = g.x, y = g.y; if (x >= P(0) || y >= P(1)) return;
+    d[(y + P(7)) * P(5) + x + P(6)] = s[(y + P(4)) * P(2) + x + P(3)];
+}
 kernel void k_fill(device uchar* d [[buffer(0)]], constant int* prm [[buffer(1)]],
                    uint g [[thread_position_in_grid]]) {
     if ((int)g < P(0)) d[g] = uchar(P(1));
@@ -305,6 +311,55 @@ kernel void k_rgb2uv(device const uchar* r [[buffer(0)]], device const uchar* gg
         dv[o] = ushort(v >> 10);
     }
 }
+// k_rgb2y -> k_hscale16 -> k_vplane in one pass, for a one-tap vertical luma
+// filter (an RGB -> YUV conversion that keeps the height); rows y0..yEnd.
+// A zero tap adds nothing, so it is not converted.
+kernel void k_rgb2y_fused(device const uchar* r [[buffer(0)]], device const uchar* gg [[buffer(1)]],
+                          device const uchar* b [[buffer(2)]], device uchar* d [[buffer(3)]],
+                          device const int* hp [[buffer(4)]], device const short* hf [[buffer(5)]],
+                          device const int* vp [[buffer(6)]], constant int* prm [[buffer(7)]],
+                          uint2 g [[thread_position_in_grid]]) {
+    // srcW, dW, y0, yEnd, ry, gy, by, hfsize
+    int x = g.x, y = g.y + P(2); if (x >= P(1) || y >= P(3)) return;
+    int row = vp[y] * P(0), fs = P(7), acc = 0;
+    for (int j = 0; j < fs; j++) {
+        int c = hf[x * fs + j], i = hp[x] + j;
+        if (c == 0 || i >= P(0)) continue;
+        uint v = uint(P(4)) * uint(r[row + i]) + uint(P(5)) * uint(gg[row + i]) + uint(P(6)) * uint(b[row + i]) + (0x801u << 8);
+        acc += int(ushort(as_type<int>(v) >> 9)) * c;
+    }
+    short h = short(min(acc >> 13, 32767));
+    d[y * P(1) + x] = uchar(clamp((int(h) + 64) >> 7, 0, 255));
+}
+// k_rgb2uv -> k_hscale16 in one pass; rows y0..yEnd
+kernel void k_rgb2uv_fused(device const uchar* r [[buffer(0)]], device const uchar* gg [[buffer(1)]],
+                           device const uchar* b [[buffer(2)]], device short* du [[buffer(3)]],
+                           device short* dv [[buffer(4)]], device const int* hp [[buffer(5)]],
+                           device const short* hf [[buffer(6)]], constant int* prm [[buffer(7)]],
+                           uint2 g [[thread_position_in_grid]]) {
+    // srcW, chroma srcW, chroma dW, y0, yEnd, half, ru, gu, bu, rv, gv, bv, hfsize
+    int x = g.x, y = g.y + P(3); if (x >= P(2) || y >= P(4)) return;
+    int fs = P(12), au = 0, av = 0;
+    for (int j = 0; j < fs; j++) {
+        int k = hf[x * fs + j], c = hp[x] + j;
+        if (k == 0 || c >= P(1)) continue;
+        uint u, v;
+        if (!P(5)) {
+            int i = y * P(0) + c;
+            u = ushort(as_type<int>(uint(P(6)) * uint(r[i]) + uint(P(7)) * uint(gg[i]) + uint(P(8)) * uint(b[i]) + (0x4001u << 8)) >> 9);
+            v = ushort(as_type<int>(uint(P(9)) * uint(r[i]) + uint(P(10)) * uint(gg[i]) + uint(P(11)) * uint(b[i]) + (0x4001u << 8)) >> 9);
+        } else {
+            int i = y * P(0) + 2 * c;
+            uint rr = uint(r[i]) + uint(r[i + 1]), g2 = uint(gg[i]) + uint(gg[i + 1]), bb = uint(b[i]) + uint(b[i + 1]);
+            u = ushort((uint(P(6)) * rr + uint(P(7)) * g2 + uint(P(8)) * bb + (0x4001u << 9)) >> 10);
+            v = ushort((uint(P(9)) * rr + uint(P(10)) * g2 + uint(P(11)) * bb + (0x4001u << 9)) >> 10);
+        }
+        au += int(u) * k; av += int(v) * k;
+    }
+    int o = y * P(2) + x;
+    du[o] = short(min(au >> 13, 32767));
+    dv[o] = short(min(av >> 13, 32767));
+}
 kernel void k_lumtojpeg(device short* d [[buffer(0)]], constant int* prm [[buffer(1)]],
                         uint i [[thread_position_in_grid]]) {
     // n, coeff, offset   (ff_lumRangeToJpeg8_neon: 32-bit mla, sqshrn #14)
@@ -315,8 +370,8 @@ kernel void k_lumtojpeg(device short* d [[buffer(0)]], constant int* prm [[buffe
 kernel void k_vplane(device const short* s [[buffer(0)]], device uchar* d [[buffer(1)]],
                      device const int* fpos [[buffer(2)]], device const short* f [[buffer(3)]],
                      constant int* prm [[buffer(4)]], uint2 g [[thread_position_in_grid]]) {
-    // W, dstH, fsize   (yuv2planeX_8 / yuv2plane1_8, dither 64)
-    int x = g.x, y = g.y; if (x >= P(0) || y >= P(1)) return;
+    // W, dstH, fsize, y0   (yuv2planeX_8 / yuv2plane1_8, dither 64); rows y0..dstH
+    int x = g.x, y = g.y + P(3); if (x >= P(0) || y >= P(1)) return;
     int fs = P(2), pos = fpos[y], w = P(0);
     if (fs == 1) { d[y * w + x] = uchar(clamp((int(s[pos * w + x]) + 64) >> 7, 0, 255)); return; }
     int v = 64 << 12;
@@ -494,6 +549,37 @@ kernel void k_ovl_rgba(device uchar* dR [[buffer(0)]], device uchar* dG [[buffer
     }
     if (alpha == 255) dA[o] = sA[s];
     else if (alpha != 0) dA[o] = uchar(ad + fdiv255((255 - ad) * int(sA[s])));
+}
+// k_ovl_rgba over a copy of main, in one pass: every output pixel, 4 a thread
+kernel void k_ovl_rgba4(device const uchar4* mR [[buffer(0)]], device const uchar4* mG [[buffer(1)]],
+                        device const uchar4* mB [[buffer(2)]], device const uchar4* mA [[buffer(3)]],
+                        device uchar4* dR [[buffer(4)]], device uchar4* dG [[buffer(5)]],
+                        device uchar4* dB [[buffer(6)]], device uchar4* dA [[buffer(7)]],
+                        device const uchar* sR [[buffer(8)]], device const uchar* sG [[buffer(9)]],
+                        device const uchar* sB [[buffer(10)]], device const uchar* sA [[buffer(11)]],
+                        constant int* prm [[buffer(12)]], uint2 g [[thread_position_in_grid]]) {
+    // dW / 4, dH, sW, sH, x, y
+    int Y = g.y; if ((int)g.x >= P(0) || Y >= P(1)) return;
+    int o = Y * P(0) + g.x;
+    uchar4 r = mR[o], gg = mG[o], b = mB[o], a = mA[o];
+    int i = Y - P(5);
+    if (i >= 0 && i < min(P(3), P(1))) {
+        for (int k = 0; k < 4; k++) {
+            int j = int(g.x) * 4 + k - P(4);
+            if (j < 0 || j >= P(2)) continue;
+            int s = i * P(2) + j;
+            int alpha = sA[s], ad = a[k];
+            if (alpha != 0 && alpha != 255) alpha = unpre(alpha, ad);
+            if (alpha == 255) { r[k] = sR[s]; gg[k] = sG[s]; b[k] = sB[s]; a[k] = sA[s]; }
+            else if (alpha != 0) {
+                r[k] = uchar(fdiv255(int(r[k]) * (255 - alpha) + int(sR[s]) * alpha));
+                gg[k] = uchar(fdiv255(int(gg[k]) * (255 - alpha) + int(sG[s]) * alpha));
+                b[k] = uchar(fdiv255(int(b[k]) * (255 - alpha) + int(sB[s]) * alpha));
+                a[k] = uchar(ad + fdiv255((255 - ad) * int(sA[s])));
+            }
+        }
+    }
+    dR[o] = r; dG[o] = gg; dB[o] = b; dA[o] = a;
 }
 kernel void k_ovl_yuva_plane(device uchar* d [[buffer(0)]], device const uchar* s [[buffer(1)]],
                              device const uchar* a [[buffer(2)]], device const uchar* da [[buffer(3)]],
@@ -754,6 +840,9 @@ final class Img {
     let pf: PF, w: Int, h: Int
     var p: [MTLBuffer]
     var meta: Meta
+    // The only rows of these buffers that can change from frame to frame
+    // (pad's band); nil: any row.
+    var live: Range<Int>?
     init(_ pf: PF, _ w: Int, _ h: Int, _ meta: Meta, planes: [MTLBuffer]? = nil) {
         self.pf = pf; self.w = w; self.h = h; self.meta = meta
         p = planes ?? (0..<Img.nplanes(pf)).map { i in
@@ -778,7 +867,11 @@ final class Img {
 
 func copyPlane(_ s: MTLBuffer, _ d: MTLBuffer, w: Int, h: Int, sstride: Int, sx: Int = 0, sy: Int = 0,
                dstride: Int, dx: Int = 0, dy: Int = 0) {
-    gpu.run("k_copy", [s, d], [w, h, sstride, sx, sy, dstride, dx, dy].map { Int32($0) }, grid: (w, h))
+    if [w, sstride, sx, dstride, dx].allSatisfy({ $0 % 4 == 0 }) {
+        gpu.run("k_copy4", [s, d], [w / 4, h, sstride / 4, sx / 4, sy, dstride / 4, dx / 4, dy].map { Int32($0) }, grid: (w / 4, h))
+    } else {
+        gpu.run("k_copy", [s, d], [w, h, sstride, sx, sy, dstride, dx, dy].map { Int32($0) }, grid: (w, h))
+    }
 }
 func fillPlane(_ d: MTLBuffer, _ n: Int, _ v: Int) { gpu.run("k_fill", [d], [Int32(n), Int32(v)], grid: (n, 1)) }
 func copyImg(_ s: Img, _ d: Img) {
@@ -1059,6 +1152,7 @@ final class Sws {
     var out: Img?
     var tabY: MTLBuffer?, tabT: MTLBuffer?
     var alphaFilled = false
+    var primed: [ObjectIdentifier]?
 
     init(src: Img, dstPF: PF, w: Int, h: Int, flags: Int) {
         self.src = (src.pf, src.w, src.h, src.meta)
@@ -1171,6 +1265,34 @@ final class Sws {
         let srcW = s.w, srcH = s.h
         let srgb = s.pf == .rgb || s.pf == .rgba
         let hl = self.hl!, vl = self.vl!
+        if srgb && dstPF == .yuv420 && rangeLum == nil && vl.size == 1, let hc = hc, let vc = vc {
+            // a height-keeping RGB -> YUV conversion: each luma row is one
+            // source row's, fused with its horizontal pass. Rows outside
+            // s.live are what the first frame off the same buffers made, so
+            // only rows reaching the live band are redone.
+            let ids = s.p.map { ObjectIdentifier($0) }
+            var rows = 0..<srcH
+            if let l = s.live, primed == ids { rows = l } else { primed = ids }
+            func span(_ f: SwsFilter, _ n: Int) -> (Int, Int) {
+                let hit = (0..<n).filter { j in Int(f.pos[j]) < rows.upperBound && Int(f.pos[j]) + f.size > rows.lowerBound }
+                return (hit.first ?? 0, (hit.last ?? -1) + 1)
+            }
+            let t = rgb2yuvTable(dmeta.csp)
+            let (ly0, ly1) = span(vl, dh)
+            if ly1 > ly0 {
+                gpu.run("k_rgb2y_fused", [s.p[0], s.p[1], s.p[2], o.p[0], bufs["hlp"]!, bufs["hlf"]!, bufs["vlp"]!],
+                        [Int32(srcW), Int32(dw), Int32(ly0), Int32(ly1), t.ry, t.gy, t.by, Int32(hl.size)], grid: (dw, ly1 - ly0))
+            }
+            gpu.run("k_rgb2uv_fused", [s.p[0], s.p[1], s.p[2], bufs["hU"]!, bufs["hV"]!, bufs["hcp"]!, bufs["hcf"]!],
+                    [Int32(srcW), Int32(chrSrcW), Int32(chrDstW), Int32(rows.lowerBound), Int32(rows.upperBound), chrHalf ? 1 : 0,
+                     t.ru, t.gu, t.bu, t.rv, t.gv, t.bv, Int32(hc.size)], grid: (chrDstW, rows.count))
+            let (cy0, cy1) = span(vc, chrDstH)
+            for (k, pi) in [("hU", 1), ("hV", 2)] where cy1 > cy0 {
+                gpu.run("k_vplane", [bufs[k]!, o.p[pi], bufs["vcp"]!, bufs["vcf"]!],
+                        [Int32(chrDstW), Int32(cy1), Int32(vc.size), Int32(cy0)], grid: (chrDstW, cy1 - cy0))
+            }
+            return o
+        }
         // horizontal luma
         if srgb {
             let t = rgb2yuvTable(dmeta.csp)
@@ -1204,11 +1326,11 @@ final class Sws {
         // vertical
         switch dstPF {
         case .yuv420, .gray:
-            gpu.run("k_vplane", [bufs["hY"]!, o.p[0], bufs["vlp"]!, bufs["vlf"]!], [Int32(dw), Int32(dh), Int32(vl.size)], grid: (dw, dh))
+            gpu.run("k_vplane", [bufs["hY"]!, o.p[0], bufs["vlp"]!, bufs["vlf"]!], [Int32(dw), Int32(dh), Int32(vl.size), 0], grid: (dw, dh))
             if dstPF == .yuv420, let vc = vc {
                 for (k, pi) in [("hU", 1), ("hV", 2)] {
                     gpu.run("k_vplane", [bufs[k]!, o.p[pi], bufs["vcp"]!, bufs["vcf"]!],
-                            [Int32(chrDstW), Int32(chrDstH), Int32(vc.size)], grid: (chrDstW, chrDstH))
+                            [Int32(chrDstW), Int32(chrDstH), Int32(vc.size), 0], grid: (chrDstW, chrDstH))
                 }
             }
         case .rgb:
@@ -1855,8 +1977,14 @@ final class Graph {
             let x = norm(xe.eval(vars)), y = norm(ye.eval(vars))
             if out == nil { out = Img(main.pf, main.w, main.h, main.meta) }
             let o = out!
+            let inside = x < main.w && x + ov.w >= 0 && y < main.h && y + ov.h >= 0
+            if main.pf == .rgba && main.w % 4 == 0 && inside {
+                gpu.run("k_ovl_rgba4", main.p + o.p + ov.p, [main.w / 4, main.h, ov.w, ov.h, x, y].map { Int32($0) },
+                        grid: (main.w / 4, main.h))
+                return o
+            }
             copyImg(main, o)
-            guard x < main.w && x + ov.w >= 0 && y < main.h && y + ov.h >= 0 else { return o }
+            guard inside else { return o }
             let ip = [main.w, main.h, ov.w, ov.h, x, y].map { Int32($0) }
             if main.pf == .rgba {
                 gpu.run("k_ovl_rgba", [o.p[0], o.p[1], o.p[2], o.p[3], ov.p[0], ov.p[1], ov.p[2], ov.p[3], main.p[3]], ip, grid: (ov.w, ov.h))
@@ -2042,6 +2170,7 @@ final class Graph {
                 // black: tv-range YUV, or opaque RGBA 0x000000FF
                 let fill = src.pf == .yuv420 ? [16, 128, 128] : [0, 0, 0, 255]
                 for pi in 0..<fill.count { let (pw, ph) = out!.dims(pi); fillPlane(out!.p[pi], pw * ph, fill[pi]) }
+                out!.live = y..<(y + src.h)
             }
             for pi in 0..<src.p.count {
                 let ps = pi == 0 || pi == 3 ? 0 : sub
