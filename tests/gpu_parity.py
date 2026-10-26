@@ -181,12 +181,17 @@ def main(argv=None):
             inputs.update({k: sha(p) for k, p in media.items()})
             size, md5s = render_frames(fc, args, tmp)
             path, rel = golden(name), os.path.relpath(golden(name), GP.ROOT)
-            if a.bless or not os.path.exists(path):
+            if a.bless:
                 with open(path, "w") as f:
                     f.write("# " + json.dumps({"size": size, "inputs": inputs},
                                               sort_keys=True) + "\n")
                     f.writelines("%d %s\n" % kv for kv in enumerate(md5s))
                 print("blessed %s (%d frames)" % (rel, len(md5s)))
+                continue
+            if not os.path.exists(path):
+                ok = False
+                print("FAIL  %s: no golden %s; check the stills, then run with "
+                      "--bless" % (name, rel), file=sys.stderr)
                 continue
             head, want = read_golden(path)
             moved = [k for k in head["inputs"]
