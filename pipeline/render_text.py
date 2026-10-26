@@ -31,6 +31,8 @@ reel re-renders identically on a machine with no vision model at all):
 
 `horizontal --vertical` composes the whole look at 1080x608, the size the
 portrait file shows the picture, and pads it to 1080x1920 (geometry()).
+The graph runs on tools/render_gpu (render_common.encode_gpu) unless
+`--renderer ffmpeg`.
 
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
@@ -49,7 +51,7 @@ sys.path.insert(0, HERE)
 from render_common import (FADE_IN_S, FADE_OUT_S, FPS,  # noqa: E402
                            PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W, PROBE,
                            THREAD_QUEUE_SIZE,
-                           audio_fades, encode, fit_pt,
+                           audio_fades, encode, encode_gpu, fit_pt,
                            loudnorm_filter, measure_loudness, norm_ar,
                            source_chain, trim_to_ink)
 
@@ -805,7 +807,10 @@ def render(plan):
     print("      " + " | ".join(
         "P%d in@%.2f out@%.2f" % (i + 1, ti, to)
         for i, (ti, _, to, _) in enumerate(sched)))
-    encode(in_argv, fc, dur, out, plan.get("meta"))
+    if (plan.get("renderer") or "gpu") == "gpu":
+        encode_gpu(in_argv, fc, dur, out, plan.get("meta"), tmp, orientation)
+    else:
+        encode(in_argv, fc, dur, out, plan.get("meta"))
     print("      %s | %dx%d%s | %s"
           % (os.path.relpath(out, ROOT), W, H,
              " padded to %dx%d" % (PORTRAIT_W, PORTRAIT_H) if portrait else "",

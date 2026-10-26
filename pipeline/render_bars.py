@@ -10,14 +10,13 @@ Constants measured from reference reels; size 213pt / 96px pill / 0.45 W
 ink. The refs were measured on 720- and 1080-wide pictures and every constant
 here carries to this canvas's 1920 by the matching factor; each one names its
 own. Golden: tests/graph_parity.py, landscape and portrait.
-The graph runs on tools/bars_gpu (pipeline/gpu/bars_gpu.swift, a Metal port
-of exactly these filters) unless `--renderer ffmpeg`; tests/gpu_parity.py
-holds the two to each other. Cost: OPTIMIZATIONS.md. `fx: {heat: false}` for timing previews.
+The graph runs on tools/render_gpu (render_common.encode_gpu) unless
+`--renderer ffmpeg`. Cost: OPTIMIZATIONS.md. `fx: {heat: false}` for timing
+previews.
 
 Called by generate.py; not a standalone CLI.
 """
 import colorsys
-import json
 import math
 import os
 import subprocess
@@ -35,8 +34,8 @@ import fx as FX  # noqa: E402
 from generate import run  # noqa: E402
 from render_common import (FADE_IN_S, FADE_OUT_S, FFMPEG,  # noqa: E402
                            FPS, PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W,
-                           PROBE, audio_fades, encode, fit_pt,
-                           loudnorm_filter, measure_loudness, mux, norm_ar,
+                           PROBE, audio_fades, encode, encode_gpu, fit_pt,
+                           loudnorm_filter, measure_loudness, norm_ar,
                            source_chain, trim_to_ink)
 
 if not features.check("raqm"):
@@ -886,39 +885,6 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
 
 
 # ---------------------------------------------------------------------------
-# the GPU renderer
-# ---------------------------------------------------------------------------
-
-GPU_SRC = os.path.join(HERE, "gpu", "bars_gpu.swift")
-GPU_BIN = os.path.join(ROOT, "tools", "bars_gpu")
-# VideoToolbox H.264 quality for the GPU renderer's picture: the lowest that
-# matches the ffmpeg path's x264 crf 18 / faster. hujurat-4-5 --vertical
-# against its lossless frames: x264 48.87 dB PSNR-Y at 8.8 MB; VT 0.65 47.83
-# dB / 7.5 MB, 0.67 48.59 / 9.0 MB, 0.68 48.98 / 9.8 MB, 0.70 49.58 / 11.1 MB.
-VT_QUALITY = 0.68
-
-
-def encode_gpu(in_argv, fc, dur, out, meta, tmp):
-    """The same graph through tools/bars_gpu (picture only, VideoToolbox
-    H.264), then render_common.mux for the sound and the tags. No silent
-    fallback: a missing or stale binary is an install problem."""
-    if not os.access(GPU_BIN, os.X_OK):
-        raise SystemExit("tools/bars_gpu missing: run ./install.sh "
-                         "(or render with --renderer ffmpeg)")
-    if os.path.getmtime(GPU_SRC) > os.path.getmtime(GPU_BIN):
-        raise SystemExit("tools/bars_gpu is older than %s: run ./install.sh"
-                         % os.path.relpath(GPU_SRC, ROOT))
-    plan_path = os.path.join(tmp, "gpu-plan.json")
-    video = os.path.join(tmp, "gpu-video.mov")
-    with open(plan_path, "w") as f:
-        json.dump({"in_argv": in_argv, "fc": fc, "dur": dur,
-                   "vt_quality": VT_QUALITY}, f)
-    if subprocess.run([GPU_BIN, plan_path, video]).returncode != 0:
-        raise SystemExit("bars_gpu failed")
-    mux(video, in_argv, fc, dur, out, meta)
-
-
-# ---------------------------------------------------------------------------
 # the style entry point
 # ---------------------------------------------------------------------------
 
@@ -987,7 +953,7 @@ def render(plan):
         "P%d %s in@%.2f+%.2f out@%.2f+%.2f" % (i + 1, k, ti, di, to, do)
         for i, (k, ti, di, to, do) in enumerate(sched)))
     if (plan.get("renderer") or "gpu") == "gpu":
-        encode_gpu(in_argv, fc, dur, out, plan.get("meta"), tmp)
+        encode_gpu(in_argv, fc, dur, out, plan.get("meta"), tmp, "bars")
     else:
         encode(in_argv, fc, dur, out, plan.get("meta"))
     print("      %s | %dx%d%s | bar #%02X%02X%02X (drawn #%02X%02X%02X)"

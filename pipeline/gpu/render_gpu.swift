@@ -1,21 +1,23 @@
-// pipeline/gpu/bars_gpu.swift -- the `bars` filtergraph on the GPU.
+// pipeline/gpu/render_gpu.swift -- every style's filtergraph on the GPU.
 //
-// render_bars.py builds the bars look as an ffmpeg filtergraph; this binary
-// runs THAT graph -- the same -filter_complex string and input argv, read from
-// a JSON plan -- on Metal, so every constant stays in Python and the graph
-// stays the spec. Each filter is a port of its ffmpeg 9.0.2 C (or, where the
-// arm64 build dispatches to it, NEON) implementation in the same order and
-// precision: swscale's initFilter / hscale / vscale / yuv2rgb, eq's LUT,
-// colorbalance's float path, vignette's dither LCG, gblur's IIR, ... --
+// render_bars.py and render_text.py build their looks as ffmpeg filtergraphs;
+// this binary runs THAT graph -- the same -filter_complex string and input
+// argv, read from a JSON plan -- on Metal, so every constant stays in Python
+// and the graph stays the spec. No style is named here: a style is the set of
+// filters its graph uses. Each filter is a port of its ffmpeg 9.0.2 C (or,
+// where the arm64 build dispatches to it, NEON) implementation in the same
+// order and precision: swscale's initFilter / hscale / vscale / yuv2rgb, eq's
+// LUT, colorbalance's float path, vignette's dither LCG, gblur's IIR, ... --
 // pinned against ffmpeg by tests/gpu_parity.py. Only the filters and
-// argument forms the bars graph uses are implemented; anything else is a
+// argument forms the two renderers emit are implemented; anything else is a
 // loud error, never a guess.
 //
-// usage: bars_gpu PLAN.json OUT [--raw] [--tap LABEL] [--frames N]
+// usage: render_gpu PLAN.json OUT [--raw] [--tap LABEL] [--frames N]
 //   OUT    video-only H.264 (VideoToolbox) .mov, or with --raw the
 //          uncompressed planes of every frame (ffmpeg plane order)
 //   --tap  render LABEL instead of [vout]; prints its pixel format
-// Built by ./install.sh into tools/bars_gpu.
+// Prints the picture's colour tags as JSON on stdout (render_common.mux
+// writes them into the stream). Built by ./install.sh into tools/render_gpu.
 import AVFoundation
 import CoreVideo
 import Foundation
@@ -23,7 +25,7 @@ import ImageIO
 import Metal
 
 func die(_ s: String) -> Never {
-    FileHandle.standardError.write(("bars_gpu: " + s + "\n").data(using: .utf8)!)
+    FileHandle.standardError.write(("render_gpu: " + s + "\n").data(using: .utf8)!)
     exit(1)
 }
 
@@ -344,6 +346,32 @@ kernel void k_vgbrp(device const short* Y [[buffer(0)]], device const short* U [
     int o = y * w + x;
     R[o] = uchar(r >> 22); G[o] = uchar(gg >> 22); B[o] = uchar(b >> 22);
 }
+kernel void k_vrgba(device const short* Y [[buffer(0)]], device const short* U [[buffer(1)]],
+                    device const short* V [[buffer(2)]], device uchar* R [[buffer(3)]],
+                    device uchar* G [[buffer(4)]], device uchar* B [[buffer(5)]],
+                    device const int* lpos [[buffer(6)]], device const short* lf [[buffer(7)]],
+                    device const int* cpos [[buffer(8)]], device const short* cf [[buffer(9)]],
+                    device const uchar* ytab [[buffer(10)]], device const int* t [[buffer(11)]],
+                    constant int* prm [[buffer(12)]], uint2 g [[thread_position_in_grid]]) {
+    // W, H, lfs, cfs, chroma W   (yuv2rgbx32_X_c: two pixels per chroma sample, table lookup)
+    int i = g.x, y = g.y, w = P(0); if (2 * i >= w || y >= P(1)) return;
+    int lfs = P(2), cfs = P(3), cw = P(4), lp = lpos[y], cp = cpos[y];
+    int y1 = 1 << 18, y2 = 1 << 18, u = 1 << 18, v = 1 << 18;
+    for (int j = 0; j < lfs; j++) {
+        int c = lf[y * lfs + j];
+        y1 += int(Y[(lp + j) * w + 2 * i]) * c;
+        y2 += int(Y[(lp + j) * w + 2 * i + 1]) * c;
+    }
+    for (int j = 0; j < cfs; j++) {
+        int c = cf[y * cfs + j];
+        u += int(U[(cp + j) * cw + i]) * c;
+        v += int(V[(cp + j) * cw + i]) * c;
+    }
+    y1 >>= 19; y2 >>= 19; u = clamp(u >> 19, 0, 255); v = clamp(v >> 19, 0, 255);
+    int r = t[v], gg = t[256 + u] + t[512 + v], b = t[768 + u], o = y * w + 2 * i;
+    R[o] = ytab[r + y1]; G[o] = ytab[gg + y1]; B[o] = ytab[b + y1];
+    if (2 * i + 1 < w) { R[o + 1] = ytab[r + y2]; G[o + 1] = ytab[gg + y2]; B[o + 1] = ytab[b + y2]; }
+}
 kernel void k_yuv2rgb_tab(device const uchar* Yp [[buffer(0)]], device const uchar* Up [[buffer(1)]],
                           device const uchar* Vp [[buffer(2)]], device uchar* R [[buffer(3)]],
                           device uchar* G [[buffer(4)]], device uchar* B [[buffer(5)]],
@@ -663,9 +691,9 @@ final class GPU {
         }
         return c
     }
-    // BARS_GPU_PROF: every dispatch in an encoder of its own, timed by the GPU's
+    // RENDER_GPU_PROF: every dispatch in an encoder of its own, timed by the GPU's
     // timestamp counter (ns on Apple GPUs)
-    let prof = ProcessInfo.processInfo.environment["BARS_GPU_PROF"] != nil
+    let prof = ProcessInfo.processInfo.environment["RENDER_GPU_PROF"] != nil
     var profT: [String: Double] = [:], profNames: [String] = []
     lazy var sampler: MTLCounterSampleBuffer? = {
         let d = MTLCounterSampleBufferDescriptor()
@@ -713,6 +741,13 @@ struct Meta {
     var hloc = 128         // av_chroma_location_enum_to_pos x (0 left, 128 center)
     var vloc = 128
     var sar = (1, 1)
+    // The matrix an RGB -> YUV conversion downstream lands on: ffmpeg's
+    // format negotiation carries the source's csp through every
+    // single-input filter and overlay's main, and loses it at a framesync
+    // filter whose inputs disagree (bars: the heat maps are untagged).
+    var ncsp = 2
+    // H.273 primaries / transfer: frame properties every filter passes on
+    var prim = 2, trc = 2
 }
 
 final class Img {
@@ -991,13 +1026,26 @@ struct Yuv2Rgb {
     }
 }
 
-// fill_rgb2yuv_table for the BT.601 default every RGB->YUV path here resolves to.
-let rgb2yuv: (ry: Int32, gy: Int32, by: Int32, ru: Int32, gu: Int32, bu: Int32, rv: Int32, gv: Int32, bv: Int32) = {
-    func r(_ v: Double) -> Int32 { Int32(v * Double(1 << 15) + 0.5) }
-    return (r(0.299 * 219 / 255), r(0.587 * 219 / 255), r(0.114 * 219 / 255),
-            -r(0.169 * 224 / 255), -r(0.331 * 224 / 255), r(0.500 * 224 / 255),
-            r(0.500 * 224 / 255), -r(0.419 * 224 / 255), -r(0.081 * 224 / 255))
-}()
+// fill_rgb2yuv_table (tv-range destination) for the destination's matrix:
+// computed from ff_yuv2rgb_coeffs, except the BT.601 default's hardcoded row.
+typealias Rgb2Yuv = (ry: Int32, gy: Int32, by: Int32, ru: Int32, gu: Int32, bu: Int32, rv: Int32, gv: Int32, bv: Int32)
+func rgb2yuvTable(_ csp: Int) -> Rgb2Yuv {
+    let t = yuv2rgbCoeffs(csp)
+    if t == yuv2rgbCoeffs(2) {
+        func r(_ v: Double) -> Int32 { Int32(v * Double(1 << 15) + 0.5) }
+        return (r(0.299 * 219 / 255), r(0.587 * 219 / 255), r(0.114 * 219 / 255),
+                -r(0.169 * 224 / 255), -r(0.331 * 224 / 255), r(0.500 * 224 / 255),
+                r(0.500 * 224 / 255), -r(0.419 * 224 / 255), -r(0.081 * 224 / 255))
+    }
+    let vr = t[0], ub = t[1], ug = -t[2], vg = -t[3]
+    let ONE: Int64 = 65536, cy = ONE * 255 / 219, S: Int64 = 1 << 15
+    let W = roundedDiv(ONE * ONE * ug, ub), V = roundedDiv(ONE * ONE * vg, vr), Z = ONE * ONE - W - V
+    let Cy = roundedDiv(cy * Z, ONE), Cu = roundedDiv(ub * Z, ONE), Cv = roundedDiv(vr * Z, ONE)
+    func d(_ a: Int64, _ b: Int64) -> Int32 { Int32(roundedDiv(a, b)) }
+    return (-d(S * V, Cy), d(S * ONE * ONE, Cy), -d(S * W, Cy),
+            d(S * V, Cu), -d(S * ONE * ONE, Cu), d(S * (Z + W), Cu),
+            d(S * (V + Z), Cv), -d(S * ONE * ONE, Cv), d(S * W, Cv))
+}
 
 final class Sws {
     let src: (PF, Int, Int, Meta), dstPF: PF, dw: Int, dh: Int, dmeta: Meta
@@ -1010,6 +1058,7 @@ final class Sws {
     var rangeLum: (Int32, Int32)?
     var out: Img?
     var tabY: MTLBuffer?, tabT: MTLBuffer?
+    var alphaFilled = false
 
     init(src: Img, dstPF: PF, w: Int, h: Int, flags: Int) {
         self.src = (src.pf, src.w, src.h, src.meta)
@@ -1017,8 +1066,10 @@ final class Sws {
         let srgb = src.pf == .rgb || src.pf == .rgba, drgb = dstPF == .rgb || dstPF == .rgba
         var m = Meta()
         m.sar = src.meta.sar
+        m.prim = src.meta.prim; m.trc = src.meta.trc
+        m.ncsp = srgb ? src.meta.ncsp : src.meta.csp
         if drgb { m.range = 1; m.csp = 0 } else if dstPF == .gray { m.range = 1; m.csp = src.meta.csp }
-        else { m.range = srgb ? 0 : src.meta.range; m.csp = srgb ? 2 : src.meta.csp; m.hloc = srgb ? 128 : src.meta.hloc; m.vloc = srgb ? 128 : src.meta.vloc }
+        else { m.range = srgb ? 0 : src.meta.range; m.csp = srgb ? m.ncsp : src.meta.csp; m.hloc = srgb ? 128 : src.meta.hloc; m.vloc = srgb ? 128 : src.meta.vloc }
         if (w, h) != (src.w, src.h) {
             // vf_scale's output SAR keeps the display aspect
             let n = src.meta.sar.0 * h * src.w, d = src.meta.sar.1 * w * src.h
@@ -1038,13 +1089,16 @@ final class Sws {
         }
         if unscaled && src.pf == .rgb && dstPF == .rgba { kind = .addAlpha; return }
         if unscaled && src.pf == .rgba && dstPF == .rgb { kind = .dropAlpha; return }
-        guard src.pf == .yuv420 || src.pf == .yuva420 || src.pf == .rgb else { die("sws from \(src.pf) not ported") }
-        guard dstPF == .yuv420 || dstPF == .gray || dstPF == .rgb else { die("sws to \(dstPF) not ported") }
+        guard src.pf == .yuv420 || src.pf == .yuva420 || srgb else { die("sws from \(src.pf) not ported") }
+        guard dstPF != .yuva420 else { die("sws to \(dstPF) not ported") }
+        // packed RGBA reuses one chroma sample for two pixels (no
+        // SWS_FULL_CHR_H_INT): legal for an even width off subsampled chroma
+        guard dstPF != .rgba || (w & 1 == 0 && !srgb) else { die("full-chroma rgba output not ported") }
         kind = .scaled
         let srcW = src.w, srcH = src.h
         var chrSrcHSub = (src.pf == .yuv420 || src.pf == .yuva420) ? 1 : 0
         let chrSrcVSub = chrSrcHSub
-        let chrDstHSub = dstPF == .yuv420 ? 1 : 0, chrDstVSub = chrDstHSub
+        let chrDstHSub = dstPF == .yuv420 || dstPF == .rgba ? 1 : 0, chrDstVSub = dstPF == .yuv420 ? 1 : 0
         if srgb && srcW & 1 == 0 && (w >> chrDstHSub) <= (srcW >> 1) { chrSrcHSub = 1; chrHalf = true }
         chrSrcW = (srcW + (1 << chrSrcHSub) - 1) >> chrSrcHSub
         chrSrcH = (srcH + (1 << chrSrcVSub) - 1) >> chrSrcVSub
@@ -1075,7 +1129,8 @@ final class Sws {
             guard srcRange == 0, dstPF == .gray else { die("range conversion \(srcRange)->\(dstRange) not ported") }
             rangeLum = (Int32(coeff), Int32(offset))
         }
-        if drgb { y2r = Yuv2Rgb(csp: srgb ? 0 : src.meta.csp, fullRange: false) }
+        if drgb { y2r = Yuv2Rgb(csp: src.meta.csp, fullRange: !srgb && src.meta.range == 1) }
+        if dstPF == .rgba { tabY = bufOf(y2r!.ytab); tabT = bufOf(y2r!.tabs) }
         for (k, f) in [("hl", hl), ("hc", hc), ("vl", vl), ("vc", vc)] {
             if let f = f { bufs[k + "p"] = bufOf(f.pos); bufs[k + "f"] = bufOf(f.coef) }
         }
@@ -1114,11 +1169,11 @@ final class Sws {
             return o
         }
         let srcW = s.w, srcH = s.h
-        let srgb = s.pf == .rgb
+        let srgb = s.pf == .rgb || s.pf == .rgba
         let hl = self.hl!, vl = self.vl!
         // horizontal luma
         if srgb {
-            let t = rgb2yuv
+            let t = rgb2yuvTable(dmeta.csp)
             gpu.run("k_rgb2y", [s.p[0], s.p[1], s.p[2], bufs["iY"]!], [Int32(srcW * srcH), t.ry, t.gy, t.by], grid: (srcW * srcH, 1))
             gpu.run("k_hscale16", [bufs["iY"]!, bufs["hY"]!, bufs["hlp"]!, bufs["hlf"]!],
                     [Int32(srcW), Int32(dw), Int32(srcH), Int32(hl.size), 13], grid: (dw, srcH))
@@ -1131,7 +1186,7 @@ final class Sws {
         }
         if let hc = hc {
             if srgb {
-                let t = rgb2yuv
+                let t = rgb2yuvTable(dmeta.csp)
                 gpu.run("k_rgb2uv", [s.p[0], s.p[1], s.p[2], bufs["iU"]!, bufs["iV"]!],
                         [Int32(srcW), Int32(srcH), chrHalf ? 1 : 0, t.ru, t.gu, t.bu, t.rv, t.gv, t.bv],
                         grid: (chrSrcW, chrSrcH))
@@ -1162,6 +1217,13 @@ final class Sws {
                                 bufs["vlp"]!, bufs["vlf"]!, bufs["vcp"]!, bufs["vcf"]!],
                     [Int32(dw), Int32(dh), Int32(vl.size), Int32(vc.size), y.yOff, y.yCoef, y.v2r, y.v2g, y.u2g, y.u2b],
                     grid: (dw, dh))
+        case .rgba:
+            let vc = self.vc!
+            gpu.run("k_vrgba", [bufs["hY"]!, bufs["hU"]!, bufs["hV"]!, o.p[0], o.p[1], o.p[2],
+                                bufs["vlp"]!, bufs["vlf"]!, bufs["vcp"]!, bufs["vcf"]!, tabY!, tabT!],
+                    [Int32(dw), Int32(dh), Int32(vl.size), Int32(vc.size), Int32(chrDstW)],
+                    grid: ((dw + 1) / 2, dh))
+            if !alphaFilled { fillPlane(o.p[3], dw * dh, 255); alphaFilled = true }
         default: die("unreachable")
         }
         return o
@@ -1183,6 +1245,7 @@ func parseInputs(_ argv: [String]) -> [InSpec] {
         case "-t": cur.t = durationUs(v)
         case "-framerate": cur.framerate = Int(v)
         case "-stream_loop": cur.loop = v == "-1"
+        case "-loop": if v != "1" { die("-loop \(v) not ported") }   // image2: the one PNG, every frame
         case "-thread_queue_size": break
         default: die("input option \(a) not ported")
         }
@@ -1215,6 +1278,14 @@ final class VideoIn {
         case nil: meta.csp = 2
         case "ITU_R_709_2"?: meta.csp = 1
         case let m?: die("YCbCr matrix \(m) not ported")
+        }
+        meta.ncsp = meta.csp
+        for (k, v) in [("CVImageBufferColorPrimaries", \Meta.prim), ("CVImageBufferTransferFunction", \Meta.trc)] {
+            switch ext[k] as? String {
+            case nil: meta[keyPath: v] = 2
+            case "ITU_R_709_2"?: meta[keyPath: v] = 1
+            case let m?: die("\(k) \(m) not ported")
+            }
         }
         // the chroma location tag is not read: ffmpeg's scale resolves to
         // centre siting on these left-tagged streams (measured: its output is
@@ -1420,6 +1491,14 @@ final class FpsNode: Node {
     }
 }
 
+// a framesync filter's output: the first input's properties, the
+// negotiated YUV matrix only where every input agrees on it
+func fsMeta(_ imgs: [Img]) -> Meta {
+    var m = imgs[0].meta
+    if !imgs.allSatisfy({ $0.meta.ncsp == m.ncsp }) { m.ncsp = 2 }
+    return m
+}
+
 func lut256(_ f: (Int) -> Int) -> MTLBuffer { bufOf((0..<256).map { UInt8(clamping: f($0)) }) }
 
 final class Graph {
@@ -1459,7 +1538,7 @@ final class Graph {
             while f < ch.filters.count {
                 let s = ch.filters[f]
                 if s.name == "format" { return s.pos.first ?? s.kv["pix_fmts"] }
-                if !["fade", "pad", "setsar"].contains(s.name) { return nil }
+                if !["fade", "pad", "setsar", "fps", "crop"].contains(s.name) { return nil }
                 f += 1
             }
             guard ch.outs.count == 1, let cons = consumers[ch.outs[0]], cons.count == 1 else { return nil }
@@ -1541,7 +1620,7 @@ final class Graph {
         case "alphamerge":
             return [FuncNode([need(ins[0], [.rgba], prefer: .rgba), need(ins[1], [.gray], prefer: .gray)], constant: true) { _, i in
                 guard i[0].w == i[1].w && i[0].h == i[1].h else { die("alphamerge size mismatch") }
-                return Img(.rgba, i[0].w, i[0].h, i[0].meta, planes: [i[0].p[0], i[0].p[1], i[0].p[2], i[1].p[0]]) }]
+                return Img(.rgba, i[0].w, i[0].h, fsMeta(i), planes: [i[0].p[0], i[0].p[1], i[0].p[2], i[1].p[0]]) }]
         case "fade": return [fade(s, ins[0])]
         case "colorchannelmixer": return [mixer(s, ins[0])]
         case "lutrgb": return [lutrgb(s, ins[0])]
@@ -1574,11 +1653,21 @@ final class Graph {
 
     func scale(_ s: FSpec, _ n: Node, _ ci: Int, _ fi: Int) -> Node {
         let flags = swsFlag(s.kv["flags"] ?? "bicubic")
+        for k in s.kv.keys where !["w", "h", "flags", "force_original_aspect_ratio"].contains(k) { die("scale \(k) not ported") }
+        let foar = s.kv["force_original_aspect_ratio"] ?? "disable"
+        guard ["disable", "increase"].contains(foar) else { die("force_original_aspect_ratio=\(foar) not ported") }
         let want = downstreamFormat(ci, after: fi).map { pfOf($0) }
         var sws: Sws?
         return FuncNode([n], constant: true) { _, i in
             let src = i[0]
-            let w = Int(num(s.opt("w", 0)!)), h = Int(num(s.opt("h", 1)!))
+            var w = Int(num(s.opt("w", 0)!)), h = Int(num(s.opt("h", 1)!))
+            guard w > 0 && h > 0 else { die("scale \(w)x\(h) not ported") }
+            if foar == "increase" {
+                // ff_scale_adjust_dimensions: av_rescale rounds to nearest
+                let tw = Int(rescale(Int64(h), Int64(src.w), 1, Int64(src.h), 1))
+                let th = Int(rescale(Int64(w), Int64(src.h), 1, Int64(src.w), 1))
+                w = max(tw, w); h = max(th, h)
+            }
             if sws == nil { sws = Sws(src: src, dstPF: want ?? src.pf, w: w, h: h, flags: flags) }
             return sws!.run(src)
         }
@@ -1721,7 +1810,7 @@ final class Graph {
         return FuncNode(ins, constant: true) { _, i in
             let a = i[0], b = i[1]
             guard a.pf == b.pf || (a.pf == .gray && b.pf == .gray), a.w == b.w, a.h == b.h else { die("blend input mismatch \(a.pf) \(b.pf)") }
-            if out == nil { out = Img(a.pf, a.w, a.h, a.meta) }
+            if out == nil { out = Img(a.pf, a.w, a.h, fsMeta(i)) }
             for pi in 0..<a.p.count {
                 let (pw, ph) = a.dims(pi)
                 gpu.run("k_blend", [a.p[pi], b.p[pi], out!.p[pi]], [Int32(pw * ph), mode], grid: ((pw * ph + 3) / 4, 1))
@@ -1839,6 +1928,15 @@ final class Graph {
                 gpu.run("k_fade_a", [src.p[3], outImg!.p[3]], [Int32(src.w * src.h), Int32(f), 0, 32768], grid: (src.w * src.h, 1))
                 return Img(.rgba, src.w, src.h, src.meta, planes: [src.p[0], src.p[1], src.p[2], outImg!.p[3]])
             }
+            if src.pf == .rgba {
+                // a black fade on packed RGB takes filter_slice_luma over every
+                // byte of the pixel, alpha included, at black level 0
+                if outImg == nil { outImg = Img(.rgba, src.w, src.h, src.meta) }
+                for pi in 0..<4 {
+                    gpu.run("k_fade_a", [src.p[pi], outImg!.p[pi]], [Int32(src.w * src.h), Int32(f), 0, 32768], grid: (src.w * src.h, 1))
+                }
+                return outImg!
+            }
             guard src.pf == .yuv420 else { die("fade on \(src.pf) not ported") }
             if outImg == nil { outImg = Img(.yuv420, src.w, src.h, src.meta) }
             gpu.run("k_fade_a", [src.p[0], outImg!.p[0]], [Int32(src.w * src.h), Int32(f), 16, (16 << 16) + 32768], grid: (src.w * src.h, 1))
@@ -1921,7 +2019,7 @@ final class Graph {
         return FuncNode(ins) { _, i in
             let src = i[0], xm = i[1], ym = i[2]
             guard src.pf == .rgb, xm.pf == .rgb, ym.pf == .rgb, xm.w == src.w, ym.h == src.h else { die("displace inputs not ported") }
-            if out == nil { out = Img(.rgb, src.w, src.h, src.meta) }
+            if out == nil { out = Img(.rgb, src.w, src.h, fsMeta(i)) }
             for pi in 0..<3 {
                 gpu.run("k_displace", [src.p[pi], xm.p[pi], ym.p[pi], out!.p[pi]], [Int32(src.w), Int32(src.h)], grid: (src.w, src.h))
             }
@@ -1934,19 +2032,22 @@ final class Graph {
         var out: Img?
         return FuncNode([n]) { _, i in
             let src = i[0]
-            guard src.pf == .yuv420 else { die("pad on \(src.pf) not ported") }
+            guard src.pf == .yuv420 || src.pf == .rgba else { die("pad on \(src.pf) not ported") }
+            let sub = src.pf == .yuv420 ? 1 : 0
             var vars: [String: Double] = ["iw": Double(src.w), "ih": Double(src.h), "in_w": Double(src.w), "in_h": Double(src.h)]
             let W = Int(Expr.parse(s.opt("w", 0)!).eval(vars)), H = Int(Expr.parse(s.opt("h", 1)!).eval(vars))
             vars["ow"] = Double(W); vars["oh"] = Double(H); vars["out_w"] = Double(W); vars["out_h"] = Double(H)
-            let x = Int(Expr.parse(s.opt("x", 2) ?? "0").eval(vars)) & ~1, y = Int(Expr.parse(s.opt("y", 3) ?? "0").eval(vars)) & ~1
+            let x = Int(Expr.parse(s.opt("x", 2) ?? "0").eval(vars)) & ~sub, y = Int(Expr.parse(s.opt("y", 3) ?? "0").eval(vars)) & ~sub
             if out == nil {
-                out = Img(.yuv420, W, H, src.meta)
-                for pi in 0..<3 { let (pw, ph) = out!.dims(pi); fillPlane(out!.p[pi], pw * ph, pi == 0 ? 16 : 128) }
+                out = Img(src.pf, W, H, src.meta)
+                // black: tv-range YUV, or opaque RGBA 0x000000FF
+                let fill = src.pf == .yuv420 ? [16, 128, 128] : [0, 0, 0, 255]
+                for pi in 0..<fill.count { let (pw, ph) = out!.dims(pi); fillPlane(out!.p[pi], pw * ph, fill[pi]) }
             }
-            for pi in 0..<3 {
-                let sub = pi == 0 ? 0 : 1
+            for pi in 0..<src.p.count {
+                let ps = pi == 0 || pi == 3 ? 0 : sub
                 let (pw, ph) = src.dims(pi), (ow, _) = out!.dims(pi)
-                copyPlane(src.p[pi], out!.p[pi], w: pw, h: ph, sstride: pw, dstride: ow, dx: x >> sub, dy: y >> sub)
+                copyPlane(src.p[pi], out!.p[pi], w: pw, h: ph, sstride: pw, dstride: ow, dx: x >> ps, dy: y >> ps)
             }
             return out!
         }
@@ -2047,7 +2148,7 @@ func value(_ name: String) -> String? {
 let raw = flag("--raw")
 let tap = value("--tap")
 let frameLimit = value("--frames").map { Int($0)! }
-guard args.count == 2 else { die("usage: bars_gpu PLAN.json OUT [--raw] [--tap LABEL] [--frames N]") }
+guard args.count == 2 else { die("usage: render_gpu PLAN.json OUT [--raw] [--tap LABEL] [--frames N]") }
 let planData = try! Data(contentsOf: URL(fileURLWithPath: args[0]))
 let plan = try! JSONSerialization.jsonObject(with: planData) as! [String: Any]
 let fc = plan["fc"] as! String, inArgv = plan["in_argv"] as! [String], dur = plan["dur"] as! Double
@@ -2067,11 +2168,30 @@ func dependsOnFps(_ n: Node) -> FpsNode? {
 let fpsNode = dependsOnFps(outNode)
 let firstPts = Int(fpsNode?.first ?? 0)
 let count = fpsNode?.map.count ?? graph.srcTimeline.0.count
-// The delivered encode (`-r 30 -t dur`) starts the file at the stream's
-// first frame and keeps the frames that start before `dur` (measured:
-// hujurat-4-5's begins at pts 1 and its mp4 holds pts 1..785 from 0).
+// The delivered encode (`-r 30 -t dur`) is fftools' CFR sync over [vout]:
+// output frame k shows the graph frame video_sync_process gives it, and the
+// file keeps the frames that start before `dur`. A frame's duration is one
+// tick of its link's time base, so a graph on 1/30 that starts at pts 1
+// repeats its first frame at 0 (hujurat-4-5 horizontal: 786 frames), while
+// bars, on 1/15360, starts the file at its first frame (785). A --tap
+// dumps the label's own frames.
 let tLimit = durationUs(String(format: "%.3f", dur))
-var schedule = (0..<count).filter { Int64($0) * 1_000_000 < tLimit * 30 }.map { firstPts + $0 }
+var schedule: [Int] = []
+if tap == nil {
+    let d = 30.0 / Double(outNode.tb)
+    var next = 0
+    for p in (0..<count).map({ firstPts + $0 }) {
+        let delta0 = Double(p - next), delta = delta0 + d
+        guard delta0 >= 0 else { die("graph frame \(p) behind the output clock") }
+        let nb = delta < -1.1 ? 0 : (delta > 1.1 ? Int(lrintf(Float(delta))) : 1)
+        let prev = delta0 > 1.1 ? Int(lrintf(Float(delta0 - 0.6))) : 0
+        for i in 0..<nb { schedule.append(i < prev ? (schedule.last ?? p) : p) }
+        next += nb
+    }
+    schedule = schedule.indices.filter { Int64($0) * 1_000_000 < tLimit * 30 }.map { schedule[$0] }
+} else {
+    schedule = (0..<count).filter { Int64($0) * 1_000_000 < tLimit * 30 }.map { firstPts + $0 }
+}
 if let f = frameLimit { schedule = Array(schedule.prefix(f)) }
 let total = schedule.count
 
@@ -2105,7 +2225,7 @@ for n in 0..<total {
     gpu.begin()
     let img = outNode.get(schedule[n])
     if !printedFmt {
-        FileHandle.standardError.write("bars_gpu: [\(tap ?? "vout")] \(img.ffName) \(img.w)x\(img.h), \(total) frames\n".data(using: .utf8)!)
+        FileHandle.standardError.write("render_gpu: [\(tap ?? "vout")] \(img.ffName) \(img.w)x\(img.h), \(total) frames\n".data(using: .utf8)!)
         printedFmt = true
     }
     let slot = n % 3
@@ -2132,7 +2252,12 @@ for n in 0..<total {
 drain(0)
 fh?.closeFile()
 vt?.finish()
+// what the delivered stream is tagged with, as ffmpeg's encoder would take it
+// from the last frame (H.273 code points; range 0 is tv)
+if let m = outNode.last?.meta {
+    print("{\"color_range\": \(m.range), \"colorspace\": \(m.csp), \"color_primaries\": \(m.prim), \"color_trc\": \(m.trc), \"sar\": [\(m.sar.0), \(m.sar.1)]}")
+}
 for (k, v) in gpu.profT.sorted(by: { $0.value > $1.value }).prefix(40) {
     FileHandle.standardError.write(String(format: "%8.3fs  %@\n", v, k).data(using: .utf8)!)
 }
-FileHandle.standardError.write(String(format: "bars_gpu: %d frames in %.2fs (GPU busy %.2fs)\n", total, Date().timeIntervalSince(t0), gpuBusy).data(using: .utf8)!)
+FileHandle.standardError.write(String(format: "render_gpu: %d frames in %.2fs (GPU busy %.2fs)\n", total, Date().timeIntervalSince(t0), gpuBusy).data(using: .utf8)!)

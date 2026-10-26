@@ -1105,8 +1105,6 @@ def resolve_span(cfg, asr_words):
 def run_config(config_path, output_override=None, vertical=False,
                verify_only=False, renderer=None):
     cfg = load_config(config_path)
-    if renderer == "gpu" and cfg["style"] != "bars":
-        raise SystemExit("--renderer gpu: only the bars style has a GPU renderer")
     cfg = resolve_paths(cfg, config_path, output_override)
     tmp = cfg["tmp_dir"]
     os.makedirs(tmp, exist_ok=True)
@@ -1236,8 +1234,8 @@ def main(argv=None):
     ap.add_argument("--verify-only", action="store_true",
                     help="stop after the verification block; nothing rendered")
     ap.add_argument("--renderer", choices=("gpu", "ffmpeg"),
-                    help="bars only: tools/bars_gpu (the default) or the "
-                         "ffmpeg filtergraph it ports")
+                    help="tools/render_gpu (the default) or the ffmpeg "
+                         "filtergraph it ports")
     # These runs are long and normally watched: line-buffer so progress reaches
     # a pipe or a log as it happens, not all at once at exit.
     sys.stdout.reconfigure(line_buffering=True)

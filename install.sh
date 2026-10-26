@@ -13,8 +13,8 @@
 #      faster-whisper everywhere else (QC_ASR_BACKEND overrides, read from
 #      the shell or .env like every script reads it)
 #   3b. builds tools/align-venv -- ctc-forced-aligner (torch) for align.py
-#   3c. builds tools/bars_gpu   -- the bars style's Metal renderer, from
-#       pipeline/gpu/bars_gpu.swift with swiftc (macOS; rebuilt when older
+#   3c. builds tools/render_gpu -- every style's Metal renderer, from
+#       pipeline/gpu/render_gpu.swift with swiftc (macOS; rebuilt when older
 #       than the source)
 #   4. checks the vision API settings pipeline/crop.py uses (optional)
 #   5. copies .env.example -> .env when absent
@@ -170,25 +170,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3c. bars GPU renderer (Metal + VideoToolbox; generate.py's default for bars)
+# 3c. GPU renderer (Metal + VideoToolbox; generate.py's default for every style)
 # ---------------------------------------------------------------------------
-say "== bars gpu"
-GSRC="$ROOT/pipeline/gpu/bars_gpu.swift"
-GBIN="$ROOT/tools/bars_gpu"
+say "== gpu renderer"
+GSRC="$ROOT/pipeline/gpu/render_gpu.swift"
+GBIN="$ROOT/tools/render_gpu"
 if [ "$CHECK_ONLY" = 0 ] && have swiftc && { [ ! -x "$GBIN" ] || [ "$GSRC" -nt "$GBIN" ]; }; then
     say "  swiftc -O $GSRC"
     # the log holds deprecation warnings (AVFoundation calls deprecated on
     # macOS 27, not removed); only an error stops the build
     mkdir -p "$ROOT/tools"
-    swiftc -O "$GSRC" -o "$GBIN" 2>"$ROOT/tools/bars_gpu.log" ||
-        { grep -A3 "error:" "$ROOT/tools/bars_gpu.log"; rm -f "$GBIN"; }
+    swiftc -O "$GSRC" -o "$GBIN" 2>"$ROOT/tools/render_gpu.log" ||
+        { grep -A3 "error:" "$ROOT/tools/render_gpu.log"; rm -f "$GBIN"; }
 fi
 if [ -x "$GBIN" ] && [ ! "$GSRC" -nt "$GBIN" ]; then
-    ok+=("bars gpu     $GBIN")
+    ok+=("gpu render   $GBIN")
 elif have swiftc; then
-    bad+=("bars gpu: $GBIN missing or older than $GSRC -- bars renders need it (or --renderer ffmpeg). Re-run ./install.sh")
+    bad+=("gpu render: $GBIN missing or older than $GSRC -- renders need it (or --renderer ffmpeg). Re-run ./install.sh")
 else
-    bad+=("bars gpu: no swiftc (Xcode command line tools: xcode-select --install) -- bars renders need tools/bars_gpu (or --renderer ffmpeg)")
+    bad+=("gpu render: no swiftc (Xcode command line tools: xcode-select --install) -- renders need tools/render_gpu (or --renderer ffmpeg)")
 fi
 
 # ---------------------------------------------------------------------------
