@@ -1,37 +1,43 @@
-"""tests/gpu_parity.py -- tools/render_gpu against the ffmpeg graphs it ports.
+"""tests/gpu_parity.py -- tools/render_gpu's frames against their goldens.
 
     tools/render-venv/bin/python tests/gpu_parity.py
+    tools/render-venv/bin/python tests/gpu_parity.py --bless
 
-Every style renders on the GPU (pipeline/gpu/render_gpu.swift) and keeps
-its ffmpeg filtergraph as the definition: tests/graph_parity.py pins the bars
-graph, this pins the GPU to each style's graph. Over the first WINDOW seconds
-of the graph_parity recipe (at-tawbah-128-128: for bars the wipe card and
-the first crossfade, every switch on; for the text styles its first two
-cards with an English line each, the second wrapping to two lines and
-stroking the Allah macron) it builds
+Every style's graph (tests/graph_parity.py pins the bars one as text) runs
+on tools/render_gpu (pipeline/gpu/render_gpu.swift). This pins the PIXELS:
+over the first WINDOW seconds of the graph_parity recipe (at-tawbah-128-128:
+for bars the wipe card and the first crossfade, every switch on; for the
+text styles its first two cards with an English line each, the second
+wrapping to two lines and stroking the Allah macron) it builds
 
     bars       landscape and --vertical
     vertical   the native 1080x1920 canvas off a 9:16 crop
     horizontal landscape, --vertical (composed at 1080x608), and with no
                crop (the cover-scale path, at the source's own size)
 
-runs each through both renderers to lossless frames and asserts PSNR-Y >=
-FLOOR on each.
+renders each to raw yuv420p frames and compares every frame's md5 with
+tests/golden/gpu-<case>.framemd5 -- exact, no tolerance. The goldens were
+recorded when the ffmpeg graph was still runnable and every frame of every
+case was identical to ffmpeg 9.0.2's own render of the same graph.
 
 The footage is synthesized (testsrc2 at 30000/1001 in an mp4 with B-frames,
 so the edit list and the fps mapping are exercised, tagged BT.709 like the
 fetched sources, so the matrix the RGB -> YUV conversion negotiates is
 exercised), because the golden's source is not tracked. Snow and heat come
-from render_bars' caches, baked on first use.
+from render_bars' caches, baked on first use. Each golden's header carries
+the hash of every media input, so a changed input (a new ffmpeg encoding
+the fixture differently, a re-baked map) is reported as that, not as a
+pixel drift.
 
-GPU output is pinned per machine, not per byte across machines: Metal's
-float maths is the GPU's. Every reel measured so far is bit-identical to
-ffmpeg on an M1; a new machine is checked by running this.
+The goldens are pinned on an Apple M1: Metal's float maths belongs to the
+GPU it runs on, so another Mac may differ in the last bit. `--bless` is an
+owner decision, as for graph_parity: render a known reel, PSNR it against
+the previous render and look at stills first.
 """
+import argparse
 import hashlib
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -46,10 +52,10 @@ import render_text as RT  # noqa: E402
 from render_common import FFMPEG, GPU_BIN  # noqa: E402
 
 WINDOW = 9.0
-FLOOR = 45.0
 ENGLISH = ["There has certainly come to you a Messenger",
            "Grievous to him is what you suffer, and by Allah he is "
            "concerned over you"]
+PORTRAIT_CROP = {"x": 656, "y": 0, "w": 608, "h": 1080}
 
 
 def source(tmp):
@@ -77,11 +83,13 @@ def bars_graph(src, portrait, tmp):
                          os.path.join(tmp, "overlays"))
     sched, _ = RB.schedule(ph, WINDOW)
     on = {n: True for n in RB.SWITCHES}
-    return RB.build_graph(
+    snow = RB.snow_layer(GP.TINT_RGB, geo["W"], geo["H"])
+    heat = RB.heat_layers(WINDOW)
+    fc, argv = RB.build_graph(
         src, WINDOW, GP.CROP, rep, sched, [c / 255.0 for c in GP.TINT_RGB],
-        on, RB.snow_layer(GP.TINT_RGB, geo["W"], geo["H"]),
-        RB.scrim_plate(tmp, geo), GP.LOUDNORM, RB.audio_fades(WINDOW),
-        RB.heat_layers(WINDOW), portrait=portrait)
+        on, snow, RB.scrim_plate(tmp, geo), GP.LOUDNORM,
+        RB.audio_fades(WINDOW), heat, portrait=portrait)
+    return fc, argv, {"snow": snow, "heatx": heat[0], "heaty": heat[1]}
 
 
 def text_graph(src, style, portrait, crop, x_offset, face_bottom, tmp):
@@ -101,66 +109,104 @@ def text_graph(src, style, portrait, crop, x_offset, face_bottom, tmp):
                             RT.ENGLISH_FONTS[cfg["english_font"]]["path"],
                             W, H, sub, 0, geo["k"])
     sched = RT.schedule(ph, WINDOW, cfg["caption_transition"])
-    return RT.build_graph(src, WINDOW, crop, W, H, grade, rep, sched,
-                          GP.LOUDNORM, RT.audio_fades(WINDOW), sig,
-                          geo["k"] != 1)
+    fc, argv = RT.build_graph(src, WINDOW, crop, W, H, grade, rep, sched,
+                              GP.LOUDNORM, RT.audio_fades(WINDOW), sig,
+                              geo["k"] != 1)
+    return fc, argv, {}
 
 
-def check(name, fc, argv, tmp):
-    ff, gpu = os.path.join(tmp, "ff.yuv"), os.path.join(tmp, "gpu.yuv")
-    video = ";".join(c for c in fc.split(";") if not c.startswith("[0:a]"))
-    subprocess.run([FFMPEG, "-v", "error", "-y"] + argv +
-                   ["-filter_complex", video, "-map", "[vout]",
-                    "-t", "%.3f" % WINDOW, "-r", "30",
-                    "-f", "rawvideo", "-pix_fmt", "yuv420p", ff], check=True)
-    plan = os.path.join(tmp, "plan.json")
+CASES = [
+    ("bars-portrait", lambda s, t: bars_graph(s, True, t)),
+    ("bars-landscape", lambda s, t: bars_graph(s, False, t)),
+    ("vertical", lambda s, t: text_graph(s, "vertical", False,
+                                         PORTRAIT_CROP, 0, 0.30, t)),
+    ("horizontal-landscape", lambda s, t: text_graph(
+        s, "horizontal", False, GP.CROP, GP.X_OFFSET, None, t)),
+    ("horizontal-portrait", lambda s, t: text_graph(
+        s, "horizontal", True, GP.CROP, GP.X_OFFSET, None, t)),
+    ("horizontal-cover-scaled", lambda s, t: text_graph(
+        s, "horizontal", False, None, GP.X_OFFSET, None, t)),
+]
+
+
+def sha(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 22), b""):
+            h.update(b)
+    return h.hexdigest()[:16]
+
+
+def render_frames(fc, argv, tmp):
+    """-> (size "WxH", [md5 per frame]) of render_gpu's raw [vout]."""
+    plan, raw = os.path.join(tmp, "plan.json"), os.path.join(tmp, "gpu.yuv")
     with open(plan, "w") as f:
         json.dump({"in_argv": argv, "fc": fc, "dur": WINDOW}, f)
-    r = subprocess.run([GPU_BIN, plan, gpu, "--raw"], check=True,
+    r = subprocess.run([GPU_BIN, plan, raw, "--raw"], check=True,
                        capture_output=True, text=True)
-    size = re.search(r"\] yuv420p (\d+x\d+),", r.stderr).group(1)
-    same = [hashlib.sha256(open(p, "rb").read()).digest() for p in (ff, gpu)]
-    r = subprocess.run([FFMPEG, "-hide_banner", "-f", "rawvideo", "-pix_fmt",
-                        "yuv420p", "-s", size, "-i", ff, "-f", "rawvideo",
-                        "-pix_fmt", "yuv420p", "-s", size, "-i", gpu,
-                        "-lavfi", "psnr", "-f", "null", "-"],
-                       capture_output=True, text=True)
-    m = re.search(r"PSNR y:(\S+) .*min:(\S+)", r.stderr)
+    head = next(ln for ln in r.stderr.splitlines() if "] yuv420p " in ln)
+    size = head.split("] yuv420p ")[1].split(",")[0]
     w, h = map(int, size.split("x"))
-    frames = os.path.getsize(ff) // (w * h * 3 // 2)
-    if os.path.getsize(ff) != os.path.getsize(gpu) or not m:
-        print("FAIL  %s: ffmpeg %d bytes, gpu %d bytes"
-              % (name, os.path.getsize(ff), os.path.getsize(gpu)))
-        return False
-    y, worst = float(m.group(1)), float(m.group(2))
-    ok = y >= FLOOR and worst >= FLOOR
-    print("%s  %s: %d frames %s, %s (PSNR-Y %s, worst frame %s; floor %.0f)"
-          % ("OK " if ok else "FAIL", name, frames, size,
-             "bit-identical" if same[0] == same[1] else "differs",
-             m.group(1), m.group(2), FLOOR))
-    return ok
+    n = w * h * 3 // 2
+    md5s = []
+    with open(raw, "rb") as f:
+        for b in iter(lambda: f.read(n), b""):
+            md5s.append(hashlib.md5(b).hexdigest())
+    os.remove(raw)
+    return size, md5s
 
 
-def main():
+def golden(name):
+    return os.path.join(GP.GOLDEN, "gpu-%s.framemd5" % name)
+
+
+def read_golden(path):
+    lines = open(path).read().splitlines()
+    head = json.loads(lines[0].lstrip("# "))
+    return head, [ln.split()[1] for ln in lines[1:]]
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--bless", action="store_true",
+                    help="record the current frames as the goldens. An OWNER "
+                         "decision: it declares the look change intended.")
+    a = ap.parse_args(argv)
     if not os.access(GPU_BIN, os.X_OK):
         sys.exit("tools/render_gpu missing: run ./install.sh")
-    portrait_crop = {"x": 656, "y": 0, "w": 608, "h": 1080}
-    cases = [
-        ("bars portrait", lambda s, t: bars_graph(s, True, t)),
-        ("bars landscape", lambda s, t: bars_graph(s, False, t)),
-        ("vertical", lambda s, t: text_graph(s, "vertical", False,
-                                             portrait_crop, 0, 0.30, t)),
-        ("horizontal landscape", lambda s, t: text_graph(
-            s, "horizontal", False, GP.CROP, GP.X_OFFSET, None, t)),
-        ("horizontal portrait", lambda s, t: text_graph(
-            s, "horizontal", True, GP.CROP, GP.X_OFFSET, None, t)),
-        ("horizontal cover-scaled", lambda s, t: text_graph(
-            s, "horizontal", False, None, GP.X_OFFSET, None, t)),
-    ]
+    ok = True
     with tempfile.TemporaryDirectory(prefix="gpu-parity-") as tmp:
         src = source(tmp)
-        ok = [check(name, *build(src, tmp), tmp) for name, build in cases]
-    return 0 if all(ok) else 1
+        for name, build in CASES:
+            fc, args, media = build(src, tmp)
+            inputs = {"source": sha(src)}
+            inputs.update({k: sha(p) for k, p in media.items()})
+            size, md5s = render_frames(fc, args, tmp)
+            path, rel = golden(name), os.path.relpath(golden(name), GP.ROOT)
+            if a.bless or not os.path.exists(path):
+                with open(path, "w") as f:
+                    f.write("# " + json.dumps({"size": size, "inputs": inputs},
+                                              sort_keys=True) + "\n")
+                    f.writelines("%d %s\n" % kv for kv in enumerate(md5s))
+                print("blessed %s (%d frames)" % (rel, len(md5s)))
+                continue
+            head, want = read_golden(path)
+            moved = [k for k in head["inputs"]
+                     if head["inputs"][k] != inputs.get(k)]
+            bad = [i for i in range(max(len(want), len(md5s)))
+                   if i >= len(want) or i >= len(md5s) or want[i] != md5s[i]]
+            if not bad and size == head["size"]:
+                print("OK    %s: %d frames %s, every frame identical"
+                      % (name, len(md5s), size))
+                continue
+            ok = False
+            print("FAIL  %s: %s, %d of %d frames differ (first: frame %d)"
+                  % (name, size, len(bad), len(want), bad[0]
+                     if bad else -1), file=sys.stderr)
+            if moved:
+                print("      the fixture's input(s) changed, not necessarily "
+                      "the renderer: %s" % ", ".join(moved), file=sys.stderr)
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
