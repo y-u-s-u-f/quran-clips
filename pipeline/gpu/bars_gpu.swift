@@ -358,6 +358,24 @@ kernel void k_yuv2rgb_tab(device const uchar* Yp [[buffer(0)]], device const uch
     B[o] = ytab[t[768 + u] + yy];
 }
 
+// ff_yuv420p_to_{rgb24,gbrp,...}_neon: width % 16 == 0, even height
+inline short sqdmulh(int a, int b) { return short(min((a * b) >> 15, 32767)); }
+kernel void k_yuv2rgb_neon(device const uchar* Yp [[buffer(0)]], device const uchar* Up [[buffer(1)]],
+                           device const uchar* Vp [[buffer(2)]], device uchar* R [[buffer(3)]],
+                           device uchar* G [[buffer(4)]], device uchar* B [[buffer(5)]],
+                           constant int* prm [[buffer(6)]], uint2 g [[thread_position_in_grid]]) {
+    // W, H, chroma W, y_offset >> 6, y_coeff, v2r, u2g, v2g, u2b
+    int x = g.x, y = g.y; if (x >= P(0) || y >= P(1)) return;
+    int c = (y >> 1) * P(2) + (x >> 1), o = y * P(0) + x;
+    short u = short(int(Up[c]) << 3) - short(1024), v = short(int(Vp[c]) << 3) - short(1024);
+    short yy = sqdmulh(short(short(int(Yp[o]) << 3) - short(P(3))), P(4));
+    short rc = sqdmulh(v, P(5)), gc = short(sqdmulh(u, P(6)) + sqdmulh(v, P(7))), bc = sqdmulh(u, P(8));
+    // sqrshrun #1 of the wrapping 16-bit sums
+    R[o] = uchar(clamp((int(short(yy + rc)) + 1) >> 1, 0, 255));
+    G[o] = uchar(clamp((int(short(yy + gc)) + 1) >> 1, 0, 255));
+    B[o] = uchar(clamp((int(short(yy + bc)) + 1) >> 1, 0, 255));
+}
+
 // --- eq / colorbalance / vignette ---------------------------------------
 kernel void k_cbal(device const uchar* R [[buffer(0)]], device const uchar* G [[buffer(1)]],
                    device const uchar* B [[buffer(2)]], device uchar* oR [[buffer(3)]],
@@ -985,7 +1003,7 @@ let rgb2yuv: (ry: Int32, gy: Int32, by: Int32, ru: Int32, gu: Int32, bu: Int32, 
 
 final class Sws {
     let src: (PF, Int, Int, Meta), dstPF: PF, dw: Int, dh: Int, dmeta: Meta
-    enum Kind { case pass, yuv2rgbTab, addAlpha, dropAlpha, scaled }
+    enum Kind { case pass, yuv2rgbTab, yuv2rgbNeon, addAlpha, dropAlpha, scaled }
     var kind: Kind = .scaled
     var hl: SwsFilter?, hc: SwsFilter?, vl: SwsFilter?, vc: SwsFilter?
     var chrSrcW = 0, chrSrcH = 0, chrDstW = 0, chrDstH = 0, chrHalf = false
@@ -1014,8 +1032,8 @@ final class Sws {
         let srcRange = srgb ? 0 : src.meta.range, dstRange = drgb ? 0 : m.range
         if unscaled && src.pf == dstPF && srcRange == dstRange { kind = .pass; return }
         if unscaled && (src.pf == .yuv420) && drgb {
-            if src.w % 16 == 0 { die("NEON yuv2rgb (width % 16 == 0) not ported yet") }
-            kind = .yuv2rgbTab
+            // the aarch64 build dispatches these sizes to NEON, the rest to the C tables
+            kind = src.w % 16 == 0 && src.h % 2 == 0 ? .yuv2rgbNeon : .yuv2rgbTab
             y2r = Yuv2Rgb(csp: src.meta.csp, fullRange: src.meta.range == 1)
             tabY = bufOf(y2r!.ytab); tabT = bufOf(y2r!.tabs)
             return
@@ -1083,6 +1101,14 @@ final class Sws {
         }
         if out == nil { out = Img(dstPF, dw, dh, dmeta) }
         let o = out!
+        if kind == .yuv2rgbNeon {
+            let y = y2r!
+            gpu.run("k_yuv2rgb_neon", [s.p[0], s.p[1], s.p[2], o.p[0], o.p[1], o.p[2]],
+                    [Int32(s.w), Int32(s.h), Int32((s.w + 1) / 2), Int32(Int16(truncatingIfNeeded: y.yOff) >> 6), y.yCoef, y.v2r, y.u2g, y.v2g, y.u2b],
+                    grid: (s.w, s.h))
+            if dstPF == .rgba { fillPlane(o.p[3], dw * dh, 255) }
+            return o
+        }
         if kind == .yuv2rgbTab {
             gpu.run("k_yuv2rgb_tab", [s.p[0], s.p[1], s.p[2], o.p[0], o.p[1], o.p[2], tabY!, tabT!],
                     [Int32(s.w), Int32(s.h), Int32((s.w + 1) / 2)], grid: (s.w, s.h))
