@@ -7,7 +7,7 @@ macOS or Linux. One script does the whole setup and is safe to re-run:
 ./install.sh --check    # report what resolved, change nothing
 ```
 
-It checks the system tools, builds the three Python environments, checks the vision API settings, and creates `.env` from the template. A green summary means every pipeline stage can run; anything listed under `MISSING:` names exactly which stage it blocks and the command that fixes it.
+It checks the system tools, builds the three Python environments and the bars GPU renderer, checks the vision API settings, and creates `.env` from the template. A green summary means every pipeline stage can run; anything listed under `MISSING:` names exactly which stage it blocks and the command that fixes it.
 
 ## 1. System tools
 
@@ -25,6 +25,7 @@ sudo apt install ffmpeg yt-dlp python3-venv
 | `python3` | everything | 3.10+ |
 | `ffmpeg` / `ffprobe` | rendering, probing, audio | the bars `heat` effect needs ffmpeg's `perlin` source (ffmpeg ≥ 7.1); older builds work with `fx: {heat: false}` in the reel config |
 | `yt-dlp` | `fetch.py` for YouTube sources | local files work without it |
+| `swiftc` | building `tools/bars_gpu`, the bars style's renderer | macOS: `xcode-select --install`. Without Metal (Linux) bars renders with `generate.py --renderer ffmpeg` |
 
 ## 2. The three Python environments
 
@@ -35,6 +36,8 @@ sudo apt install ffmpeg yt-dlp python3-venv
 * **`tools/align-venv`** — `ctc-forced-aligner` (torch, Meta's MMS model, ~1.2 GB on first use). Runs `align.py`. Installed from git: the PyPI package of that name is an unrelated project. Torch installs from PyPI first, falling back to its nightly CPU index when that fails (needed for Python 3.15).
 
 `fetch.py`, `transcribe.py`, `quran.py`, `publish.py` and `letterbox.py` run on any plain `python3`.
+
+`install.sh` also compiles `pipeline/gpu/bars_gpu.swift` to `tools/bars_gpu` (Metal + VideoToolbox), and recompiles it whenever the source is newer. `generate.py` refuses a missing or stale binary rather than fall back; `tests/gpu_parity.py` checks a new machine's GPU against the ffmpeg graph.
 
 ### Arabic shaping (RAQM) — the one thing worth understanding
 

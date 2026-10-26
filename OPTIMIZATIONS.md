@@ -6,15 +6,17 @@ Read the rejected list before proposing anything. Numbers: `sources/hajri-23-tar
 
 | | wall | CPU |
 |---|---|---|
-| `bars`, heat + snow cached | **~212s** | ~964s |
-| `bars --vertical`, heat + snow cached | **~78s** | ~366s |
+| `bars` (GPU), heat + snow cached | **~41s** | ~19s |
+| `bars --vertical` (GPU), heat + snow cached | **~18s** | ~16s |
+| `bars --renderer ffmpeg` | ~164s | ~851s |
+| `bars --vertical --renderer ffmpeg` | ~61s | ~314s |
 | `horizontal` | ~19s | ~109s |
 | `horizontal --vertical` | ~17s | ~95s |
 | `vertical` | ~21s | ~120s |
 
-Apple M1 (4 performance + 4 efficiency cores, 16 GB), ffmpeg 9.0.2, every render paying its own `trim_media` cut. MEASURE THESE COOLED AND ALONE: medians of alternating runs (bars: 5 landscape, 5 portrait) with 60s idle before each. Even so a bars render here spreads +-20% run to run (162-279s landscape) -- the scheduler puts ffmpeg's threads on efficiency cores whenever the desktop wants a performance one, which shows up as MORE CPU-seconds for the same work -- so a difference under ~15% needs paired runs to be believed. The previous profile (14 cores) read 72s / 516s for landscape bars; the numbers are not comparable across machines.
+Apple M1 (4 performance + 4 efficiency cores, 16 GB), ffmpeg 9.0.2, every render paying its own `trim_media` cut. MEASURE THESE COOLED AND ALONE: medians of alternating runs with 60s idle before each. Even so an ffmpeg bars render here spreads +-20% run to run (162-279s landscape) -- the scheduler puts ffmpeg's threads on efficiency cores whenever the desktop wants a performance one, which shows up as MORE CPU-seconds for the same work -- so a difference under ~15% needs paired runs to be believed. The previous profile (14 cores) read 72s / 516s for landscape bars; the numbers are not comparable across machines.
 
-Longer reels scale with duration: `fatihah-1-1-7-bars --vertical` (52.5s, the longest config) 148s / 742s CPU, `shuara-26-105-111-bars --vertical` (41.6s) 131s / 628s, each including its own snow bake.
+The bars rows are medians of 2 alternating GPU/ffmpeg runs with 60s idle before each, snow cached (2026-10). Longer reels scale with duration: `fatihah-1-1-7-bars --vertical` (52.5s, the longest config) 33.0s / 20.1s CPU on the GPU against 127.6s / 638s through ffmpeg, `shuara-26-105-111-bars --vertical` (41.6s) 27.6s / 13.6s against 102.1s / 498s. The GPU renderer is GPU-bound (~19ms of GPU per portrait frame, ~44ms landscape, CPU mostly idle), so its numbers do not have the ffmpeg path's scheduler spread.
 
 A first run on a machine adds one 60s perlin bake per axis plus the snow bake. The two axis bakes run CONCURRENTLY (`perlin` is single-threaded; 1.93x measured on a 4s-span pair), so the pair costs one bake's wall: 8.4s per map-second at 1920x1080 here (4s span: 33.7s wall, 56s CPU), ~8.5min for 60s. Paid once per machine, never per reel; a portrait render reads the same maps. The snow loop is baked per bar colour and canvas: 11.0s at 1920x1080, 4.7s at 1080x608.
 
@@ -23,6 +25,8 @@ A first run on a machine adds one 60s perlin bake per axis plus the snow bake. T
 `generate.py --vertical` adds NO pass: the scale/pad runs inside the style's own graph (`render_common.PORTRAIT_PAD`; bars only pads), so the portrait file is the same single encode. Measured on the 26.2s hujurat `horizontal` reel against a landscape render followed by `letterbox.py` and a tag remux: 7.9s against 11.5s wall, 70s against 115s CPU -- the final x264 is also cheaper because two thirds of the portrait canvas is black -- at 51.0 dB against the letterboxed file, one lossy generation closer to the render. The mp4 tags are written by the delivery encode too, so the finished file is never rewritten.
 
 ## Techniques in place
+
+- **bars renders on the GPU** (`tools/bars_gpu`, `pipeline/gpu/bars_gpu.swift`): the same graph interpreted in Metal, exact ports of each ffmpeg filter, so every frame of all four measured reels (hujurat-4-5 portrait + landscape, fatihah-1-1-7, shuara-26-105-111) is bit-identical to the ffmpeg graph's before encode; picture encoded by VideoToolbox at `render_bars.VT_QUALITY` 0.68, delivered PSNR-Y against the lossless frames 45.9-51.0 dB where x264 crf 18 / faster reads 46.0-51.4, within 0.35 dB either way. 3.3-4.0x less wall, 20-45x less CPU. Inside it: gblur's recursive line passes on a transposed buffer (each SIMD group walks memory its threads share), the running value in a register and loads issued 8 ahead, 32-thread groups so few lines still spread over every core -- 36.8 -> 16.5s of GPU on hujurat portrait, bit-identical. Barriers only before a dispatch that touches a buffer bound since the last one (15.1 -> 14.9s, within noise; removing every barrier measured no faster, so the remaining cost is the ~276 kernels per frame themselves).
 
 Changing one of these needs the guard it was verified with: PSNR for anything that moves a pixel, `tests/graph_parity.py --bless` for a bars graph edit, `tests/wrap_parity.py` for the English wrap.
 
@@ -60,6 +64,8 @@ What the stages around the render pay before any pixel moves.
 
 ## Rejected
 
+- **bars_gpu: 16-wide gblur load batches** instead of 8: 16.5 -> 16.9s. **4-wide blend/lut** threads: 15.1 -> 14.7s, kept (no division in the blend either: `x/255` as `(x*32897)>>23`, exact over 0..65025).
+
 - **`-thread_queue_size 4096`**: 4096→64 moves RSS 24 MB; md5 unchanged.
 - **`scrim_plate` pixel loop**: 0.10s.
 - **`align_words` skeleton precompute**: ms at ~50×60.
@@ -73,5 +79,7 @@ What the stages around the render pay before any pixel moves.
 - **Delete `trim_media`**: ~3.1s wall; seek into long source is cheaper to decode than the intermediate. Not worth the A/V-sync surface.
 
 ## Open
+
+**bars_gpu kernel fusion** -- the GPU renderer spends its ~19ms/frame across ~276 small dispatches, none above ~10% of the total; fusing per-pixel chains (mixer -> lut -> scale, the blend ladder) is the next lever, each fusion checked bit-exact with `--tap` and `tests/gpu_parity.py`.
 
 **`heat` supersample 2→1** — look decision; no cheap refactor left. **bars FX sigmas at 1920x1080 (landscape)** — they were tuned when a blur covered a 1080x608 band, which is the canvas `--vertical` composes on again; whether any can drop a resolution tier on the landscape frame is unmeasured.
