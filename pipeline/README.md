@@ -23,10 +23,10 @@ sources/<id>/   source.*, captions.srt|captions.none, whisper.*,
 reels/          output only
 pipeline/       fetch transcribe quran align crop generate letterbox publish
                 + render_text render_bars fx render_common (imported by generate)
-                + gpu/bars_gpu.swift (the bars GPU renderer -> tools/bars_gpu)
+                + gpu/render_gpu.swift (every style's GPU renderer -> tools/render_gpu)
 assets/         fonts + mushaf/translation editions
-tests/          graph_parity.py (bars goldens), gpu_parity.py (bars GPU vs
-                the ffmpeg graph), wrap_parity.py (English wrap)
+tests/          graph_parity.py (bars goldens), gpu_parity.py (GPU vs the
+                ffmpeg graph, every style), wrap_parity.py (English wrap)
 ```
 
 ## Config
@@ -45,9 +45,11 @@ All 30fps and fixed-size; a weak source is upscaled, never delivered small.
 
 - **`vertical`** — 1080×1920, `render_text.py`. Arabic + English over a graded plate, centred horizontally, block top just under his chin (`face_bottom`).
 - **`horizontal`** — 1920×1080, the SAME renderer and the same look; block centred vertically, column opposite him (`x_offset`).
-- **`bars`** — 1920×1080, Thuluth on pills (213pt / 96px / 0.45 W ink), wipe then sequential crossfades, full FX (`fx.py`). Never burns a signature. Golden: `tests/graph_parity.py`. `fx: {heat: false}` for timing previews. Rendered by `tools/bars_gpu`, a Metal port of the same ffmpeg graph (bit-identical frames, VideoToolbox H.264 at `render_bars.VT_QUALITY`); `generate.py --renderer ffmpeg` runs the graph itself. `tests/gpu_parity.py` holds the two together.
+- **`bars`** — 1920×1080, Thuluth on pills (213pt / 96px / 0.45 W ink), wipe then sequential crossfades, full FX (`fx.py`). Never burns a signature. Golden: `tests/graph_parity.py`. `fx: {heat: false}` for timing previews.
 
-`generate.py --vertical` delivers a 1920×1080 style as 1080×1920, black above and below, inside the render's own encode. The picture is 1080×608, about a third of the frame, so bars' Arabic arrives on the phone at 120pt nominal instead of 213; the native `vertical` style avoids that trade. `horizontal` renders at 1920×1080 and scales down; `bars` composes its whole look at 1080×608 (`render_bars.geometry`), which is ~3x cheaper and looks the same at the size it is shown (`OPTIMIZATIONS.md`). `letterbox.py` does the same to an already-finished file (and refuses a portrait one).
+Every style renders on `tools/render_gpu`, a Metal port of the style's own ffmpeg graph (bit-identical frames, VideoToolbox H.264 at `render_common.VT_QUALITY`, keyed by style); `generate.py --renderer ffmpeg` runs the graph itself, x264 crf 18. `tests/gpu_parity.py` holds the two together.
+
+`generate.py --vertical` delivers a 1920×1080 style as 1080×1920, black above and below, inside the render's own encode. The picture is 1080×608, about a third of the frame, so bars' Arabic arrives on the phone at 120pt nominal instead of 213; the native `vertical` style avoids that trade. Both `horizontal` and `bars` compose their whole look at 1080×608 (`render_text.geometry`, `render_bars.geometry`), which is cheaper and looks the same at the size it is shown (`OPTIMIZATIONS.md`). `letterbox.py` does the same to an already-finished file (and refuses a portrait one).
 
 Design rationale lives in each renderer's module docstring.
 
@@ -63,4 +65,4 @@ Cover at 1.55s (`COVER_MS`). Caption from `tafsir()` + ayat + `#reciter | #surah
 
 ## Environments
 
-`./install.sh` / `INSTALL.md`. Render: `tools/render-venv` (RAQM Pillow). Whisper: `asr-venv`. Align: `align-venv` (`ctc-forced-aligner` from git — PyPI name is unrelated). Bars GPU: `tools/bars_gpu`, swiftc-built from `pipeline/gpu/bars_gpu.swift` (macOS; a stale or missing binary is an error, not a fallback). Machine config in `.env` only. `docs/asr-and-alignment.md` before an ASR swap; `OPTIMIZATIONS.md` before a performance change.
+`./install.sh` / `INSTALL.md`. Render: `tools/render-venv` (RAQM Pillow). Whisper: `asr-venv`. Align: `align-venv` (`ctc-forced-aligner` from git — PyPI name is unrelated). GPU render: `tools/render_gpu`, swiftc-built from `pipeline/gpu/render_gpu.swift` (macOS; a stale or missing binary is an error, not a fallback). Machine config in `.env` only. `docs/asr-and-alignment.md` before an ASR swap; `OPTIMIZATIONS.md` before a performance change.
