@@ -44,7 +44,8 @@ FONT_DIR = os.path.join(ROOT, "assets", "fonts")
 sys.path.insert(0, HERE)
 
 from render_common import (FADE_IN_S, FADE_OUT_S, FPS,  # noqa: E402
-                           PORTRAIT_PAD, PROBE, THREAD_QUEUE_SIZE,
+                           PORTRAIT_PAD, PORTRAIT_W, PROBE,
+                           THREAD_QUEUE_SIZE,
                            audio_fades, encode, fit_pt, loudnorm_filter,
                            measure_loudness, norm_ar, source_chain,
                            trim_to_ink)
@@ -52,6 +53,9 @@ from render_common import (FADE_IN_S, FADE_OUT_S, FPS,  # noqa: E402
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
              "laid out unjoined, left to right. Use tools/render-venv/bin/python.")
+
+# `--vertical` of the landscape canvas: down to the portrait width, then pad.
+PORTRAIT = "scale=%d:-2,%s" % (PORTRAIT_W, PORTRAIT_PAD)
 
 # ---------------------------------------------------------------------------
 # Style constants, derived from pixel measurements of the three landscape
@@ -691,7 +695,7 @@ def build_graph(src, dur, crop, W, H, grade_png, cards, sched, ln, afade,
     parts.append(";[%s]fade=t=in:st=0:d=%s,fade=t=out:st=%.3f:d=%s%s,"
                  "format=yuv420p[vout]"
                  % (base, FADE_IN_S, dur - FADE_OUT_S, FADE_OUT_S,
-                    "," + PORTRAIT_PAD if portrait else ""))
+                    "," + PORTRAIT if portrait else ""))
     parts.append(";[0:a]%s,%s[aout]" % (ln, afade))
     return "".join(parts), argv
 
@@ -749,7 +753,7 @@ def render(plan):
     # the `vertical` canvas is already 1080x1920 and needs nothing.
     portrait = bool(plan.get("portrait")) and W > H
     if portrait:
-        print("      portrait delivery: %s (in-graph)" % PORTRAIT_PAD)
+        print("      portrait delivery: %s (in-graph)" % PORTRAIT)
 
     print("      loudnorm pass 1...")
     ln = loudnorm_filter(measure_loudness(src, dur))

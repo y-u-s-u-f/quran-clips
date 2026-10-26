@@ -3,11 +3,13 @@
 Landscape 1920x1080: graded footage, white Thuluth on colour pills, wipe then
 sequential crossfades, full-frame FX (fx.py). The 16:9 picture IS the canvas --
 this style does not letterbox, because black padding is not content.
+`--vertical` composes the same look at 1080x608, the size the portrait file
+shows the picture, and pads it to 1080x1920 (geometry()).
 
 Constants measured from reference reels; size 213pt / 96px pill / 0.45 W
 ink. The refs were measured on 720- and 1080-wide pictures and every constant
 here carries to this canvas's 1920 by the matching factor; each one names its
-own. Golden: tests/graph_parity.py.
+own. Golden: tests/graph_parity.py, landscape and portrait.
 Cost: OPTIMIZATIONS.md. `fx: {heat: false}` for timing previews.
 
 Called by generate.py; not a standalone CLI.
@@ -29,8 +31,9 @@ sys.path.insert(0, HERE)
 import fx as FX  # noqa: E402
 from generate import run  # noqa: E402
 from render_common import (FADE_IN_S, FADE_OUT_S, FFMPEG,  # noqa: E402
-                           FPS, PORTRAIT_PAD, PROBE, audio_fades, encode,
-                           fit_pt, loudnorm_filter, measure_loudness, norm_ar,
+                           FPS, PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W,
+                           PROBE, audio_fades, encode, fit_pt,
+                           loudnorm_filter, measure_loudness, norm_ar,
                            source_chain, trim_to_ink)
 
 if not features.check("raqm"):
@@ -41,12 +44,9 @@ if not features.check("raqm"):
 # Style constants, derived from pixel measurements of the two reference reels
 # (720x1280 refs x1.5 -> 1080).
 # ---------------------------------------------------------------------------
+# The canvas every pixel-sized constant below is written at. A portrait render
+# composes on a smaller one and carries them to it -- see geometry().
 CANVAS_W, CANVAS_H = 1920, 1080
-
-# The picture is the whole canvas. BAND_* exist because fx.py's Ctx is a
-# ported contract that names them, and every effect sizes itself off BW/BH, so
-# they must equal the canvas for the FX to cover the frame.
-BAND_W, BAND_H, BAND_Y = CANVAS_W, CANVAS_H, 0
 
 # Step 0 of the look: the band's exposure before any glow. Chosen by eye on
 # fatir-35-41-bars between -0.30 / gamma 0.72 (too dark) and -0.05 / 1.0.
@@ -109,7 +109,9 @@ BAR_AUTO = {"lightness_gain": 1.78, "lightness_min": 0.34, "lightness_max": 0.48
 TRANSITIONS = {"first": "wipe", "rest": "crossfade",
                "min_fade_s": 0.20, "crossfade_s": 0.95,
                "wipe_in_s": 1.02, "wipe_out_s": 1.02,
-               "wipe_out_anchor": "end", "wipe_feather_px": 20}
+               "wipe_out_anchor": "end", "wipe_feather_px": 20,
+               # past both feathers, so the front clears the bar completely
+               "wipe_overrun_px": 40}
 
 # Band FX parameters -- see pipeline/fx.py for what each one is. The
 # measurement notes behind the numbers (FX_RECIPE.md) are in git history.
@@ -128,6 +130,39 @@ FX_CFG = {
              "seed_x": 11, "seed_y": 77},
 }
 SWITCHES = ("grade", "scrim") + FX.BAND_ORDER
+
+
+def geometry(portrait):
+    """The canvas a render composes on, and every pixel-sized constant above
+    carried to it by the one factor `k`. Fractions of the canvas (rows, ink
+    cap, shadow, heat RMS) and the effects that size off the band's height
+    (glow, scan, snow texel) follow W and H on their own; this is the rest.
+
+    Landscape is the canvas the constants are written at, with k the integer
+    1 so no value changes type and the golden graph cannot move. `--vertical`
+    composes the whole look at the size the portrait file shows the picture
+    -- PORTRAIT_W wide, 608 rows -- and only pads it (PORTRAIT_PAD): every
+    pass of the FX stack then runs on 0.32x the pixels. 2.8x less wall on
+    hujurat-4-5 at 41.0 dB against composing at 1920x1080 and scaling down,
+    the type edges a touch softer (OPTIMIZATIONS.md)."""
+    if not portrait:
+        k, W, H = 1, CANVAS_W, CANVAS_H
+    else:
+        k = PORTRAIT_W / CANVAS_W
+        W, H = PORTRAIT_W, 2 * round(CANVAS_H * k / 2)
+    fx = {n: dict(c) for n, c in FX_CFG.items()}
+    for n, key in (("barglow", "sigma_near_px"), ("barglow", "sigma_far_px"),
+                   ("textglow", "sigma_px")):
+        fx[n][key] = fx[n][key] * k
+    return {"W": W, "H": H, "k": k, "fx": fx,
+            "nominal_pt": round(TEXT["nominal_pt"] * k),
+            "min_pt": round(TEXT["min_pt"] * k),
+            "bar_h": BAR["height_px"] * k, "pad_x": BAR["pad_x_px"] * k,
+            "base_off": BAR["baseline_below_center_px"] * k,
+            "scrim_left_to": SCRIM["left_to_px"] * k,
+            "scrim_edge_to": SCRIM["edge_to_px"] * k,
+            "feather": TRANSITIONS["wipe_feather_px"] * k,
+            "overrun": TRANSITIONS["wipe_overrun_px"] * k}
 
 # NO SIGNATURE. This style never burns one, whatever the config says: the only
 # place for a handle here is over the picture, and that is not this look.
@@ -203,12 +238,12 @@ def grade_eq(grade=None, base=GRADE_EQ):
     return ":".join("%s=%s" % (k, vals[k]) for k in known)
 
 
-def band_source_chain(crop, grade_on=True, grade=None, base=GRADE_EQ):
-    """[0:v] -> the graded 1920x1080 picture (no captions).
+def band_source_chain(crop, W, H, grade_on=True, grade=None, base=GRADE_EQ):
+    """[0:v] -> the graded WxH picture (no captions).
     The grade also feeds the bar-colour derivation (at BAR_SAMPLE_EQ), so
     turning it off or overriding it moves the pill hue as well as the
     picture."""
-    pre = source_chain(crop, BAND_W, BAND_H)
+    pre = source_chain(crop, W, H)
     if not grade_on:
         return pre
     return "%s,eq=%s,colorbalance=%s,vignette=%s" % (
@@ -228,12 +263,18 @@ def derive_bar_color(src, dur, crop, tmp, grade_on=True, grade=None):
     clip). `vignette` dithers per frame, so sampling 25 frames instead of
     every frame can move the pill by one LSB on one channel -- a
     sub-quantiser look change on a colour that is a heuristic to begin with.
-    Pin `bar_color:` in the config to bypass the pass entirely."""
+    Pin `bar_color:` in the config to bypass the pass entirely.
+
+    Always sampled at CANVAS_W x CANVAS_H, whatever canvas the render
+    composes on: the 48x27 average of a 1080x608 picture lands the pill an
+    LSB or two away (#AD7047 -> #AE7247 on hujurat-4-5), and the auto colour
+    must not move between a reel's landscape and portrait files."""
     a = BAR_AUTO
     tile = int(a["sample_tile"])
     tile_png = os.path.join(tmp, "bar_color_sample.png")
     vf = ("fps=%s," % a["sample_fps"]
-          + band_source_chain(crop, grade_on, grade, BAR_SAMPLE_EQ)
+          + band_source_chain(crop, CANVAS_W, CANVAS_H, grade_on, grade,
+                              BAR_SAMPLE_EQ)
           + ",scale=48:27,tile=%dx%d" % (tile, tile))
     run([FFMPEG, "-v", "error", "-y", "-t", "%.3f" % dur, "-i", src,
          "-vf", vf, "-frames:v", "1", tile_png])
@@ -311,26 +352,33 @@ def phrase_lines(ph, font, max_w):
     return [" ".join(words[:best]), " ".join(words[best:])]
 
 
-def layout(phrases, x_offset, y_offset):
-    """WHERE every pill and baseline goes -- no drawing, no ffmpeg.
-    draw_layers() consumes exactly these numbers, so the two can never
-    disagree."""
-    W, H = CANVAS_W, CANVAS_H
-    cx = W // 2 + int(x_offset)          # centered by default
+def layout(phrases, x_offset, y_offset, geo):
+    """WHERE every pill and baseline goes on geo's canvas -- no drawing, no
+    ffmpeg. draw_layers() consumes exactly these numbers, so the two can never
+    disagree. The offsets are the config's, in CANVAS_W pixels."""
+    W, H = geo["W"], geo["H"]
+    cx = W // 2 + int(x_offset * geo["k"])          # centered by default
+    y_offset = y_offset * geo["k"]
     max_w = TEXT["max_line_width_frac"] * W
-    bar_h = BAR["height_px"]
-    pad_x = BAR["pad_x_px"]
-    base_off = BAR["baseline_below_center_px"]
+    bar_h = geo["bar_h"]
+    pad_x = geo["pad_x"]
+    base_off = geo["base_off"]
 
-    probe_font = truetype(TEXT["nominal_pt"])
     # Split once and keep it: phrase_lines shapes every candidate split to
-    # measure it, so asking twice for the same phrase re-shapes the lot.
-    split = [phrase_lines(ph, probe_font, max_w) for ph in phrases]
+    # measure it, so asking twice for the same phrase re-shapes the lot. The
+    # split is measured on the CANVAS_W canvas whatever geo is, so a reel's
+    # portrait file breaks its lines where the landscape one does -- hinting
+    # at a smaller size can tip a near-tie the other way.
+    ref_font = truetype(TEXT["nominal_pt"])
+    split = [phrase_lines(ph, ref_font, TEXT["max_line_width_frac"] * CANVAS_W)
+             for ph in phrases]
+    probe_font = (ref_font if geo["k"] == 1
+                  else truetype(geo["nominal_pt"]))
     raw = [b[2] - b[0]
            for b in (bbox_ls(ln, probe_font) for lines in split
                      for ln in lines)]
     widest = max(1.0, max(raw))
-    pt = fit_pt(TEXT["nominal_pt"], TEXT["min_pt"], max_w, widest)
+    pt = fit_pt(geo["nominal_pt"], geo["min_pt"], max_w, widest)
     font = truetype(pt)
 
     y_line = [TEXT["line1_center_y_frac"] * H + y_offset,
@@ -338,7 +386,7 @@ def layout(phrases, x_offset, y_offset):
     y_single = TEXT["single_center_y_frac"] * H + y_offset
 
     out = {"pt": pt, "font": font, "cx": cx, "widest": widest,
-           "max_w": max_w, "phrases": []}
+           "max_w": max_w, "W": W, "H": H, "phrases": []}
     for idx, lines in enumerate(split, start=1):
         centers = [y_single] if len(lines) == 1 else y_line[:len(lines)]
         rows = []
@@ -396,12 +444,13 @@ def draw_layers(lay, bar_rgb_drawn, out_dir):
     came from travels with it, since every consumer now has to place it.
     Returns [{"bar", "text", "x0", "x1", "lines", "bar_box", "text_box"}]."""
     os.makedirs(out_dir, exist_ok=True)
+    W, H = lay["W"], lay["H"]
     report = []
     for p in lay["phrases"]:
-        bar_img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
-        ink = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+        bar_img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ink = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         d = ImageDraw.Draw(ink)
-        px0, px1 = CANVAS_W, 0
+        px0, px1 = W, 0
         for ln in p["lines"]:
             draw_pill(bar_img, ln["x0"], ln["y0"], ln["x1"], ln["y1"],
                       bar_rgb_drawn)
@@ -413,7 +462,7 @@ def draw_layers(lay, bar_rgb_drawn, out_dir):
         tp = os.path.join(out_dir, "text%d.png" % p["i"])
         bcrop, bx, by = trim_to_ink(bar_img)
         tcrop, tx, ty = trim_to_ink(
-            with_shadow(ink, TEXT_SHADOW, CANVAS_W, CANVAS_H))
+            with_shadow(ink, TEXT_SHADOW, W, H))
         bcrop.save(bp)
         tcrop.save(tp)
         report.append({"bar": bp, "text": tp, "x0": px0, "x1": px1,
@@ -423,11 +472,11 @@ def draw_layers(lay, bar_rgb_drawn, out_dir):
     return report
 
 
-def scrim_plate(tmp):
-    """Left ramp x vertical feather multiply plate for the band."""
-    lo, to = SCRIM["left_min"], SCRIM["left_to_px"]
-    eo, et = SCRIM["edge_min"], SCRIM["edge_to_px"]
-    w, h = BAND_W, BAND_H
+def scrim_plate(tmp, geo):
+    """Left ramp x vertical feather multiply plate for the picture."""
+    lo, to = SCRIM["left_min"], geo["scrim_left_to"]
+    eo, et = SCRIM["edge_min"], geo["scrim_edge_to"]
+    w, h = geo["W"], geo["H"]
     path = os.path.join(tmp, "scrim_%dx%d.png" % (w, h))
     if not os.path.exists(path):
         img = Image.new("L", (w, h))
@@ -472,10 +521,18 @@ def heat_map_name(axis, seed, span):
     own arguments plus geometry and length. Not on supersample, scroll_v,
     rms_frac_w or the perlin_centre/sd pair: those live in the graph's
     scroll/scale/lut, downstream of the file, and folding them in here would
-    throw away a valid 164s bake every time one of them is tuned."""
+    throw away a valid 164s bake every time one of them is tuned.
+
+    Always the CANVAS_W x CANVAS_H bake, whatever canvas the render composes
+    on. `perlin` samples a field normalised to the frame (a 64px bake matches
+    a 128px one downscaled, not its corner), so a portrait render reads the
+    same field by scaling these maps to its own supersampled size in-graph.
+    A native 1080x608 pair measured no closer to the 1920x1080 render (41.03
+    against 41.05 dB) at the same render cost, for a second ~3min bake and
+    117MB more cache."""
     c = FX_CFG["heat"]
     return "heat%s_%dx%d_%d_%ss_o%s_p%s_x%s_t%s_s%d.mp4" % (
-        axis, BAND_W, BAND_H, FPS, span, c["octaves"], c["persistence"],
+        axis, CANVAS_W, CANVAS_H, FPS, span, c["octaves"], c["persistence"],
         c["xscale"], c["tscale"], seed)
 
 
@@ -535,7 +592,7 @@ def heat_layers(dur):
     c = FX_CFG["heat"]
 
     def bake(axis, seed, path):
-        src = FX.heat_perlin_src(c, BAND_W, BAND_H, FPS, seed)
+        src = FX.heat_perlin_src(c, CANVAS_W, CANVAS_H, FPS, seed)
         # Bake to a pid-tagged temp and rename only on success: the cache
         # is keyed by name alone, so a file that exists must be complete.
         # Deleting on a bad returncode is not enough -- a bake killed from
@@ -577,14 +634,14 @@ def heat_layers(dur):
     return paths
 
 
-def snow_layer(tint_rgb):
+def snow_layer(tint_rgb, W, H):
     """The seamlessly-looping snow mp4, cached by parameter tag.
     Expensive to evaluate (one shader pass per frame), so it is only built
     when the effect is on.
 
     Cached beside the heat maps rather than inside the reel's own tmp: the tag
-    already pins everything that decides the bytes (band size, the tint, every
-    snow parameter), so two reels that agree on those agree on the file --
+    already pins everything that decides the bytes (the canvas it is screened
+    on, the tint, every snow parameter), so two reels that agree on those agree on the file --
     which is any two sharing a pinned `bar_color:`. Same part-file rename as
     heat_layers, and for the same reason: the cache is keyed by name alone, so
     a bake killed from outside (^C, a timeout, the OOM killer) must not leave a
@@ -592,14 +649,14 @@ def snow_layer(tint_rgb):
     input."""
     c = dict(FX_CFG["snow"])
     tag = "%dx%d_%02X%02X%02X_%s" % (
-        BAND_W, BAND_H, *tint_rgb,
+        W, H, *tint_rgb,
         "_".join(str(c[k]) for k in sorted(c)))
     os.makedirs(SNOW_CACHE, exist_ok=True)
     path = os.path.join(SNOW_CACHE, "snow_%s.mp4" % tag)
     if not os.path.exists(path):
         part = "%s.%d.part.mp4" % (os.path.splitext(path)[0], os.getpid())
         try:
-            fld, nf = FX.render_snow(part, BAND_W, BAND_H, FPS, c, tint_rgb)
+            fld, nf = FX.render_snow(part, W, H, FPS, c, tint_rgb)
             os.replace(part, path)
             print("      snow layer: shader pass, texel %.1fpx expo %.1f "
                   "gain %.1f, %d frames" % (fld.texel, fld.expo, fld.gain, nf))
@@ -684,13 +741,16 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
                 ln, afade, heat_paths=None, grade=None, portrait=False):
     """-> (filter_complex, input argv). Inputs: [0]=source, [1..2n]=bar,text
     per phrase, then snow, then scrim, then the two heat maps. The heat pair
-    goes LAST so optional maps never renumber earlier inputs."""
-    W, H = CANVAS_W, CANVAS_H
-    tr = TRANSITIONS
+    goes LAST so optional maps never renumber earlier inputs.
+
+    `portrait` composes on geometry(True)'s canvas and pads to 1080x1920;
+    `rep` must then come from a layout on the same geometry."""
+    geo = geometry(portrait)
+    W, H = geo["W"], geo["H"]
     nphrases = len(rep)
     phrase_pngs = [p[k] for p in rep for k in ("bar", "text")]
 
-    chain = FX.fx_chain(FX_CFG, on)
+    chain = FX.fx_chain(geo["fx"], on)
     fx_layer = FX.by_layer(chain)
 
     ph_base = 1
@@ -719,13 +779,16 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
              % (max(0.0, t_in - 1.0 / FPS), t_out + d_out + 1.0 / FPS)
              for _k, t_in, _di, t_out, d_out in sched]
 
-    ctx = FX.Ctx(W=W, H=H, BW=BAND_W, BH=BAND_H, BY=BAND_Y, fps=FPS, dur=dur,
+    # The picture is the whole canvas: fx.py's band (BW/BH/BY, a ported
+    # contract every effect sizes itself off) is the frame.
+    ctx = FX.Ctx(W=W, H=H, BW=W, BH=H, BY=0, fps=FPS, dur=dur,
                  tint=tint, nphrases=nphrases, band_src="band",
                  snow_in=snow_in, hexrgb=hexrgb, boxes=boxes, gates=gates,
                  heat_x_in=heat_in[0] if heat_in else None,
                  heat_y_in=heat_in[1] if heat_in else None)
 
-    g_.chain(vin, [band_source_chain(crop, on["grade"], grade), "setsar=1",
+    g_.chain(vin, [band_source_chain(crop, W, H, on["grade"], grade),
+                   "setsar=1",
                    "fps=%d" % FPS, "format=gbrp"], "bnd")
     if on["scrim"]:
         g_.chain(scrim_in, ["format=gbrp", hold], "scr")
@@ -742,10 +805,10 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
         masks = {}
         if kind == "wipe":
             x0, x1 = rep[i]["x0"], rep[i]["x1"]
-            feather = tr["wipe_feather_px"]
+            feather = geo["feather"]
             # front travel: the full bar span plus enough margin for the
             # feathered front to clear both ends completely.
-            trav = (x1 - x0) + 2 * feather + 40
+            trav = (x1 - x0) + 2 * feather + geo["overrun"]
             a = t_in + d_in                       # entry complete
             # A white plate slid over black: entering, its LEFT edge is the
             # front (right edge pinned); leaving, its RIGHT edge is the front,
@@ -846,18 +909,25 @@ def render(plan):
     drawn_rgb = predraw_color(target_rgb)
     tint = [c / 255.0 for c in target_rgb]
 
-    lay = layout(phrases, cfg["x_offset"], cfg["y_offset"])
+    portrait = bool(plan.get("portrait"))
+    geo = geometry(portrait)
+    if portrait:
+        print("      portrait delivery: composed at %dx%d, then %s (in-graph)"
+              % (geo["W"], geo["H"], PORTRAIT_PAD))
+
+    lay = layout(phrases, cfg["x_offset"], cfg["y_offset"], geo)
     print("      Arabic pt=%d (nominal %d, widest raw %dpx, cap %dpx)"
-          % (lay["pt"], TEXT["nominal_pt"], lay["widest"], lay["max_w"]))
+          % (lay["pt"], geo["nominal_pt"], lay["widest"], lay["max_w"]))
     rep = draw_layers(lay, drawn_rgb, os.path.join(tmp, "overlays"))
     for r, p in zip(rep, lay["phrases"]):
         print("      bar%d+text%d: %d line(s), bars x %.0f..%.0f (w %.0f)"
               % (p["i"], p["i"], r["lines"], r["x0"], r["x1"],
                  r["x1"] - r["x0"]))
 
-    snow_path = snow_layer(target_rgb) if on["snow"] else None
+    snow_path = (snow_layer(target_rgb, geo["W"], geo["H"]) if on["snow"]
+                 else None)
     heat_paths = heat_layers(dur) if on["heat"] else None
-    scrim = scrim_plate(tmp) if on["scrim"] else None
+    scrim = scrim_plate(tmp, geo) if on["scrim"] else None
     if cfg["signature"]:
         print("      signature %r IGNORED -- the bars style never burns one "
               "(see the note at the top of this file)." % cfg["signature"])
@@ -866,10 +936,6 @@ def render(plan):
     if cuts:
         print("      ! HARD CUT at changeover(s): %s"
               % ", ".join("P%d->P%d" % (c, c + 1) for c in cuts))
-
-    portrait = bool(plan.get("portrait"))
-    if portrait:
-        print("      portrait delivery: %s (in-graph)" % PORTRAIT_PAD)
 
     print("      loudnorm pass 1...")
     ln = loudnorm_filter(measure_loudness(src, dur))
@@ -885,6 +951,8 @@ def render(plan):
         "P%d %s in@%.2f+%.2f out@%.2f+%.2f" % (i + 1, k, ti, di, to, do)
         for i, (k, ti, di, to, do) in enumerate(sched)))
     encode(in_argv, fc, dur, out, plan.get("meta"))
-    print("      %s | %dx%d | bar #%02X%02X%02X (drawn #%02X%02X%02X)"
-          % ((os.path.relpath(out, ROOT), CANVAS_W, CANVAS_H)
+    print("      %s | %dx%d%s | bar #%02X%02X%02X (drawn #%02X%02X%02X)"
+          % ((os.path.relpath(out, ROOT), geo["W"], geo["H"],
+              " padded to %dx%d" % (PORTRAIT_W, PORTRAIT_H) if portrait
+              else "")
              + target_rgb + drawn_rgb))

@@ -33,13 +33,16 @@ ENCODE = {"crf": 18, "preset": "faster", "audio_bitrate": "192k"}
 # atom. Costs memory only; changes no output byte.
 THREAD_QUEUE_SIZE = 4096
 
-# `--vertical` delivery: the landscape picture onto a 1080x1920 portrait
-# canvas, black above and below. Appended inside the style's own graph before
-# format=yuv420p, so the portrait file is the SAME single encode -- letterboxing
-# the finished mp4 afterwards (letterbox.py) costs a whole second lossy
-# generation. letterbox.py keeps its own copy of this string: it stays
-# standalone and must not import Pillow through this module.
-PORTRAIT_PAD = "scale=1080:-2,pad=1080:1920:0:(oh-ih)/2:black"
+# `--vertical` delivery: a landscape picture PORTRAIT_W wide on a 1080x1920
+# canvas, black above and below. PORTRAIT_PAD is appended inside the style's
+# own graph before format=yuv420p, so the portrait file is the SAME single
+# encode -- letterboxing the finished mp4 afterwards (letterbox.py) costs a
+# whole second lossy generation. It only pads: bars composes a portrait render
+# at PORTRAIT_W already, and render_text scales its 1920 canvas down first.
+# letterbox.py keeps its own copy of the scale+pad: it stays standalone and
+# must not import Pillow through this module.
+PORTRAIT_W, PORTRAIT_H = 1080, 1920
+PORTRAIT_PAD = "pad=%d:%d:0:(oh-ih)/2:black" % (PORTRAIT_W, PORTRAIT_H)
 
 # ---------------------------------------------------------------------------
 # type + ink

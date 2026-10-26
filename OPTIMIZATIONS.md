@@ -6,18 +6,21 @@ Read the rejected list before proposing anything. Numbers: `sources/hajri-23-tar
 
 | | wall | CPU |
 |---|---|---|
-| `bars`, full fx, heat + snow cached | **~72s** | ~516s |
-| `bars`, first run on a machine | ~850s | ~1830s |
-| `horizontal` | ~8s | ~65s |
-| `vertical` | ~8s | ~69s |
+| `bars`, heat + snow cached | **~212s** | ~964s |
+| `bars --vertical`, heat + snow cached | **~78s** | ~366s |
+| `horizontal` | ~19s | ~109s |
+| `horizontal --vertical` | ~17s | ~95s |
+| `vertical` | ~21s | ~120s |
 
-ffmpeg 9.0.2, 14 cores. MEASURE THESE COOLED AND ALONE. Rendered back to back they read 10-25% high -- a bars render is 520s of CPU across 14 cores, and the next one starts on a hot machine -- which reads as a regression that is not there. These are the medians of alternating runs with the machine idle between them.
+Apple M1 (4 performance + 4 efficiency cores, 16 GB), ffmpeg 9.0.2, every render paying its own `trim_media` cut. MEASURE THESE COOLED AND ALONE: medians of alternating runs (bars: 5 landscape, 5 portrait) with 60s idle before each. Even so a bars render here spreads +-20% run to run (162-279s landscape) -- the scheduler puts ffmpeg's threads on efficiency cores whenever the desktop wants a performance one, which shows up as MORE CPU-seconds for the same work -- so a difference under ~15% needs paired runs to be believed. The previous profile (14 cores) read 72s / 516s for landscape bars; the numbers are not comparable across machines.
 
-The first-run row is one 60s perlin bake per axis (1237s CPU together) plus the snow bake (~12s / ~45s) plus the render, paid once per machine and never per reel. The two axis bakes run CONCURRENTLY (`perlin` is single-threaded; 1.93x measured on a 4s-span pair), so the wall for the pair is one bake's, ~380s, not the 761s two sequential bakes cost.
+Longer reels scale with duration: `fatihah-1-1-7-bars --vertical` (52.5s, the longest config) 148s / 742s CPU, `shuara-26-105-111-bars --vertical` (41.6s) 131s / 628s, each including its own snow bake.
 
-`bars` carries the whole FX stack over the full 1920x1080 frame, which is where the gap comes from. Both baked layers live under `tools/cache/` -- perlin heat maps in `heat/`, the snow loop in `snow/` -- outside `/tmp` so a sweep cannot bill either bake twice, and any heat map at least as long as the reel is reused verbatim: perlin is a deterministic field over (x, y, t) where `-t` only decides where to stop reading, so a long map's opening frames are bit-identical to a short bake (framemd5, and a whole reel re-rendered off a 60s map instead of a 30s one hashes the same). Only a reel longer than every cached map pays perlin, at ~6.3s of wall per second of map (`render_bars.HEAT_BAKE_RATE`, which the bake's printed ETA uses). Pin `fx: {heat: false}` for timing previews (~27% cheaper, and never judge LOOK without the full stack).
+A first run on a machine adds one 60s perlin bake per axis plus the snow bake. The two axis bakes run CONCURRENTLY (`perlin` is single-threaded; 1.93x measured on a 4s-span pair), so the pair costs one bake's wall: 8.4s per map-second at 1920x1080 here (4s span: 33.7s wall, 56s CPU), ~8.5min for 60s. Paid once per machine, never per reel; a portrait render reads the same maps. The snow loop is baked per bar colour and canvas: 11.0s at 1920x1080, 4.7s at 1080x608.
 
-`generate.py --vertical` adds NO pass: the scale/pad runs inside the style's own graph (`render_common.PORTRAIT_PAD`), so the portrait file is the same single encode. Measured on the 26.2s hujurat `horizontal` reel against a landscape render followed by `letterbox.py` and a tag remux: 7.9s against 11.5s wall, 70s against 115s CPU -- the final x264 is also cheaper because two thirds of the portrait canvas is black -- at 51.0 dB against the letterboxed file, one lossy generation closer to the render. The mp4 tags are written by the delivery encode too, so the finished file is never rewritten.
+`bars` carries the whole FX stack over the full frame, which is where the gap comes from -- and why `--vertical` composes it at the 1080x608 the portrait file shows rather than at 1920x1080 scaled down. Both baked layers live under `tools/cache/` -- perlin heat maps in `heat/`, the snow loop in `snow/` -- outside `/tmp` so a sweep cannot bill either bake twice, and any heat map at least as long as the reel is reused verbatim: perlin is a deterministic field over (x, y, t) where `-t` only decides where to stop reading, so a long map's opening frames are bit-identical to a short bake (framemd5, and a whole reel re-rendered off a 60s map instead of a 30s one hashes the same). Only a reel longer than every cached map pays perlin, at ~6.3s of wall per second of map on the 14-core machine (`render_bars.HEAT_BAKE_RATE`, which the bake's printed ETA uses; 8.4s on the M1). Pin `fx: {heat: false}` for timing previews (~27% cheaper, and never judge LOOK without the full stack).
+
+`generate.py --vertical` adds NO pass: the scale/pad runs inside the style's own graph (`render_common.PORTRAIT_PAD`; bars only pads), so the portrait file is the same single encode. Measured on the 26.2s hujurat `horizontal` reel against a landscape render followed by `letterbox.py` and a tag remux: 7.9s against 11.5s wall, 70s against 115s CPU -- the final x264 is also cheaper because two thirds of the portrait canvas is black -- at 51.0 dB against the letterboxed file, one lossy generation closer to the render. The mp4 tags are written by the delivery encode too, so the finished file is never rewritten.
 
 ## Techniques in place
 
@@ -25,6 +28,7 @@ Changing one of these needs the guard it was verified with: PSNR for anything th
 
 - **Ink-cropped + `enable`-gated overlays** (bars + text captions/signature). Bit-identical vs full canvas. Text style isolated: 4.08→1.64s wall, 1618→633 MB. Signature: 13.1→10.1s CPU, 371→220 MB.
 - **Grade plate and signature are single-frame inputs** (text styles). Only the cards are looped, because only they fade; overlay's `eof_action=repeat` holds the other two for the whole reel -- same pixels, no per-frame PNG decode.
+- **`bars --vertical` composes at 1080x608** (`render_bars.geometry`): every px constant times 1080/1920, then a pad -- no 1920x1080 composite scaled down. hujurat-4-5: 222s -> 78s wall, 1006 -> 366s CPU (2.8x), PSNR-Y 41.0 dB whole frame / 46.3 dB on the caption-free top 100 rows against the 1920x1080 composite; fatihah-1-1-7 411 -> 148s (38.7 / 47.2 dB), shuara-26-105-111 362 -> 131s (36.2 / 47.4 dB). The dB gap is type and pill edges, a touch softer; the owner approved the look on stills. Kept as measured: heat supersample 2 (1 at this size is 36.6 dB, visibly different), the pill colour sampled at 1920x1080 (sampling the small picture moves it, #AD7047 -> #AE7247), the line split measured at 1920 (a portrait file breaks where the landscape one does), and the 1920x1080 heat maps scaled in-graph (perlin is normalised to the frame, so it is the same field; a native 1080x608 bake read 41.03 against 41.05 dB at the same render cost).
 - **Wipe mask over the bar box** plus 16 sigma of the feather blur each side, not the canvas -- framemd5-identical, landscape and portrait.
 - **PNG plates held by the `loop` filter**, not `-loop 1` (which re-decodes the PNG every frame) -- framemd5-identical. With the wipe mask: 6 alternating pairs of the hujurat landscape encode alone, 216 -> 184s wall, 1001 -> 897s CPU (every pair lower, by 30-204s CPU).
 - **`trim_media` cached** under `tools/cache/trim`, keyed on the source and ffmpeg binary (path, size, mtime) and the whole argv; the cut is deterministic (same md5 across runs and against an uncached cut). A re-render whose window has not moved saves the cut: 5.4-6.6s wall, ~32s CPU on the 26.2s hujurat window -- a quarter of a text-style render.
@@ -65,8 +69,9 @@ What the stages around the render pay before any pixel moves.
 - **Letterbox pass at `slow`**: 54.97→58.32 dB vs the padded source for 10.9→17.5s CPU. Both are far above the 45 dB floor, and the input is already a crf-18 encode of the final pixels — the dB buys fidelity to a finished encode, not to the render.
 - **Scan's tint folded into its final `lutrgb`**: not identical in general -- `colorchannelmixer` rounds `lrintf` in float (half to even), `lutrgb`'s `round()` is double, half away from zero, so identity depends on the tint; it was worth ~6% of the glow+scan subset.
 - **Snow bake in a fork pool**: byte-identical and 8.8 -> 4.2s wall, but +65% CPU, once per bar colour (4.7s serial at the portrait canvas), and `fork` after importing Pillow on macOS is the hazard CPython moved its default off.
+- **Native 1080x608 heat bake for portrait**: the same field as the 1920 maps scaled (see above), no closer to the landscape look, same render cost, plus a ~3min bake and 117 MB.
 - **Delete `trim_media`**: ~3.1s wall; seek into long source is cheaper to decode than the intermediate. Not worth the A/V-sync surface.
 
 ## Open
 
-**`heat` supersample 2→1** — look decision; no cheap refactor left. **bars FX sigmas at 1920x1080** — they were tuned when a blur covered a 1080x608 band; whether any of them can drop a resolution tier on the full frame is unmeasured.
+**`heat` supersample 2→1** — look decision; no cheap refactor left. **bars FX sigmas at 1920x1080 (landscape)** — they were tuned when a blur covered a 1080x608 band, which is the canvas `--vertical` composes on again; whether any can drop a resolution tier on the landscape frame is unmeasured.

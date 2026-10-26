@@ -45,7 +45,7 @@ All 30fps and fixed-size; a weak source is upscaled, never delivered small.
 - **`horizontal`** — 1920×1080, the SAME renderer and the same look; block centred vertically, column opposite him (`x_offset`).
 - **`bars`** — 1920×1080, Thuluth on pills (213pt / 96px / 0.45 W ink), wipe then sequential crossfades, full FX (`fx.py`). Never burns a signature. Golden: `tests/graph_parity.py`. `fx: {heat: false}` for timing previews.
 
-`generate.py --vertical` delivers a 1920×1080 style as 1080×1920, black above and below, inside the render's own encode. The picture is 1080×608, about a third of the frame, so bars' 213pt Arabic arrives on the phone nearer 120pt-equivalent; the native `vertical` style avoids that trade. `letterbox.py` does the same to an already-finished file (and refuses a portrait one).
+`generate.py --vertical` delivers a 1920×1080 style as 1080×1920, black above and below, inside the render's own encode. The picture is 1080×608, about a third of the frame, so bars' Arabic arrives on the phone at 120pt nominal instead of 213; the native `vertical` style avoids that trade. `horizontal` renders at 1920×1080 and scales down; `bars` composes its whole look at 1080×608 (`render_bars.geometry`), which is ~3x cheaper and looks the same at the size it is shown (`OPTIMIZATIONS.md`). `letterbox.py` does the same to an already-finished file (and refuses a portrait one).
 
 Design rationale lives in each renderer's module docstring.
 

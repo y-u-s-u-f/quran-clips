@@ -69,7 +69,7 @@ Requirements:
 - `suppress:` anything that is not recitation.
 - Hand-write `crop:`/`x_offset:`/`face_bottom:` only if crop.py refused.
 
-Per style: `vertical` (1080×1920) needs `crop:` + `face_bottom:` — generate refuses a landscape source without a crop rather than centre-crop him blind. `horizontal` and `bars` (1920×1080) need `x_offset:`. `--vertical` letterboxes a 1920×1080 style onto 1080×1920 in the same encode, shrinking the picture to a third of the frame (`pipeline/README.md`); native `vertical` avoids that trade. `generate.py --verify-only` prints the verification block and stops — use it to check a split before paying a render.
+Per style: `vertical` (1080×1920) needs `crop:` + `face_bottom:` — generate refuses a landscape source without a crop rather than centre-crop him blind. `horizontal` and `bars` (1920×1080) need `x_offset:`. `--vertical` letterboxes a 1920×1080 style onto 1080×1920 in the same encode, shrinking the picture to a third of the frame (`pipeline/README.md`); native `vertical` avoids that trade. `bars --vertical` composes its look at that 1080×608 size, at about a third of the landscape render's wall time. `generate.py --verify-only` prints the verification block and stops — use it to check a split before paying a render.
 
 ## Verify English against BOTH translations
 
