@@ -696,9 +696,14 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     ph_base = 1
     g_ = FX.Graph()
     vin = g_.input(src, ss="0.000", t="%.3f" % dur)
-    ph_in = [g_.input(png, framerate=FPS, loop=1) for png in phrase_pngs]
+    # The PNG plates are single-frame inputs repeated by `hold`: `-loop 1`
+    # would re-read and re-decode each one at every frame. framerate=FPS
+    # stays -- without it the held frames tick at image2's default 1/25 and
+    # every fade moves. Bounded a frame past the reel, like any looped input.
+    hold = f"loop=loop={math.ceil(dur * FPS)}:size=1:start=0"
+    ph_in = [g_.input(png, framerate=FPS) for png in phrase_pngs]
     snow_in = g_.input(snow_path, stream_loop=-1) if snow_path else None
-    scrim_in = (g_.input(scrim_path, framerate=FPS, loop=1)
+    scrim_in = (g_.input(scrim_path, framerate=FPS)
                 if on["scrim"] else None)
     # stream_loop so a reel longer than its cached bucket still runs out to
     # the end; the bucket is sized so this normally never wraps.
@@ -723,7 +728,7 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
     g_.chain(vin, [band_source_chain(crop, on["grade"], grade), "setsar=1",
                    "fps=%d" % FPS, "format=gbrp"], "bnd")
     if on["scrim"]:
-        g_.chain(scrim_in, "format=gbrp", "scr")
+        g_.chain(scrim_in, ["format=gbrp", hold], "scr")
         g_.chain(["bnd", "scr"],
                  ["blend=all_mode=multiply:shortest=1", "format=rgba"], "bg")
     else:
@@ -774,7 +779,8 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
             lbl = f"{name}{i + 1}"
             ox, oy, ow, oh = boxes[i][name]
             if name in masks:
-                g_.chain(ph_in[sidx - ph_base], ["format=rgba", "split=2"],
+                g_.chain(ph_in[sidx - ph_base],
+                         ["format=rgba", hold, "split=2"],
                          [f"p{lbl}", f"pa{lbl}"])
                 g_.chain(f"pa{lbl}", "alphaextract", f"a{lbl}")
                 g_.chain([f"a{lbl}", masks[name]],
@@ -782,7 +788,7 @@ def build_graph(src, dur, crop, rep, sched, tint, on, snow_path, scrim_path,
                 g_.chain([f"p{lbl}", f"am{lbl}"], "alphamerge", f"x{lbl}")
             else:
                 g_.chain(ph_in[sidx - ph_base],
-                         ["format=rgba",
+                         ["format=rgba", hold,
                           f"fade=t=in:st={t_in:.3f}:d={d_in:.3f}:alpha=1",
                           f"fade=t=out:st={t_out:.3f}:d={d_out:.3f}:alpha=1"],
                          f"x{lbl}")

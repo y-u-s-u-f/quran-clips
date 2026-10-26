@@ -26,6 +26,7 @@ Changing one of these needs the guard it was verified with: PSNR for anything th
 - **Ink-cropped + `enable`-gated overlays** (bars + text captions/signature). Bit-identical vs full canvas. Text style isolated: 4.08→1.64s wall, 1618→633 MB. Signature: 13.1→10.1s CPU, 371→220 MB.
 - **Grade plate and signature are single-frame inputs** (text styles). Only the cards are looped, because only they fade; overlay's `eof_action=repeat` holds the other two for the whole reel -- same pixels, no per-frame PNG decode.
 - **Wipe mask over the bar box** plus 16 sigma of the feather blur each side, not the canvas -- framemd5-identical, landscape and portrait.
+- **PNG plates held by the `loop` filter**, not `-loop 1` (which re-decodes the PNG every frame) -- framemd5-identical. With the wipe mask: 6 alternating pairs of the hujurat landscape encode alone, 216 -> 184s wall, 1001 -> 897s CPU (every pair lower, by 30-204s CPU).
 - **`derive_bar_color`: `fps=1` first** — 8.57→1.89s CPU. Pin `bar_color:` to skip (vignette dither can move one LSB).
 - **`trim_media`: `veryfast`/crf 10** — 50.39 dB vs lossless. crf 14 is *worse* (49.46); size ≠ fidelity across presets.
 - **`heat` perlin maps pre-baked** (`heat_layers`, longest-map reuse) — 47.1 dB.
