@@ -1259,11 +1259,17 @@ func probeTimeline(_ v: VideoIn) -> ([CMTime], CMTime) {
     let o = AVAssetReaderTrackOutput(track: v.track, outputSettings: nil)
     r.add(o); r.startReading()
     var ts: [CMTime] = [], fdur = CMTime.zero
+    let edits = v.track.segments.filter { !$0.isEmpty }
+    guard edits.count == 1, CMTimeCompare(edits[0].timeMapping.source.duration, edits[0].timeMapping.target.duration) == 0
+    else { die("\(v.spec.path): edit list not ported") }
+    let edit = edits[0].timeMapping
     while let sb = o.copyNextSampleBuffer() {
         if CMSampleBufferGetNumSamples(sb) == 0 { continue }
         let t = CMSampleBufferGetPresentationTimeStamp(sb)
-        if CMTimeCompare(t, v.emptyEdit) < 0 { continue }
-        ts.append(CMTimeSubtract(t, v.emptyEdit))
+        // undecoded samples carry media time; the edit list maps it to the
+        // presentation time ffmpeg's mov demuxer gives the frame
+        if CMTimeCompare(t, edit.source.start) < 0 { continue }
+        ts.append(CMTimeAdd(CMTimeSubtract(t, edit.source.start), edit.target.start))
         fdur = CMSampleBufferGetDuration(sb)
     }
     ts.sort { CMTimeCompare($0, $1) < 0 }
