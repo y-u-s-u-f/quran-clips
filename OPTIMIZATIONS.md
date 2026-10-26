@@ -4,19 +4,17 @@ Read the rejected list before proposing anything. Numbers: `sources/hajri-23-tar
 
 ## Current cost
 
-| | wall | CPU |
-|---|---|---|
-| `bars` (GPU), heat + snow cached | **~41s** | ~19s |
-| `bars --vertical` (GPU), heat + snow cached | **~18s** | ~16s |
-| `horizontal` (GPU) | **~6.0s** | ~3.3s |
-| `horizontal --vertical` (GPU) | **~5.9s** | ~3.2s |
-| `vertical` (GPU) | **~6.2s** | ~3.3s |
+| | wall | CPU | GPU busy | GPU per frame |
+|---|---|---|---|---|
+| `bars`, heat + snow cached | **~29.8s** | ~16.6s | 27.1s | 34.5ms |
+| `bars --vertical`, heat + snow cached | **~12.6s** | ~14.0s | 10.0s | 12.7ms |
+| `horizontal` | **~4.8s** | ~3.3s | 2.3s | 3.0ms |
+| `horizontal --vertical` | **~4.7s** | ~3.2s | 1.6s | 2.0ms |
+| `vertical` | **~4.8s** | ~3.3s | 2.4s | 3.1ms |
 
-Apple M1 (4 performance + 4 efficiency cores, 16 GB), ffmpeg 9.0.2, every render paying its own `trim_media` cut. MEASURE THESE COOLED AND ALONE: medians of runs with 60s idle before each. The renderer is GPU-bound, so it does not have the scheduler spread a CPU render has here (an ffmpeg bars render spread +-20% run to run on this machine: the scheduler puts its threads on efficiency cores whenever the desktop wants a performance one). The same graphs run through ffmpeg 9.0.2 + x264 crf 18 / faster, before render_gpu replaced it, measured on this machine: bars 164s / 851s CPU, bars --vertical 61s / 314s, horizontal 12.4s / 70s, horizontal --vertical 7.4s / 39s, vertical 13.3s / 77s.
+Apple M1 (4 performance + 4 efficiency cores, 16 GB), ffmpeg 9.0.2, every render paying its own `trim_media` cut; 785 frames bars, 786 text. MEASURE THESE COOLED AND ALONE: medians of 2 runs with 60s idle before each (2026-10; CPU is user time, GPU busy is render_gpu's own count). Spread between the two runs was under 0.1s wall on every row. The same graphs run through ffmpeg 9.0.2 + x264 crf 18 / faster, before render_gpu replaced it, measured on this machine: bars 164s / 851s CPU, bars --vertical 61s / 314s, horizontal 12.4s / 70s, horizontal --vertical 7.4s / 39s, vertical 13.3s / 77s.
 
-The bars rows are medians of 2 alternating GPU/ffmpeg runs with 60s idle before each, snow cached (2026-10). Longer reels scale with duration: `fatihah-1-1-7-bars --vertical` (52.5s, the longest config) 33.0s / 20.1s CPU on the GPU against 127.6s / 638s through ffmpeg, `shuara-26-105-111-bars --vertical` (41.6s) 27.6s / 13.6s against 102.1s / 498s. The GPU renderer is GPU-bound (~19ms of GPU per portrait frame, ~44ms landscape, CPU mostly idle), so its numbers do not have the ffmpeg path's scheduler spread.
-
-The text rows are medians of 2 alternating GPU/ffmpeg runs with 60s idle before each (2026-10; CPU is user time). `ahzab-56-56` (30.0s, `YkXjYyKwHJ4`): horizontal 6.7s / 3.7s against 13.3s / 79s, `--vertical` 6.6s / 3.6s against 7.9s / 43s, vertical (hand-set 9:16 crop) 6.7s / 3.7s against 13.6s / 78s. About 4s of a text render is `tools/render_gpu` itself, of which the GPU is busy ~2.7s; the rest is the stages around it (loudnorm measure, layout, the mux).
+Bars is GPU-bound and scales with duration: `shuara-26-105-111-bars` (1248 frames) 43.7s of GPU. A bars render pays ~2.5s around the GPU: `derive_bar_color` ~1.9s (pin `bar_color:` to skip it), ~0.35s before render_gpu starts, ~0.2s its start-up, ~0.1s the mux. A text render is bound by VideoToolbox, not the GPU: render_gpu takes ~4.0s of which the encoder holds ~2.8s waiting in append, and the audio runs under it on a thread. `ahzab-56-56` (900 frames, `YkXjYyKwHJ4`) takes render_gpu ~4.5s in all three text deliveries.
 
 A first run on a machine adds one 60s perlin bake per axis plus the snow bake. The two axis bakes run CONCURRENTLY (`perlin` is single-threaded; 1.93x measured on a 4s-span pair), so the pair costs one bake's wall: 8.4s per map-second at 1920x1080 here (4s span: 33.7s wall, 56s CPU), ~8.5min for 60s. Paid once per machine, never per reel; a portrait render reads the same maps. The snow loop is baked per bar colour and canvas: 11.0s at 1920x1080, 4.7s at 1080x608.
 
@@ -27,6 +25,9 @@ A first run on a machine adds one 60s perlin bake per axis plus the snow bake. T
 ## Techniques in place
 
 - **Every style renders on the GPU** (`tools/render_gpu`, `pipeline/gpu/render_gpu.swift`): the style's own graph interpreted in Metal, exact ports of each ffmpeg filter. Text styles: every delivered frame of hujurat-4-5 vertical / horizontal / horizontal `--vertical` (786 each) and ahzab-56-56 horizontal / `--vertical` / vertical (900 each) is framemd5-identical to the ffmpeg graph's at `-r 30`; VideoToolbox at `render_common.VT_QUALITY` 0.76 reads 45.9-52.0 dB PSNR-Y against the lossless frames where x264 reads 45.1-51.5 (0.1-0.9 dB above it on all six, files 28-75% larger: VideoToolbox spends bits on a mostly static picture less well than x264). 1.2x less wall on `horizontal --vertical`, ~2x on the full-canvas reels, 12-23x less CPU. Bars: every frame of all four measured reels (hujurat-4-5 portrait + landscape, fatihah-1-1-7, shuara-26-105-111) is bit-identical to the ffmpeg graph's before encode; picture encoded at `VT_QUALITY` 0.68, delivered PSNR-Y against the lossless frames 45.9-51.0 dB where x264 crf 18 / faster reads 46.0-51.4, within 0.35 dB either way. 3.3-4.0x less wall, 20-45x less CPU. Inside it: gblur's recursive line passes on a transposed buffer (each SIMD group walks memory its threads share), the running value in a register and loads issued 8 ahead, 32-thread groups so few lines still spread over every core -- 36.8 -> 16.5s of GPU on hujurat portrait, bit-identical. Barriers only before a dispatch that touches a buffer bound since the last one (15.1 -> 14.9s, within noise; removing every barrier measured no faster, so the remaining cost is the ~276 kernels per frame themselves).
+- **render_gpu fusions and gray planes** -- every step framemd5-identical on `tests/gpu_parity.py` and on nine delivered reels (hujurat-4-5 in all five deliveries, shuara-26-105-111 bars, ahzab-56-56 in three). Text: overlay's copy fused into the overlay, 4-byte copies, RGB->YUV fused with its height-keeping scale (zero taps skipped), and a `--vertical` pad's rows converted once rather than every frame (`Img.live`): GPU busy hujurat horizontal 3.09 -> 2.30s, `--vertical` 2.12 -> 1.60s, vertical 3.06 -> 2.34s. Bars: `lutrgb` folded into the preceding scale's vertical pass, `scroll` into the following scale's horizontal row shift (portrait 14.33 -> 13.55s); images with R=G=B carry one plane (`Img.gray`, proved through swscale by neutral chroma), so gblur blurs once and aliases (-> 11.16s), the property propagates through mixer/png/colour/overlay/blend/crop/fade/lut (-> 10.52s) and chroma passes stop after the first gray frame (-> 10.18s). Landscape 37.3 -> 27.1s, shuara-26-105-111 58.9 -> 43.7s.
+- **Audio under the picture** (`render_common.start_audio`): both loudnorm passes, the fades and the AAC run on a thread while render_gpu draws, and `mux` copies both streams. hujurat horizontal 6.15 -> 4.74s wall; audio md5 and packets identical.
+- **An IDR every 150 frames** (`render_common.VT_GOP`; the sizes are there): 17-21% smaller text files, 7% smaller bars, same PSNR. The text styles' wall is VideoToolbox's: ~3.9s for 786 1080p frames, of which render_gpu waits ~2.8s in append -- a GPU gain there no longer moves the wall.
 
 Changing one of these needs the guard it was verified with: `tests/gpu_parity.py` (exact frames) for anything in the renderer, PSNR + stills before `--bless` for anything that moves a pixel, `tests/graph_parity.py --bless` for a bars graph edit, `tests/wrap_parity.py` for the English wrap.
 
@@ -66,6 +67,9 @@ What the stages around the render pay before any pixel moves.
 ## Rejected
 
 - **render_gpu: 16-wide gblur load batches** instead of 8: 16.5 -> 16.9s. **4-wide blend/lut** threads: 15.1 -> 14.7s, kept (no division in the blend either: `x/255` as `(x*32897)>>23`, exact over 0..65025).
+- **Heat and snow bakes on the GPU**: cannot be bit-identical. `vsrc_perlin` and Pillow's bilinear affine (snow) compute in double, and Metal has no fp64. Perlin is paid once per machine; snow once per bar colour and canvas.
+- **`derive_bar_color` with `-hwaccel videotoolbox`**: the same tile, but 2.96s against 1.70s.
+- **HEVC delivery**: see `render_common.VT_GOP`. **CAVLC** instead of CABAC: +19% file. VideoToolbox's speed-priority flag: an identical stream.
 
 - **`scrim_plate` pixel loop**: 0.10s.
 - **`align_words` skeleton precompute**: ms at ~50×60.
@@ -80,8 +84,6 @@ What the stages around the render pay before any pixel moves.
 
 ## Open
 
-**render_gpu kernel fusion** -- the GPU renderer spends its ~19ms/frame of bars across ~276 small dispatches, none above ~10% of the total; fusing per-pixel chains (mixer -> lut -> scale, the blend ladder) is the next lever, each fusion checked bit-exact with `--tap` and `tests/gpu_parity.py`.
-
-**render_gpu: the portrait pad's black rows** -- a `--vertical` text render pads rgba to 1080x1920 and then converts all of it to yuv420p (`k_rgb2y`, `k_rgb2uv` and their scalers are ~1.5s of the 2.7s GPU on hujurat), though two thirds of the frame is one constant colour. Converting only the band and filling the rest is unmeasured; it must stay framemd5-identical.
+**render_gpu: more bars fusion** -- ~13ms of GPU per portrait frame, ~35ms landscape, still across a couple of hundred small dispatches. Untried: a colour mixer folded into the blend that reads it, displace fused into the area downscale's RGB->YUV. Each checked bit-exact with `--tap` and `tests/gpu_parity.py`.
 
 **`heat` supersample 2→1** — look decision; no cheap refactor left. **bars FX sigmas at 1920x1080 (landscape)** — they were tuned when a blur covered a 1080x608 band, which is the canvas `--vertical` composes on again; whether any can drop a resolution tier on the landscape frame is unmeasured.
