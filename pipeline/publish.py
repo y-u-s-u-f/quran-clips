@@ -428,6 +428,8 @@ def main(argv=None):
                          "and a Facebook draft, both publishable by hand")
     ap.add_argument("--caption-only", action="store_true",
                     help="print the caption and stop -- no network")
+    ap.add_argument("--dry", action="store_true",
+                    help="copy the caption to the clipboard and stop -- no network")
     ap.add_argument("--yes", "-y", action="store_true",
                     help="skip the confirmation prompt")
     ap.add_argument("--cover-ms", type=int, default=COVER_MS,
@@ -448,6 +450,10 @@ def main(argv=None):
                                      reciter))
     fb_text, ig_text = captions_for(surah, a0, a1, reciter,
                                     for_ig=not a.fb_only)
+    if a.dry:
+        subprocess.run(["pbcopy"], input=ig_text.encode(), check=True)
+        print("caption copied to clipboard")
+        return 0
     print("-" * 60)
     print(ig_text)
     print("-" * 60)

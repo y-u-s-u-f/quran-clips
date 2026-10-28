@@ -54,6 +54,7 @@ Design rationale lives in each renderer's module docstring.
 ```sh
 python3 pipeline/publish.py reels/<name>.mp4
 python3 pipeline/publish.py reels/<name>.mp4 --caption-only
+python3 pipeline/publish.py reels/<name>.mp4 --dry
 python3 pipeline/publish.py reels/<name>.mp4 --draft
 ```
 
