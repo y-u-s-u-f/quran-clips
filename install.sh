@@ -127,7 +127,14 @@ if [ "$CHECK_ONLY" = 0 ]; then
     fi
     "$APY" -c "import $ASR_MOD" 2>/dev/null || {
         say "  installing $ASR_PKG (first transcription will also download the model)"
-        "$APY" -m pip -q install "$ASR_PKG"
+        case "$ASR_BACKEND" in
+            # mlx-whisper lists torch, but only its checkpoint converter imports
+            # it, and torch has no Python 3.15 wheel on PyPI (2026-10).
+            mlx) "$APY" -m pip -q install --no-deps mlx-whisper &&
+                 "$APY" -m pip -q install mlx numba numpy tqdm more-itertools \
+                     tiktoken huggingface_hub scipy;;
+            *)   "$APY" -m pip -q install "$ASR_PKG";;
+        esac
     }
 fi
 if [ -x "$APY" ] && "$APY" -c "import $ASR_MOD" 2>/dev/null; then

@@ -31,7 +31,7 @@ sudo apt install ffmpeg yt-dlp python3-venv
 `install.sh` builds all three. They are deliberately separate — whisper's and torch's dependency trees must never be installed into the interpreter that renders Arabic (see "Arabic shaping" below):
 
 * **`tools/render-venv`** — PyYAML + Pillow with RAQM. Runs `generate.py`, `crop.py` and the two style renderers.
-* **`tools/asr-venv`** — the Whisper backend: `mlx-whisper` on Apple silicon, `faster-whisper` (CPU/CUDA) everywhere else, or whichever `QC_ASR_BACKEND` in `.env` names. Runs the transcription subprocess only.
+* **`tools/asr-venv`** — the Whisper backend: `mlx-whisper` on Apple silicon, `faster-whisper` (CPU/CUDA) everywhere else, or whichever `QC_ASR_BACKEND` in `.env` names. Runs the transcription subprocess only. `mlx-whisper` installs without its declared torch dependency: only its checkpoint converter imports torch, which has no Python 3.15 wheel on PyPI.
 * **`tools/align-venv`** — `ctc-forced-aligner` (torch, Meta's MMS model, ~1.2 GB on first use). Runs `align.py`. Installed from git: the PyPI package of that name is an unrelated project. Torch installs from PyPI first, falling back to its nightly CPU index when that fails (needed for Python 3.15).
 
 `fetch.py`, `transcribe.py`, `quran.py`, `publish.py` and `letterbox.py` run on any plain `python3`.
