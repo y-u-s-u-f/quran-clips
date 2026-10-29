@@ -606,6 +606,12 @@ def load_forced_alignment(path, ref_words, window):
             "%s has %d words but the verse range has %d -- the config's "
             "span changed since align.py ran; re-run pipeline/align.py"
             % (path, len(words), len(ref_words)))
+    differ = sum(w.get("w") != r for w, r in zip(words, ref_words))
+    if differ:
+        raise ValueError(
+            "%s does not hold the verse range's words (%d differ or are "
+            "missing) -- re-run pipeline/align.py on this config"
+            % (path, differ))
     stamps = [{"start": w["t0"], "end": w["t1"]} for w in words]
     _enforce_monotonic(stamps)
     print("      %d/%d mushaf words timed by %s"
