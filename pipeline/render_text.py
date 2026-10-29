@@ -50,8 +50,8 @@ sys.path.insert(0, HERE)
 
 from render_common import (FADE_IN_S, FADE_OUT_S, FPS,  # noqa: E402
                            PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W, PROBE,
-                           encode, fit_pt, norm_ar, start_audio,
-                           source_chain, trim_to_ink)
+                           encode, fit_pt, hard_shadow, norm_ar,
+                           start_audio, source_chain, trim_to_ink)
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
@@ -478,16 +478,12 @@ def layout(orientation, phrases, english, cfg, face_bottom, geo):
 # drawing
 # ---------------------------------------------------------------------------
 
-def with_shadow(ink, W, H, k=1):
-    """The ink plus ONE hard drop shadow struck from its merged alpha: a solid
-    black layer through that alpha, pushed down-right, ink over it -- a lift
-    off the footage, not an outline ring. Never under 1px on a smaller
-    canvas."""
+def with_shadow(ink, k=1):
+    """The ink plus ONE hard drop shadow struck from its merged alpha, pushed
+    down-right -- a lift off the footage, not an outline ring. Never under 1px
+    on a smaller canvas."""
     off = max(1, round(SHADOW["offset_px"] * k))
-    solid = Image.new("RGBA", (W, H), SHADOW["color"] + (SHADOW["alpha"],))
-    sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sh.paste(solid, (off, off), ink.getchannel("A"))
-    return Image.alpha_composite(sh, ink)
+    return hard_shadow(ink, SHADOW["color"], SHADOW["alpha"], (off, off))
 
 
 def draw_layers(lay, W, H, out_dir):
@@ -510,7 +506,7 @@ def draw_layers(lay, W, H, out_dir):
                          lay["tracking"], ENGLISH["color"] + (ENGLISH["alpha"],),
                          lay["k"])
         path = os.path.join(out_dir, "phrase%d.png" % p["i"])
-        card, x0, y0 = trim_to_ink(with_shadow(ink, W, H, lay["k"]))
+        card, x0, y0 = trim_to_ink(with_shadow(ink, lay["k"]))
         card.save(path)
         bb = p["ar_bbox"]
         report.append({"path": path, "box": (x0, y0),
@@ -602,7 +598,7 @@ def signature_card(text, font_path, W, H, tmp, offset=0, k=1):
          int(H * SIGNATURE_Y_FRAC) - (bbox[3] - bbox[1]) // 2 - bbox[1]
          + int(offset * k)),
         text, font=font, fill=(255, 255, 255, 255))
-    card = with_shadow(ink, W, H, k)
+    card = with_shadow(ink, k)
     card.putalpha(card.getchannel("A").point(
         lambda a: int(round(a * SIGNATURE_ALPHA))))
     card, x0, y0 = trim_to_ink(card)

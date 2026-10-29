@@ -33,8 +33,8 @@ import fx as FX  # noqa: E402
 from generate import run  # noqa: E402
 from render_common import (FADE_IN_S, FADE_OUT_S, FFMPEG,  # noqa: E402
                            FPS, PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W,
-                           PROBE, encode, fit_pt, norm_ar, start_audio,
-                           source_chain, trim_to_ink)
+                           PROBE, encode, fit_pt, hard_shadow, norm_ar,
+                           start_audio, source_chain, trim_to_ink)
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
@@ -417,20 +417,6 @@ def draw_pill(canvas, x0, y0, x1, y1, rgb):
                  (int(round(x0)), int(round(y0))), mask)
 
 
-def with_shadow(ink, cfg, W, H):
-    """The glyph layer plus its ONE drop shadow (beneath the ink): a solid,
-    fully-opaque, un-blurred copy displaced straight DOWN -- its boundary
-    exactly as sharp as the glyph's own antialiased edge."""
-    dy = int(round(cfg["dy_frac"] * H))
-    sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sh.paste(Image.new("RGBA", (W, H), cfg["color"] + (255,)), (0, 0),
-             ink.getchannel("A"))
-    # NEAREST: an integer translate must not resample the silhouette soft.
-    sh = sh.transform((W, H), Image.AFFINE, (1, 0, 0, 0, 1, -dy),
-                      resample=Image.NEAREST)
-    return Image.alpha_composite(sh, ink)
-
-
 def draw_layers(lay, bar_rgb_drawn, out_dir):
     """TWO layers per phrase, so the compositor can animate them
     independently (the pill wipes, the text always cross-fades):
@@ -457,8 +443,9 @@ def draw_layers(lay, bar_rgb_drawn, out_dir):
         bp = os.path.join(out_dir, "bar%d.png" % p["i"])
         tp = os.path.join(out_dir, "text%d.png" % p["i"])
         bcrop, bx, by = trim_to_ink(bar_img)
-        tcrop, tx, ty = trim_to_ink(
-            with_shadow(ink, TEXT_SHADOW, W, H))
+        tcrop, tx, ty = trim_to_ink(hard_shadow(
+            ink, TEXT_SHADOW["color"], 255,
+            (0, int(round(TEXT_SHADOW["dy_frac"] * H)))))
         bcrop.save(bp)
         tcrop.save(tp)
         report.append({"bar": bp, "text": tp, "x0": px0, "x1": px1,
