@@ -86,6 +86,16 @@ def norm_ar(s, strip):
     return "".join(c for c in s if c not in strip)
 
 
+def hard_shadow(ink, rgb, alpha, offset):
+    """The ink over ONE hard drop shadow: a solid rgb+alpha layer through the
+    ink's own alpha, displaced by the integer (dx, dy) and clipped to the ink's
+    canvas. Un-blurred, so its edge is exactly the glyph's antialiased one."""
+    sh = Image.new("RGBA", ink.size, (0, 0, 0, 0))
+    sh.paste(Image.new("RGBA", ink.size, rgb + (alpha,)), offset,
+             ink.getchannel("A"))
+    return Image.alpha_composite(sh, ink)
+
+
 def source_chain(crop, W, H):
     """[0:v] -> exactly WxH of footage. `crop` is the authored window in SOURCE
     pixels (pipeline/crop.py solves it); without one the footage is

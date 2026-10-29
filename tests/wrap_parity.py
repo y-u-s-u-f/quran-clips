@@ -36,6 +36,23 @@ FONTS = [("albertus", 33), ("gentium", 33), ("albertus", 26), ("albertus", 41)]
 WINDOWS = (4, 7, 9, 13, 21)
 
 
+def first_fit(text, font, tracking_px, max_w, stroke_macron, caps):
+    """Greedy first-fit -> lines as word lists; its line count is the fewest a
+    wrap may use."""
+    lines, cur = [], []
+    for wd in text.split(" "):
+        w = RT.en_width(RT.en_tokens(" ".join(cur + [wd]), stroke_macron,
+                                     caps), font, tracking_px)
+        if not cur or w <= max_w:
+            cur.append(wd)
+        else:
+            lines.append(cur)
+            cur = [wd]
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def enumerated(text, font, tracking_px, max_w, stroke_macron, caps):
     """The definition: first-fit for the line count, then every split at that
     count, keeping the first with the smallest (widest line, spread)."""
@@ -47,15 +64,7 @@ def enumerated(text, font, tracking_px, max_w, stroke_macron, caps):
         return RT.en_width(RT.en_tokens(" ".join(ws), stroke_macron, caps),
                            font, tracking_px)
 
-    greedy, cur = [], []
-    for wd in words:
-        if not cur or width_of(cur + [wd]) <= max_w:
-            cur.append(wd)
-        else:
-            greedy.append(cur)
-            cur = [wd]
-    if cur:
-        greedy.append(cur)
+    greedy = first_fit(text, font, tracking_px, max_w, stroke_macron, caps)
     n = len(greedy)
     if n <= 1:
         return [" ".join(ln) for ln in greedy]
@@ -93,19 +102,6 @@ def cases(step):
         yield "%d:%d/full" % (s, a), en, args
 
 
-def line_count(text, font, tracking_px, max_w, stroke_macron, caps):
-    """First-fit's line count -- the fewest a wrap may use."""
-    n, cur = 0, []
-    for wd in text.split(" "):
-        w = RT.en_width(RT.en_tokens(" ".join(cur + [wd]), stroke_macron,
-                                     caps), font, tracking_px)
-        if not cur or w <= max_w:
-            cur.append(wd)
-        else:
-            n, cur = n + 1, [wd]
-    return n + (1 if cur else 0)
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--limit", type=int, default=400,
@@ -118,7 +114,7 @@ def main(argv=None):
     bad = []
     for label, text, args in cases(a.step):
         got = RT.wrap_english(text, *args)
-        nl = line_count(text, *args)
+        nl = len(first_fit(text, *args))
         if " ".join(got) != " ".join(text.split(" ")):
             bad.append((label, "words changed", got))
         elif len(got) != nl:
