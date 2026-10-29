@@ -122,25 +122,28 @@ case "$ASR_BACKEND" in
     faster) ASR_PKG="faster-whisper"; ASR_MOD="faster_whisper";;
     *) say "QC_ASR_BACKEND=$ASR_BACKEND: want mlx or faster"; exit 2;;
 esac
-if [ "$CHECK_ONLY" = 0 ]; then
+# Each heavy import costs seconds, so a working venv is imported once and the
+# answer kept; only an install attempt earns a second import.
+ASR_OK=0
+[ -x "$APY" ] && "$APY" -c "import $ASR_MOD" 2>/dev/null && ASR_OK=1
+if [ "$CHECK_ONLY" = 0 ] && [ "$ASR_OK" = 0 ]; then
     if [ ! -x "$APY" ]; then
         say "  creating $AVENV"
         "$PY" -m venv "$AVENV" || exit 1
         "$APY" -m pip -q install --upgrade pip
     fi
-    "$APY" -c "import $ASR_MOD" 2>/dev/null || {
-        say "  installing $ASR_PKG (first transcription will also download the model)"
-        case "$ASR_BACKEND" in
-            # mlx-whisper lists torch, but only its checkpoint converter imports
-            # it, and torch has no Python 3.15 wheel on PyPI (2026-10).
-            mlx) "$APY" -m pip -q install --no-deps mlx-whisper &&
-                 "$APY" -m pip -q install mlx numba numpy tqdm more-itertools \
-                     tiktoken huggingface_hub scipy;;
-            *)   "$APY" -m pip -q install "$ASR_PKG";;
-        esac
-    }
+    say "  installing $ASR_PKG (first transcription will also download the model)"
+    case "$ASR_BACKEND" in
+        # mlx-whisper lists torch, but only its checkpoint converter imports
+        # it, and torch has no Python 3.15 wheel on PyPI (2026-10).
+        mlx) "$APY" -m pip -q install --no-deps mlx-whisper &&
+             "$APY" -m pip -q install mlx numba numpy tqdm more-itertools \
+                 tiktoken huggingface_hub scipy;;
+        *)   "$APY" -m pip -q install "$ASR_PKG";;
+    esac
+    "$APY" -c "import $ASR_MOD" 2>/dev/null && ASR_OK=1
 fi
-if [ -x "$APY" ] && "$APY" -c "import $ASR_MOD" 2>/dev/null; then
+if [ "$ASR_OK" = 1 ]; then
     ok+=("asr venv     $APY ($ASR_PKG)")
 else
     bad+=("asr venv: cannot import $ASR_MOD -- transcribe.py cannot run. $APY -m pip install $ASR_PKG")
@@ -156,21 +159,22 @@ FPY="$FVENV/bin/python"
 # PyPI's "ctc-forced-aligner" is an UNRELATED project (an English-only onnx
 # aligner); Meta's MMS one only ships from git.
 FPKG="git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"
-if [ "$CHECK_ONLY" = 0 ]; then
+FOK=0
+[ -x "$FPY" ] && "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null && FOK=1
+if [ "$CHECK_ONLY" = 0 ] && [ "$FOK" = 0 ]; then
     if [ ! -x "$FPY" ]; then
         say "  creating $FVENV"
         "$PY" -m venv "$FVENV" || exit 1
         "$FPY" -m pip -q install --upgrade pip
     fi
-    "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null || {
-        say "  installing ctc-forced-aligner + torch (first align will also download the ~1.2GB MMS model)"
-        # Python 3.15 wheels are only on the nightly index (2026-10).
-        "$FPY" -m pip -q install torch ||
-            "$FPY" -m pip -q install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
-        "$FPY" -m pip -q install "$FPKG" pyyaml
-    }
+    say "  installing ctc-forced-aligner + torch (first align will also download the ~1.2GB MMS model)"
+    # Python 3.15 wheels are only on the nightly index (2026-10).
+    "$FPY" -m pip -q install torch ||
+        "$FPY" -m pip -q install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
+    "$FPY" -m pip -q install "$FPKG" pyyaml
+    "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null && FOK=1
 fi
-if [ -x "$FPY" ] && "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null; then
+if [ "$FOK" = 1 ]; then
     ok+=("align venv   $FPY (ctc-forced-aligner)")
 else
     bad+=("align venv: cannot import ctc_forced_aligner -- align.py cannot run (generate.py still works off whisper.json). $FPY -m pip install $FPKG pyyaml")
