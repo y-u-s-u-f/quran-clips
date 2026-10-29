@@ -35,6 +35,7 @@ So the normal layout needs none of the three spelled out:
     sources/<id>/my-reel.yaml      ->  reels/my-reel.mp4
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -286,6 +287,25 @@ def run(cmd, **kw):
     return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw)
 
 
+@contextlib.contextmanager
+def part_file(path):
+    """Yield a pid-tagged part path to write `path`'s bytes to; rename it
+    into place only if the block completes, and remove it either way. The
+    media caches (trim, heat, snow) are keyed by name alone, so a file that
+    exists must be complete -- and a producer killed from outside (^C, a
+    timeout, the OOM killer) never reaches a cleanup line of its own, leaving
+    a truncated mp4 every later run would load as a valid short input. The
+    pid goes BEFORE the extension: ffmpeg picks its muxer off the suffix."""
+    base, ext = os.path.splitext(path)
+    part = "%s.%d.part%s" % (base, os.getpid(), ext)
+    try:
+        yield part
+        os.replace(part, path)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+
+
 # ---------- media ----------------------------------------------------------
 
 def get_video_info(path):
@@ -349,16 +369,8 @@ def trim_media(path, start, end, thumb=False):
         repr(key).encode()).hexdigest()[:16])
     if not os.path.exists(cached):
         os.makedirs(TRIM_CACHE, exist_ok=True)
-        # Same part-file rename as the bars heat/snow caches: the cache is
-        # keyed by name alone, so a cut killed mid-encode must not be left
-        # where a later run would take it for a complete window.
-        part = "%s.%d.part.mp4" % (os.path.splitext(cached)[0], os.getpid())
-        try:
+        with part_file(cached) as part:
             run(cmd + [part])
-            os.replace(part, cached)
-        finally:
-            if os.path.exists(part):
-                os.remove(part)
     return cached
 
 
