@@ -187,17 +187,23 @@ def start_audio(src, dur, tmp):
 # the delivery encode
 # ---------------------------------------------------------------------------
 
-def encode(in_argv, filter_complex, dur, out, meta, tmp, style, audio):
-    """The style's finished graph out to `out`: `in_argv` is the input list
-    its build_graph returned, and the graph ends on [vout]. tools/render_gpu
-    renders it to a picture-only VideoToolbox H.264, then `mux` adds
-    `audio` (start_audio's future), the colour tags and the mp4 tags. A
-    missing or stale binary is an install problem, never a fallback."""
+def require_gpu():
+    """A missing or stale tools/render_gpu is an install problem, never a
+    fallback. generate.run_config asks before it pays for any media work;
+    encode asks again for a caller that comes straight to it."""
     if not os.access(GPU_BIN, os.X_OK):
         raise SystemExit("tools/render_gpu missing: run ./install.sh")
     if os.path.getmtime(GPU_SRC) > os.path.getmtime(GPU_BIN):
         raise SystemExit("tools/render_gpu is older than %s: run ./install.sh"
                          % os.path.relpath(GPU_SRC))
+
+
+def encode(in_argv, filter_complex, dur, out, meta, tmp, style, audio):
+    """The style's finished graph out to `out`: `in_argv` is the input list
+    its build_graph returned, and the graph ends on [vout]. tools/render_gpu
+    renders it to a picture-only VideoToolbox H.264, then `mux` adds
+    `audio` (start_audio's future), the colour tags and the mp4 tags."""
+    require_gpu()
     plan_path = os.path.join(tmp, "gpu-plan.json")
     video = os.path.join(tmp, "gpu-video.mov")
     with open(plan_path, "w") as f:

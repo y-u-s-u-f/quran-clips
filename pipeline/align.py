@@ -29,7 +29,8 @@ alignment when it exists beside the config.
 Word times are relative to `trim`, which is why the window is stamped into
 the file: a config whose trim has since been edited re-aligns on its own,
 with no --force, rather than leaving timings that are silently the wrong
-number of milliseconds off.
+number of milliseconds off -- as does a named span whose words no longer
+match the file's.
 
 A config with NO `trim:` is aligned against the whole source and the trim
 is derived from where the first and last mushaf word actually land, then
@@ -311,25 +312,34 @@ def apply_repeats(results, repeats, words, min_fix=0.5):
     return fixed
 
 
-def trim_note(out_path, cfg):
+def stale_note(out_path, cfg):
     """Why an existing alignment no longer matches the config, or None.
 
     Word timings are relative to the trim window, so an edited `trim:` leaves
     the file wrong by however far the window moved -- and generate.py reads it
-    happily, captions hundreds of ms out with nothing said. Editing a trim is
-    unambiguous intent, so it re-aligns on its own instead of costing the
-    author a --force they have to remember. Values are compared to 10ms
-    because both sides are rounded to 2dp."""
+    happily, captions hundreds of ms out with nothing said. A named span's
+    words are compared too, since a span edited to one of the same word count
+    would otherwise be kept. Either edit is unambiguous intent, so it
+    re-aligns on its own instead of costing the author a --force they have to
+    remember. Trim values are compared to 10ms because both sides are rounded
+    to 2dp."""
     try:
-        was = json.load(open(out_path, encoding="utf-8")).get("trim")
+        data = json.load(open(out_path, encoding="utf-8"))
     except ValueError:
         return "unreadable -- re-aligning"
+    was = data.get("trim")
     if not was or len(was) != 2 or was[0] is None:
         return "no trim recorded -- re-aligning"
     now = generate.trim_window(cfg) if cfg.get("trim") else None
     if now is not None and (was[1] is None) == (now[1] is None) and all(
             abs(a - b) <= 0.01 for a, b in zip(was, now) if a is not None):
-        return None
+        if cfg["surah"] is None or [
+                w.get("w") for w in data.get("words") or []] == \
+                generate.spoken_words(
+                    generate.fetch_verses(*generate.resolve_span(cfg, [])),
+                    cfg["ayah_end_words"]):
+            return None
+        return "stale (the span's words changed), re-aligning"
     return "stale (trim %s -> %s), re-aligning" % (
         generate.format_window(was),
         "whole source" if now is None else generate.format_window(now))
@@ -358,7 +368,7 @@ def align(config_path, force=False):
     cfg = generate.resolve_paths(cfg, config_path)
     out_path = generate.align_path_for(config_path)
     if os.path.exists(out_path):
-        note = trim_note(out_path, cfg)
+        note = stale_note(out_path, cfg)
         if note:
             print("  %s" % note)
         elif not force:
@@ -389,6 +399,10 @@ def align(config_path, force=False):
 
     verses = generate.fetch_verses(surah, a0, a1)
     words = generate.spoken_words(verses, cfg["ayah_end_words"])
+    # A named span's total was checked at load; an identified one only now,
+    # still before the backend's import and the model load.
+    if cfg["groups"] and cfg["surah"] is None:
+        generate.check_group_total(cfg["groups"], len(words))
     ref_text = " ".join(words)
     print("aligning %d mushaf words (%s %d:%d-%d) against %s"
           % (len(words), quran.surah_name(surah), surah, a0, a1,

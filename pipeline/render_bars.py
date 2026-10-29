@@ -30,7 +30,7 @@ FONT_DIR = os.path.join(ROOT, "assets", "fonts")
 sys.path.insert(0, HERE)
 
 import fx as FX  # noqa: E402
-from generate import run  # noqa: E402
+from generate import part_file, run  # noqa: E402
 from render_common import (FADE_IN_S, FADE_OUT_S, FFMPEG,  # noqa: E402
                            FPS, PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W,
                            PROBE, encode, fit_pt, norm_ar, start_audio,
@@ -593,27 +593,13 @@ def heat_layers(dur):
 
     def bake(axis, seed, path):
         src = FX.heat_perlin_src(c, CANVAS_W, CANVAS_H, FPS, seed)
-        # Bake to a pid-tagged temp and rename only on success: the cache
-        # is keyed by name alone, so a file that exists must be complete.
-        # Deleting on a bad returncode is not enough -- a bake killed from
-        # outside (^C, a timeout, the OOM killer) never reaches that line,
-        # and the truncated map it leaves behind then loads as a valid
-        # short input and fails the render on every later run.
-        # The pid goes BEFORE the extension: ffmpeg picks its muxer off
-        # the suffix, and a file ending .part has no format to infer.
-        _b, _e = os.path.splitext(path)
-        part = "%s.%d.part%s" % (_b, os.getpid(), _e)
-        try:
+        with part_file(path) as part:
             r = subprocess.run(
                 [FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", src,
                  "-t", str(span), "-an", "-c:v", "libx264", "-crf", "8",
                  "-preset", "medium", "-pix_fmt", "yuv420p", part])
             if r.returncode:
                 sys.exit("ffmpeg heat-map bake failed")
-            os.replace(part, path)
-        finally:
-            if os.path.exists(part):
-                os.remove(part)
 
     todo = [(axis, seed, path)
             for (axis, seed), path in zip(heat_axes(), paths)
@@ -642,11 +628,8 @@ def snow_layer(tint_rgb, W, H):
     Cached beside the heat maps rather than inside the reel's own tmp: the tag
     already pins everything that decides the bytes (the canvas it is screened
     on, the tint, every snow parameter), so two reels that agree on those agree on the file --
-    which is any two sharing a pinned `bar_color:`. Same part-file rename as
-    heat_layers, and for the same reason: the cache is keyed by name alone, so
-    a bake killed from outside (^C, a timeout, the OOM killer) must not leave a
-    truncated mp4 behind for every later render to load as a valid short
-    input."""
+    which is any two sharing a pinned `bar_color:`. Written through
+    generate.part_file, as the heat maps are."""
     c = dict(FX_CFG["snow"])
     tag = "%dx%d_%02X%02X%02X_%s" % (
         W, H, *tint_rgb,
@@ -654,15 +637,10 @@ def snow_layer(tint_rgb, W, H):
     os.makedirs(SNOW_CACHE, exist_ok=True)
     path = os.path.join(SNOW_CACHE, "snow_%s.mp4" % tag)
     if not os.path.exists(path):
-        part = "%s.%d.part.mp4" % (os.path.splitext(path)[0], os.getpid())
-        try:
+        with part_file(path) as part:
             fld, nf = FX.render_snow(part, W, H, FPS, c, tint_rgb)
-            os.replace(part, path)
-            print("      snow layer: shader pass, texel %.1fpx expo %.1f "
-                  "gain %.1f, %d frames" % (fld.texel, fld.expo, fld.gain, nf))
-        finally:
-            if os.path.exists(part):
-                os.remove(part)
+        print("      snow layer: shader pass, texel %.1fpx expo %.1f "
+              "gain %.1f, %d frames" % (fld.texel, fld.expo, fld.gain, nf))
     return path
 
 
