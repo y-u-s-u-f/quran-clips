@@ -32,7 +32,6 @@ bad=()   # missing pieces + what they block
 
 say()  { printf '%s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
-# venv dir, its python: created (and pip upgraded) only when absent
 mkvenv() {
     [ -x "$2" ] && return
     say "  creating $1"
@@ -47,6 +46,10 @@ for arg in "$@"; do
         *) say "unknown flag: $arg (want --check)"; exit 2;;
     esac
 done
+if [ "$CHECK_ONLY" = 1 ]; then
+    # Even the configuration reader's import must leave a fresh checkout alone.
+    export PYTHONDONTWRITEBYTECODE=1
+fi
 
 # ---------------------------------------------------------------------------
 # 1. system tools
