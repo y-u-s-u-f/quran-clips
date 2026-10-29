@@ -35,6 +35,7 @@ The graph is tools/render_gpu's input (render_common.encode).
 
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
+import functools
 import math
 import os
 import re
@@ -219,9 +220,7 @@ def en_tokens(text, stroke_macron=True, caps=True):
     return toks
 
 
-_ADVANCE = {}
-
-
+@functools.cache
 def advance(font, ch):
     """font.getlength for ONE character, cached per (font, character).
 
@@ -229,11 +228,7 @@ def advance(font, ch):
     few dozen glyphs, and the same characters are re-measured for every line
     of every card -- the wrap solves against a whole width table, and
     backing_ellipse re-measures every line again afterwards."""
-    key = (font, ch)
-    w = _ADVANCE.get(key)
-    if w is None:
-        w = _ADVANCE[key] = font.getlength(ch)
-    return w
+    return font.getlength(ch)
 
 
 def en_width(toks, font, tracking_px):
