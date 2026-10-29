@@ -321,18 +321,20 @@ def set_facebook_cover(token, video_id, jpeg):
     """Facebook's reel cover is an uploaded image, not an offset. Not fatal:
     a reel whose cover stayed on frame 0 is still a published reel, so this
     reports and moves on rather than taking the post down with it."""
-    with open(jpeg, "rb") as f:
-        blob = f.read()
-    ctype, body = multipart({"is_preferred": "true", "access_token": token},
-                            os.path.basename(jpeg), blob)
-    req = urllib.request.Request(
-        "%s/%s/thumbnails" % (GRAPH, video_id), data=body, method="POST",
-        headers={"Content-Type": ctype})
     try:
+        with open(jpeg, "rb") as f:
+            blob = f.read()
+        ctype, body = multipart({"is_preferred": "true", "access_token": token},
+                                os.path.basename(jpeg), blob)
+        req = urllib.request.Request(
+            "%s/%s/thumbnails" % (GRAPH, video_id), data=body, method="POST",
+            headers={"Content-Type": ctype})
         urllib.request.urlopen(req, timeout=120)
         return True
-    except urllib.error.HTTPError as e:
-        print("  ! facebook cover not set: %s" % e.read().decode()[:300])
+    except OSError as e:
+        detail = (e.read().decode()[:300]
+                  if isinstance(e, urllib.error.HTTPError) else str(e))
+        print("  ! facebook cover not set: %s" % detail)
         return False
 
 
