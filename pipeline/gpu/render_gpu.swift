@@ -683,16 +683,11 @@ inline void g_line(device float* p, int n, int stride, int steps, float nu, floa
         for (; i >= 0; i--) { v = fma(nu, v, p[i * stride]); p[i * stride] = v; }
     }
 }
-kernel void k_g_h(device float* b [[buffer(0)]], constant int* prm [[buffer(1)]],
-                  constant float* fp [[buffer(2)]], uint y [[thread_position_in_grid]]) {
-    // w, h, steps ; nu, bscale   on the transposed buffer
+kernel void k_g_line(device float* b [[buffer(0)]], constant int* prm [[buffer(1)]],
+                     constant float* fp [[buffer(2)]], uint y [[thread_position_in_grid]]) {
+    // line length, line count (= stride), steps ; nu, bscale   on a transposed buffer
     if ((int)y >= P(1)) return;
     g_line(b + y, P(0), P(1), P(2), fp[0], fp[1]);
-}
-kernel void k_g_v(device float* b [[buffer(0)]], constant int* prm [[buffer(1)]],
-                  constant float* fp [[buffer(2)]], uint x [[thread_position_in_grid]]) {
-    if ((int)x >= P(0)) return;
-    g_line(b + x, P(1), P(0), P(2), fp[0], fp[1]);
 }
 kernel void k_g_store(device const float* b [[buffer(0)]], device uchar* d [[buffer(1)]],
                       constant int* prm [[buffer(2)]], constant float* fp [[buffer(3)]],
@@ -708,10 +703,6 @@ kernel void k_fade_a(device const uchar* s [[buffer(0)]], device uchar* d [[buff
                      constant int* prm [[buffer(2)]], uint i [[thread_position_in_grid]]) {
     // n, factor, black level, scaled black level
     if ((int)i < P(0)) d[i] = uchar(((int(s[i]) - P(2)) * P(1) + P(3)) >> 16);
-}
-kernel void k_fade_c(device const uchar* s [[buffer(0)]], device uchar* d [[buffer(1)]],
-                     constant int* prm [[buffer(2)]], uint i [[thread_position_in_grid]]) {
-    if ((int)i < P(0)) d[i] = uchar(((int(s[i]) - 128) * P(1) + 8421367) >> 16);
 }
 kernel void k_mixer(device const uchar* R [[buffer(0)]], device const uchar* G [[buffer(1)]],
                     device const uchar* B [[buffer(2)]], device uchar* oR [[buffer(3)]],
@@ -2233,9 +2224,9 @@ final class Graph {
             }
             precondition(one == out!.gray, "gblur input changed greyness")
             for pi in 0..<np { gpu.run("k_g_load", [src.p[pi], fb![2 * pi]], [Int32(dims[pi].0), Int32(dims[pi].1)], grid: dims[pi]) }
-            for pi in 0..<np { gpu.run("k_g_h", [fb![2 * pi]], [Int32(dims[pi].0), Int32(dims[pi].1), Int32(steps)], fp: [nu, bscale], grid: (dims[pi].1, 1), tg: 32) }
+            for pi in 0..<np { gpu.run("k_g_line", [fb![2 * pi]], [Int32(dims[pi].0), Int32(dims[pi].1), Int32(steps)], fp: [nu, bscale], grid: (dims[pi].1, 1), tg: 32) }
             for pi in 0..<np { gpu.run("k_g_tr", [fb![2 * pi], fb![2 * pi + 1]], [Int32(dims[pi].0), Int32(dims[pi].1)], grid: dims[pi]) }
-            for pi in 0..<np { gpu.run("k_g_v", [fb![2 * pi + 1]], [Int32(dims[pi].0), Int32(dims[pi].1), Int32(steps)], fp: [nu, bscale], grid: (dims[pi].0, 1), tg: 32) }
+            for pi in 0..<np { gpu.run("k_g_line", [fb![2 * pi + 1]], [Int32(dims[pi].1), Int32(dims[pi].0), Int32(steps)], fp: [nu, bscale], grid: (dims[pi].0, 1), tg: 32) }
             for pi in 0..<np { gpu.run("k_g_store", [fb![2 * pi + 1], out!.p[pi]], [Int32(dims[pi].0 * dims[pi].1)], fp: [postscale], grid: (dims[pi].0 * dims[pi].1, 1)) }
             return out!
         }
@@ -2279,7 +2270,7 @@ final class Graph {
             gpu.run("k_fade_a", [src.p[0], outImg!.p[0]], [Int32(src.w * src.h), Int32(f), 16, (16 << 16) + 32768], grid: (src.w * src.h, 1))
             for pi in 1...2 {
                 let (pw, ph) = src.dims(pi)
-                gpu.run("k_fade_c", [src.p[pi], outImg!.p[pi]], [Int32(pw * ph), Int32(f)], grid: (pw * ph, 1))
+                gpu.run("k_fade_a", [src.p[pi], outImg!.p[pi]], [Int32(pw * ph), Int32(f), 128, 8421367], grid: (pw * ph, 1))
             }
             return outImg!
         }
