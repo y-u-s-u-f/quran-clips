@@ -622,9 +622,7 @@ def load_forced_alignment(path, ref_words, window):
 def identify_verse_span(asr_words):
     """Fuzzy-match transcript thirds against the mushaf; return the min/max
     ayah matched. Reliable for short windows (1-4 ayahs) only."""
-    text_tokens = []
-    for w in asr_words:
-        text_tokens.extend(quran.tokens(w["w"]))
+    text_tokens = [t for w in asr_words for t in quran.tokens(w["w"])]
     if not text_tokens:
         return None
     n_parts = max(1, min(4, len(text_tokens) // 8))
