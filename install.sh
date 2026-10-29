@@ -13,6 +13,9 @@
 #      faster-whisper everywhere else (QC_ASR_BACKEND overrides, read from
 #      the shell or .env like every script reads it)
 #   3b. builds tools/align-venv -- ctc-forced-aligner (torch) for align.py
+#   3c. builds tools/render_gpu -- every style's Metal renderer, from
+#       pipeline/gpu/render_gpu.swift with swiftc (macOS; rebuilt when older
+#       than the source)
 #   4. checks the vision API settings pipeline/crop.py uses (optional)
 #   5. copies .env.example -> .env when absent
 #   6. prints a doctor-style summary of what resolved and what is missing
@@ -52,7 +55,7 @@ for tool in ffmpeg ffprobe yt-dlp; do
         ok+=("$(printf '%-12s %s' "$tool" "$(command -v "$tool")")")
     else
         case "$tool" in
-            ffmpeg|ffprobe) bad+=("$tool: not found -- rendering and probing need it. brew install ffmpeg / apt install ffmpeg");;
+            ffmpeg|ffprobe) bad+=("$tool: not found -- cutting, probing, audio and the mux need it. brew install ffmpeg / apt install ffmpeg");;
             yt-dlp)         bad+=("yt-dlp: not found -- fetch.py needs it for YouTube sources (local files still work). brew install yt-dlp / apt install yt-dlp");;
         esac
     fi
@@ -171,6 +174,28 @@ if [ -x "$FPY" ] && "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null; the
     ok+=("align venv   $FPY (ctc-forced-aligner)")
 else
     bad+=("align venv: cannot import ctc_forced_aligner -- align.py cannot run (generate.py still works off whisper.json). $FPY -m pip install $FPKG pyyaml")
+fi
+
+# ---------------------------------------------------------------------------
+# 3c. GPU renderer (Metal + VideoToolbox; the only renderer, every style)
+# ---------------------------------------------------------------------------
+say "== gpu renderer"
+GSRC="$ROOT/pipeline/gpu/render_gpu.swift"
+GBIN="$ROOT/tools/render_gpu"
+if [ "$CHECK_ONLY" = 0 ] && have swiftc && { [ ! -x "$GBIN" ] || [ "$GSRC" -nt "$GBIN" ]; }; then
+    say "  swiftc -O $GSRC"
+    # the log holds deprecation warnings (AVFoundation calls deprecated on
+    # macOS 27, not removed); only an error stops the build
+    mkdir -p "$ROOT/tools"
+    swiftc -O "$GSRC" -o "$GBIN" 2>"$ROOT/tools/render_gpu.log" ||
+        { grep -A3 "error:" "$ROOT/tools/render_gpu.log"; rm -f "$GBIN"; }
+fi
+if [ -x "$GBIN" ] && [ ! "$GSRC" -nt "$GBIN" ]; then
+    ok+=("gpu render   $GBIN")
+elif have swiftc; then
+    bad+=("gpu render: $GBIN missing or older than $GSRC -- every render needs it. Re-run ./install.sh")
+else
+    bad+=("gpu render: no swiftc (Xcode command line tools: xcode-select --install) -- every render needs tools/render_gpu (macOS + Metal only)")
 fi
 
 # ---------------------------------------------------------------------------

@@ -6,11 +6,14 @@
 - [ ] Committed verse-split library (`groups:` per ayah, counts + English only), so a config names a span and inherits a reviewed split.
 - [ ] Per-config audio controls (LUFS target, fades) and an intake loudness/clipping report in `fetch.py`.
 - [ ] One driver over align → crop → generate → publish with a resume point (subprocess per venv).
-- [ ] `generate.py --preview` (small, `veryfast`, fx off) for timing checks; `generate.py --all` to re-render stale reels.
+- [ ] `generate.py --preview` (small, fx off) for timing checks; `generate.py --all` to re-render stale reels.
 - [ ] Pre-publish check: full decode, canvas/fps/duration, loudness, non-black cover, AAC.
 - [ ] `publish.py`: retry Graph 5xx / rate limits; show progress during the Instagram container poll.
-- [ ] Progress on the final render encode (`-progress`); line-buffer `crop.py`, `transcribe.py`, `publish.py`.
+- [ ] Progress during the render (`tools/render_gpu` frame count); line-buffer `crop.py`, `transcribe.py`, `publish.py`.
 - [ ] `crop.py --annotate`: contact sheet of every sampled frame, not just the middle one.
 - [ ] Reel ledger: table of `reels/*.mp4` from their tags (span, reciter, style, posted).
 - [ ] Caption sidecar (`reels/<name>.srt`) from the burned cards.
 - [ ] English search in `quran.py` (`en.sahih`, `en.taqi`, word glosses).
+- [ ] Bars reels with heat on are BT.601-converted but tagged matrix unspecified (`render_common.mux`), which most players read as BT.709 for HD. Tag it smpte170m, or tag the baked layers so the graph stays BT.709: an owner look decision, checked on a phone.
+- [ ] Delivered mp4s carry edit lists (video media_time 1280, AAC 1024 priming; hujurat-4-5). Check Instagram's and Facebook's ingest keeps A/V in sync with them.
+- [ ] HDR sources (BT.2020 PQ/HLG, phone footage) render untone-mapped and keep their tags, as an ffmpeg render did: the 8-bit cut is HDR-coded, so the reel plays as HDR where the player honours it. Tone-mapping to SDR BT.709 is an owner look decision, checked on a phone.

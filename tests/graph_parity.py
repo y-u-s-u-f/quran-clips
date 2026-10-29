@@ -7,14 +7,19 @@ AGENTS.md invariant 2: a look change is an owner decision and never a
 refactor side-effect. This rebuilds the at-tawbah-128-128 graph -- the useful
 case because it exercises a wipe card, crossfade cards, a two-line card and a
 single-line card in one graph -- and diffs it filter by filter against
-tests/golden/bars-filtergraph.txt.
+tests/golden/bars-filtergraph.txt. The `--vertical` graph is a second code
+path (the look composed at the portrait width, render_bars.geometry), so the
+same recipe is pinned again with portrait=True in
+tests/golden/bars-portrait-filtergraph.txt.
 
 The graph text carries every number that decides a pixel (geometry, sigmas,
 gains, fade times, each caption layer's ink box and enable window). The input
-argv is fixtured beside it in tests/golden/bars-argv.txt, one argument per
-line with the per-run overlay directory written as TMP: it decides no pixel,
-but it is where the ffmpeg rules live -- every `-loop 1` input bounded,
-`-thread_queue_size` on every input -- and a refactor can drop one silently.
+argv is fixtured beside each (tests/golden/bars-argv.txt,
+bars-portrait-argv.txt), one argument per
+line with the per-run overlay directory written as TMP: it is the rest of
+tools/render_gpu's input spec -- input order, `-t`, `-framerate`,
+`-stream_loop` -- and a refactor can move one silently. The pixels the
+graph makes are pinned by tests/gpu_parity.py.
 
     NO ARABIC IS TYPED HERE. The caption text is read out of
     tests/golden/at-tawbah-128-128.yaml, the recipe the golden was recorded
@@ -23,8 +28,9 @@ but it is where the ffmpeg rules live -- every `-loop 1` input bounded,
 The recipe, recovered from the golden:
 x_offset -384 (0.30 W of the 1920 canvas), dur 23.720, crop 48,30,1280x720,
 tint (191,140,54) recovered from the golden's glow scalars via rr/0.35*255,
-every switch on, and the golden's own loudnorm chain so the audio leg is fixed
-rather than measured. The style burns no signature, so there is none to set.
+every switch on. The graph is the picture only: the sound is
+render_common.start_audio's. The style burns no signature, so there is none
+to set.
 """
 import argparse
 import difflib
@@ -56,21 +62,12 @@ except ImportError:
 import render_bars as RB  # noqa: E402
 
 CLIP = os.path.join(HERE, "golden", "at-tawbah-128-128.yaml")
-FIXTURE = os.path.join(HERE, "golden", "bars-filtergraph.txt")
-ARGV_FIXTURE = os.path.join(HERE, "golden", "bars-argv.txt")
+GOLDEN = os.path.join(HERE, "golden")
 
 DUR = 23.720
 X_OFFSET = -384
 CROP = {"x": 48, "y": 30, "w": 1280, "h": 720}
 TINT_RGB = (191, 140, 54)
-
-# The golden's own audio leg, so nothing here has to decode a media file:
-# loudnorm's numbers are measured off the source and would otherwise make
-# the fixture depend on footage that is not tracked.
-LOUDNORM = ("loudnorm=I=-14.0:TP=-1.0:LRA=11.0:measured_I=-8.81:"
-            "measured_TP=0.19:measured_LRA=3.80:measured_thresh=-18.94:"
-            "offset=0.63:linear=true:print_format=summary")
-AFADE = "afade=t=in:st=0:d=0.3,afade=t=out:st=23.220:d=0.5"
 
 
 def phrases_from_clip():
@@ -95,18 +92,19 @@ def phrases_from_clip():
     return out
 
 
-def build():
+def build(portrait):
     """-> (filtergraph, argv text) for the fixture clip."""
     phrases = phrases_from_clip()
     on = {n: True for n in RB.SWITCHES}
-    lay = RB.layout(phrases, X_OFFSET, 0)
+    lay = RB.layout(phrases, X_OFFSET, 0, RB.geometry(portrait))
     with tempfile.TemporaryDirectory(prefix="graph-parity-") as tmp:
         rep = RB.draw_layers(lay, RB.predraw_color(TINT_RGB),
                              os.path.join(tmp, "overlays"))
         sched, _cuts = RB.schedule(phrases, DUR)
         fc, argv = RB.build_graph(
             "SOURCE", DUR, CROP, rep, sched, [c / 255.0 for c in TINT_RGB],
-            on, "SNOW", "SCRIM", LOUDNORM, AFADE, ["HEATX", "HEATY"])
+            on, "SNOW", "SCRIM", ["HEATX", "HEATY"],
+            portrait=portrait)
         return fc, "\n".join(a.replace(tmp, "TMP") for a in argv)
 
 
@@ -117,12 +115,17 @@ def main(argv=None):
                          "decision: it declares the look change intended.")
     a = ap.parse_args(argv)
 
-    fc, args = build()
     ok = True
     # One filter per line so a diff points at the stage that moved; the
     # emitted graph is a single ';'-joined line and would diff as "everything".
-    for path, got, sep, what in ((FIXTURE, fc, ";", "filtergraph"),
-                                 (ARGV_FIXTURE, args, "\n", "input argv")):
+    checks = []
+    for portrait, stem in ((False, "bars"), (True, "bars-portrait")):
+        fc, args = build(portrait)
+        checks += [(os.path.join(GOLDEN, stem + "-filtergraph.txt"), fc, ";",
+                    stem + " filtergraph"),
+                   (os.path.join(GOLDEN, stem + "-argv.txt"), args, "\n",
+                    stem + " input argv")]
+    for path, got, sep, what in checks:
         rel = os.path.relpath(path, ROOT)
         if a.bless or not os.path.exists(path):
             why = "blessed" if os.path.exists(path) else "recorded (was missing)"
