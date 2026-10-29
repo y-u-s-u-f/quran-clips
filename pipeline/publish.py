@@ -481,10 +481,8 @@ def main(argv=None):
 
     if a.cover_ms:
         a.cover_ms = clamp_cover(dur_ms, a.cover_ms)
-    # Tagged as soon as ONE platform is live, so a failure on the other
-    # still leaves the file marked -- and says which. Failures are collected
-    # per platform, not raised mid-flow: a Facebook failure must not strand an
-    # Instagram container that is already uploaded.
+    # A Facebook failure must not strand an Instagram container that is
+    # already uploaded; a partial post still needs its Finder tag.
     posted, failed = [], []
     try:
         container = None
@@ -500,10 +498,9 @@ def main(argv=None):
             cover = None
             try:
                 if a.cover_ms:
-                    cover = cover_frame(
-                        a.reel, a.cover_ms,
-                        os.path.join(tempfile.gettempdir(),
-                                     "qc-cover-%d.jpg" % os.getpid()))
+                    cover = os.path.join(tempfile.gettempdir(),
+                                         "qc-cover-%d.jpg" % os.getpid())
+                    cover_frame(a.reel, a.cover_ms, cover)
                 publish_facebook(a.reel, fb_text, publish=not a.draft,
                                  cover=cover)
                 posted.append("Facebook")
@@ -511,7 +508,10 @@ def main(argv=None):
                 failed.append(("Facebook", e))
             finally:
                 if cover and os.path.exists(cover):
-                    os.remove(cover)
+                    try:
+                        os.remove(cover)
+                    except OSError as e:
+                        print("  ! could not remove cover %s: %s" % (cover, e))
         if container:
             try:
                 publish_instagram(*container, publish=not a.draft)
