@@ -63,7 +63,7 @@ python3 pipeline/publish.py reels/<name>.mp4 --dry
 python3 pipeline/publish.py reels/<name>.mp4 --draft
 ```
 
-Cover at 1.55s (`COVER_MS`). Caption from `tafsir()` + ayat + `#reciter | #surah` (from mp4 tags; `--surah` + `--ayat` together, `--reciter` override them). `--ig-only` / `--fb-only` are exclusive. Credentials in `.env`. Posts are independent (no Graph link). The reel is tagged green in Finder once at least one platform posted; `--draft` leaves it untagged.
+Cover at 1.55s (`COVER_MS`). Caption from `tafsir()` + ayat + `#reciter | #surah` (from mp4 tags; `--surah` + `--ayat` together, `--reciter` override them). `--ig-only` / `--fb-only` are exclusive. Credentials in `.env`. Posts are independent (no Graph link). The reel is tagged green in Finder once at least one platform posted; `--draft` leaves it untagged. A failed permalink lookup only warns and prints the published media ID: it cannot turn a successful post into a failed one.
 
 ## Environments
 

@@ -308,7 +308,11 @@ def publish_instagram(ig, token, cid, publish=True):
         print("  instagram: container %s ready, NOT published (--draft)" % cid)
         return None
     media = api("%s/media_publish" % ig, token, {"creation_id": cid})["id"]
-    link = api(media, token, {"fields": "permalink"}, method="GET")
+    try:
+        link = api(media, token, {"fields": "permalink"}, method="GET")
+    except (Exception, SystemExit) as e:
+        print("  ! instagram permalink unavailable: %s" % e)
+        link = {}
     print("  instagram: %s" % link.get("permalink", media))
     return link.get("permalink")
 
@@ -349,7 +353,11 @@ def publish_facebook(path, text, publish=True, cover=None):
     if not publish:
         print("  facebook: video %s saved as a DRAFT" % vid)
         return None
-    link = api(vid, token, {"fields": "permalink_url"}, method="GET")
+    try:
+        link = api(vid, token, {"fields": "permalink_url"}, method="GET")
+    except (Exception, SystemExit) as e:
+        print("  ! facebook permalink unavailable: %s" % e)
+        link = {}
     url = link.get("permalink_url", "")
     print("  facebook: %s" % (("https://facebook.com" + url) if url else vid))
     return url
