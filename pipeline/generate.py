@@ -348,8 +348,8 @@ def trim_media(path, start, end, thumb=False):
     timing (26.19s against the audio's 26.14s on hujurat-4-5), and it sets
     the last card's end, so an audio-only cut would print a different block.
 
-    Both cuts are cached under TRIM_CACHE and that file is returned instead
-    of `out_path`: the encode is deterministic, so a re-render or a re-check
+    Both cuts are cached under TRIM_CACHE and the cached path is returned:
+    the encode is deterministic, so a re-render or a re-check
     of a reel whose window has not moved copies nothing and encodes nothing.
     The key is everything that decides the bytes -- the source's path, size
     and mtime, the ffmpeg binary's, and the whole argv (which is what keeps
