@@ -830,10 +830,8 @@ def clip_to_speech(arabic, english, silences):
     caption, and the frame goes clean for whatever of the rest is left."""
     for cap_a, cap_e in zip(arabic, english):
         for s_start, s_end in silences:
-            if s_end is None:
-                continue
-            if cap_a["start"] < s_start < cap_a["end"]:
-                cap_a["end"] = cap_e["end"] = max(cap_a["start"], s_start)
+            if s_end is not None and cap_a["start"] < s_start < cap_a["end"]:
+                cap_a["end"] = cap_e["end"] = s_start
     return arabic, english
 
 
