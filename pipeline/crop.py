@@ -317,6 +317,7 @@ def report(m, s, style):
 
 
 def annotate(path, s, m, style, W, out):
+    """`m` None: the EMPTY shot -- its centred window and a label, no head."""
     from PIL import Image, ImageDraw
     im = Image.open(path).convert("RGB")
     k = im.size[0] / float(W)
@@ -325,13 +326,18 @@ def annotate(path, s, m, style, W, out):
     def rect(x0, y0, x1, y1, colour, width=2):
         d.rectangle([x0 * k, y0 * k, x1 * k, y1 * k], outline=colour,
                     width=width)
-    for g in m["graphics"]:
+    for g in m["graphics"] if m else []:
         rect(*g, colour=(255, 40, 40))
-    rect(*m["head"], colour=(255, 220, 0))
+    if m:
+        rect(*m["head"], colour=(255, 220, 0))
     x, y, w, h = s["x"], s["y"], s["w"], s["h"]
     rect(x, y, x + w, y + h, (0, 255, 0), 3)
     cap = CAPTION_W[style]
-    if cap is None:
+    if m is None:
+        d.text((x * k + 12, y * k + 12), "no reciter: centred window",
+               fill=(0, 255, 0), font_size=28, stroke_width=3,
+               stroke_fill=(0, 0, 0))
+    elif cap is None:
         rect(x + 0.07 * w, y + s["hb"] * h, x + 0.93 * w, y + 0.9 * h,
              (80, 160, 255))
     else:
@@ -458,11 +464,11 @@ def run(config_path, frames=4, annotate_path=None, write=False, force=False):
         s = min((solve(W, H, m, style, side) for side in sides),
                 key=lambda c: c["rank"])
         bad = report(m, s, style)
-        if annotate_path:
-            mid = times[len(times) // 2]
-            p = paths[len(paths) // 2] if paths else \
-                extract(src, [mid], tmp, W)[0]
-            annotate(p, s, m, style, W, annotate_path)
+    if annotate_path:
+        mid = times[len(times) // 2]
+        p = paths[len(paths) // 2] if paths else \
+            extract(src, [mid], tmp, W)[0]
+        annotate(p, s, m, style, W, annotate_path)
 
     if not write:
         print("(not written -- pass --write)")

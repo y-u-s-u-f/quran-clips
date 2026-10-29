@@ -17,7 +17,7 @@ python3 pipeline/fetch.py "https://www.youtube.com/watch?v=..."
 python3 pipeline/transcribe.py sources/<id>           # find the span; repairs restarts
 # write sources/<id>/<reel>.yaml  (verse span, card splits)
 tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml
-tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
+tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/<reel>-crop.png
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml
 python3 pipeline/publish.py reels/<reel>.mp4          # Instagram + Facebook
 ```

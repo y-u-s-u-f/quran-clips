@@ -16,7 +16,7 @@ python3 pipeline/transcribe.py sources/<id>        # span finder + ibtidāʾ rep
 python3 pipeline/quran.py --search "<arabic>"     # -> surah:ayah
 # write sources/<id>/<reel>.yaml   (see Config)
 tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml   # several configs: one model load
-tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
+tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/<reel>-crop.png
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml [--vertical]
 ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate, always
 python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
@@ -25,7 +25,7 @@ python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
 - Skip transcribe only when you know the verses AND the reciter never restarts a phrase: without `whisper.json` align.py cannot repair an ibtidāʾ restart, and the card silently opens late.
 - Name the span in the config. Omitted, align.py identifies it from Whisper and writes it back beside `trim:` — reliable only on a short source; check what it wrote.
 - `captions.srt` is the cheapest span finder: dedupe rolling windows (keep each block's last line). Timings are ±1–2s — enough to pick a span, never to `trim:`.
-- Open `/tmp/c.png` and look, every time. crop.py's guards check its own numbers against each other, not whether it found a real face.
+- Open `/tmp/<reel>-crop.png` and look, every time: every solve rewrites it, an EMPTY shot included, and the per-reel name keeps another reel's frame out of it. crop.py's guards check its own numbers against each other, not whether it found a real face.
 - Never pipe `generate.py` through `tail`: output is withheld until the process exits, so a healthy 15-minute render reads as hung. `grep --line-buffered`, or redirect to a file and read that.
 
 ## Config
