@@ -202,9 +202,6 @@ def en_tokens(text, stroke_macron=True, caps=True):
     the case the line is being set in, and nothing is stroked."""
     toks = []
     for w in re.split(r"(\s+)", text):
-        if not w or w.isspace():
-            toks.extend((ch, False) for ch in w)
-            continue
         # strip leading quotes/punctuation to find the alpha core to test
         macron = _NON_LETTER.sub("", w).lower() == "allah"
         li = 0
