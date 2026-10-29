@@ -38,6 +38,8 @@ tests/          graph_parity.py (bars goldens), gpu_parity.py (render_gpu's
 
 **align.py** — `trim:` head is measured (0.12s before the first word); hand-set trim is reported, never moved; tail keeps 0.30s. With no `trim:` it aligns the whole source and writes the window back; with no span it identifies one from Whisper and writes it back too. Both only when the source is roughly the reel. Takes several configs at once (`sources/<id>/*.yaml`), sharing the model load. Without `whisper.json` an ibtidāʾ restart goes unrepaired.
 
+Reusing a sidecar requires both its recorded trim and its exact stored mushaf words to match. `align.stale_note` re-aligns a named span with changed or missing words without `--force`, even at the same word count; `generate.load_forced_alignment` refuses it and asks for re-alignment.
+
 **crop.py** (every style) — framing from an OpenAI-compatible vision API (`QC_VISION_*` in `.env`), cached in `crop.json`. Column styles (bars, horizontal): caption on the side he faces, edge|reciter, reciter|caption and caption|edge roughly equal, `x_offset`. `vertical` centres him and reports `face_bottom`, the fraction of the canvas height his head box ends at. Zooms only to clear burned-in graphics or reach that layout. Refuses to write on no face / no room for the caption; an EMPTY shot is a centred window and no anchor key. Check `--annotate` every time. Authoring only — no model at render time.
 
 ## Styles
@@ -63,7 +65,11 @@ python3 pipeline/publish.py reels/<name>.mp4 --dry
 python3 pipeline/publish.py reels/<name>.mp4 --draft
 ```
 
-Cover at 1.55s (`COVER_MS`). Caption from `tafsir()` + ayat + `#reciter | #surah` (from mp4 tags; `--surah` + `--ayat` together, `--reciter` override them). `--ig-only` / `--fb-only` are exclusive. Credentials in `.env`. Posts are independent (no Graph link). The reel is tagged green in Finder once at least one platform posted; `--draft` leaves it untagged.
+Cover at 1.55s (`COVER_MS`). Caption from `tafsir()` + ayat + `#reciter | #surah` (from mp4 tags; `--surah` + `--ayat` together, `--reciter` override them). `--ig-only` / `--fb-only` are exclusive. Credentials in `.env`. Posts are independent (no Graph link). The reel is tagged green in Finder once at least one platform posted; `--draft` leaves it untagged. A failed permalink lookup only warns and prints the published media ID: it cannot turn a successful post into a failed one. The temporary Facebook cover is cleaned up even after extraction fails; cleanup errors warn without interrupting Instagram publishing.
+
+Facebook thumbnail upload is optional: HTTP, transport, timeout or local file errors warn and let the uploaded video finish without that cover.
+
+`upload_instagram` creates and uploads a container, then Facebook runs while Instagram transcodes, then `publish_instagram` polls and publishes it. Failures are collected per platform so either can still succeed, with one Finder-tag attempt after the flow and an explicit partial-post report on failure. `--draft` uploads a Facebook draft and leaves the ready Instagram container unpublished; neither is a live post, and partial success reports drafts ready rather than posts that went out. `--dry` copies the caption and `--caption-only` prints it, both without uploads or network requests. Consecutive ayat sharing a tafsir paragraph are grouped with `groupby` so the paragraph appears once.
 
 ## Environments
 

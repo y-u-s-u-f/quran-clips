@@ -308,7 +308,11 @@ def publish_instagram(ig, token, cid, publish=True):
         print("  instagram: container %s ready, NOT published (--draft)" % cid)
         return None
     media = api("%s/media_publish" % ig, token, {"creation_id": cid})["id"]
-    link = api(media, token, {"fields": "permalink"}, method="GET")
+    try:
+        link = api(media, token, {"fields": "permalink"}, method="GET")
+    except (Exception, SystemExit) as e:
+        print("  ! instagram permalink unavailable: %s" % e)
+        link = {}
     print("  instagram: %s" % link.get("permalink", media))
     return link.get("permalink")
 
@@ -317,18 +321,20 @@ def set_facebook_cover(token, video_id, jpeg):
     """Facebook's reel cover is an uploaded image, not an offset. Not fatal:
     a reel whose cover stayed on frame 0 is still a published reel, so this
     reports and moves on rather than taking the post down with it."""
-    with open(jpeg, "rb") as f:
-        blob = f.read()
-    ctype, body = multipart({"is_preferred": "true", "access_token": token},
-                            os.path.basename(jpeg), blob)
-    req = urllib.request.Request(
-        "%s/%s/thumbnails" % (GRAPH, video_id), data=body, method="POST",
-        headers={"Content-Type": ctype})
     try:
+        with open(jpeg, "rb") as f:
+            blob = f.read()
+        ctype, body = multipart({"is_preferred": "true", "access_token": token},
+                                os.path.basename(jpeg), blob)
+        req = urllib.request.Request(
+            "%s/%s/thumbnails" % (GRAPH, video_id), data=body, method="POST",
+            headers={"Content-Type": ctype})
         urllib.request.urlopen(req, timeout=120)
         return True
-    except urllib.error.HTTPError as e:
-        print("  ! facebook cover not set: %s" % e.read().decode()[:300])
+    except OSError as e:
+        detail = (e.read().decode()[:300]
+                  if isinstance(e, urllib.error.HTTPError) else str(e))
+        print("  ! facebook cover not set: %s" % detail)
         return False
 
 
@@ -349,7 +355,11 @@ def publish_facebook(path, text, publish=True, cover=None):
     if not publish:
         print("  facebook: video %s saved as a DRAFT" % vid)
         return None
-    link = api(vid, token, {"fields": "permalink_url"}, method="GET")
+    try:
+        link = api(vid, token, {"fields": "permalink_url"}, method="GET")
+    except (Exception, SystemExit) as e:
+        print("  ! facebook permalink unavailable: %s" % e)
+        link = {}
     url = link.get("permalink_url", "")
     print("  facebook: %s" % (("https://facebook.com" + url) if url else vid))
     return url
@@ -473,10 +483,8 @@ def main(argv=None):
 
     if a.cover_ms:
         a.cover_ms = clamp_cover(dur_ms, a.cover_ms)
-    # Tagged as soon as ONE platform is live, so a failure on the other
-    # still leaves the file marked -- and says which. Failures are collected
-    # per platform, not raised mid-flow: a Facebook failure must not strand an
-    # Instagram container that is already uploaded.
+    # A Facebook failure must not strand an Instagram container that is
+    # already uploaded; a partial post still needs its Finder tag.
     posted, failed = [], []
     try:
         container = None
@@ -492,10 +500,9 @@ def main(argv=None):
             cover = None
             try:
                 if a.cover_ms:
-                    cover = cover_frame(
-                        a.reel, a.cover_ms,
-                        os.path.join(tempfile.gettempdir(),
-                                     "qc-cover-%d.jpg" % os.getpid()))
+                    cover = os.path.join(tempfile.gettempdir(),
+                                         "qc-cover-%d.jpg" % os.getpid())
+                    cover_frame(a.reel, a.cover_ms, cover)
                 publish_facebook(a.reel, fb_text, publish=not a.draft,
                                  cover=cover)
                 posted.append("Facebook")
@@ -503,7 +510,10 @@ def main(argv=None):
                 failed.append(("Facebook", e))
             finally:
                 if cover and os.path.exists(cover):
-                    os.remove(cover)
+                    try:
+                        os.remove(cover)
+                    except OSError as e:
+                        print("  ! could not remove cover %s: %s" % (cover, e))
         if container:
             try:
                 publish_instagram(*container, publish=not a.draft)
@@ -514,7 +524,9 @@ def main(argv=None):
         if posted and not a.draft:
             mark_published(a.reel)
         if len(posted) < len(targets):
-            print("  ! went out to %s only" % (" + ".join(posted) or "nothing"))
+            print("  ! %s %s only" % (
+                "draft ready on" if a.draft else "went out to",
+                " + ".join(posted) or "nothing"))
     if len(targets) == 1 and failed:
         raise failed[0][1]
     if failed:
