@@ -181,10 +181,6 @@ TASHKEEL = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0653"
                "\u06EA\u06ED\u06EB\u06EC")
 
 
-def strip_tashkeel(s):
-    return "".join(c for c in s if c not in TASHKEEL)
-
-
 def switches(clip_fx):
     """name -> bool for every switchable stage, template default (all on)
     merged with the reel config's `fx:` overrides. Unknown name = error --
@@ -394,7 +390,7 @@ def layout(phrases, x_offset, y_offset, geo):
             l, top, r, bot = bbox_ls(ln, font)
             baseline = cyb + base_off
             # The pill must sit inside the tashkeel-stripped letter-body band.
-            _, sb_top, _, sb_bot = bbox_ls(strip_tashkeel(ln), font)
+            _, sb_top, _, sb_bot = bbox_ls(norm_ar(ln, TASHKEEL), font)
             y0 = baseline - bar_h / 2.0 - base_off
             y0 = min(max(y0, baseline + sb_top), baseline + sb_bot - bar_h)
             rows.append({"n": n, "text": ln, "baseline": baseline,
