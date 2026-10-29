@@ -401,6 +401,11 @@ def align(config_path, force=False):
         asr_words, _ = generate.load_whisper_window(
             generate.require_whisper(cfg), t0, t1)
     surah, a0, a1 = generate.resolve_span(cfg, asr_words)
+    verses = generate.fetch_verses(surah, a0, a1)
+    words = generate.spoken_words(verses, cfg["ayah_end_words"])
+    if cfg["groups"] and cfg["surah"] is None:
+        generate.check_group_total(cfg["groups"], len(words))
+
     # An identified span is pinned into the config: generate.py would
     # otherwise re-identify it over the trimmed window, and a different
     # answer there with the same word count is silently wrong captions.
@@ -410,12 +415,6 @@ def align(config_path, force=False):
               % (quran.surah_name(surah), surah, a0, a1,
                  os.path.basename(config_path)))
 
-    verses = generate.fetch_verses(surah, a0, a1)
-    words = generate.spoken_words(verses, cfg["ayah_end_words"])
-    # A named span's total was checked at load; an identified one only now,
-    # still before the backend's import and the model load.
-    if cfg["groups"] and cfg["surah"] is None:
-        generate.check_group_total(cfg["groups"], len(words))
     ref_text = " ".join(words)
     print("aligning %d mushaf words (%s %d:%d-%d) against %s"
           % (len(words), quran.surah_name(surah), surah, a0, a1,
