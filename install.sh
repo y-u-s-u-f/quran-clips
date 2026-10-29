@@ -32,6 +32,13 @@ bad=()   # missing pieces + what they block
 
 say()  { printf '%s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+# venv dir, its python: created (and pip upgraded) only when absent
+mkvenv() {
+    [ -x "$2" ] && return
+    say "  creating $1"
+    "$PY" -m venv "$1" || exit 1
+    "$2" -m pip -q install --upgrade pip
+}
 
 CHECK_ONLY=0
 for arg in "$@"; do
@@ -89,11 +96,7 @@ raqm_ok() { "$1" -c "from PIL import features; import sys; sys.exit(0 if feature
 yaml_ok() { "$1" -c "import yaml" 2>/dev/null; }
 
 if [ "$CHECK_ONLY" = 0 ]; then
-    if [ ! -x "$RPY" ]; then
-        say "  creating $RVENV"
-        "$PY" -m venv "$RVENV" || exit 1
-        "$RPY" -m pip -q install --upgrade pip
-    fi
+    mkvenv "$RVENV" "$RPY"
     yaml_ok "$RPY" || "$RPY" -m pip -q install pyyaml
     raqm_ok "$RPY" || "$RPY" -m pip -q install --upgrade pillow
     if ! raqm_ok "$RPY" && raqm_ok "$PY"; then
@@ -135,11 +138,7 @@ esac
 ASR_OK=0
 [ -x "$APY" ] && "$APY" -c "import $ASR_MOD" 2>/dev/null && ASR_OK=1
 if [ "$CHECK_ONLY" = 0 ] && [ "$ASR_OK" = 0 ]; then
-    if [ ! -x "$APY" ]; then
-        say "  creating $AVENV"
-        "$PY" -m venv "$AVENV" || exit 1
-        "$APY" -m pip -q install --upgrade pip
-    fi
+    mkvenv "$AVENV" "$APY"
     say "  installing $ASR_PKG (first transcription will also download the model)"
     case "$ASR_BACKEND" in
         # mlx-whisper lists torch, but only its checkpoint converter imports
@@ -170,11 +169,7 @@ FPKG="git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"
 FOK=0
 [ -x "$FPY" ] && "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null && FOK=1
 if [ "$CHECK_ONLY" = 0 ] && [ "$FOK" = 0 ]; then
-    if [ ! -x "$FPY" ]; then
-        say "  creating $FVENV"
-        "$PY" -m venv "$FVENV" || exit 1
-        "$FPY" -m pip -q install --upgrade pip
-    fi
+    mkvenv "$FVENV" "$FPY"
     say "  installing ctc-forced-aligner + torch (first align will also download the ~1.2GB MMS model)"
     # Python 3.15 wheels are only on the nightly index (2026-10).
     "$FPY" -m pip -q install torch ||
