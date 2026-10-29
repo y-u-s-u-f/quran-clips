@@ -336,22 +336,17 @@ def trim_note(out_path, cfg):
         "whole source" if now is None else generate.format_window(now))
 
 
-_ALIGNER = None
-
-
+@functools.cache
 def aligner():
     """(model, tokenizer) for the MMS aligner, loaded once per process.
 
     The import alone pulls in torch and the weights are ~1.2GB off disk, so
     every config in one invocation shares them: a source with three reels cut
     from it paid both three times when each config was its own run."""
-    global _ALIGNER
-    if _ALIGNER is None:
-        import torch
-        from ctc_forced_aligner import load_alignment_model
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        _ALIGNER = load_alignment_model(device, MODEL, dtype=torch.float32)
-    return _ALIGNER
+    import torch
+    from ctc_forced_aligner import load_alignment_model
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    return load_alignment_model(device, MODEL, dtype=torch.float32)
 
 
 @functools.lru_cache(maxsize=1)
