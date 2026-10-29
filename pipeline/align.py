@@ -316,14 +316,11 @@ def apply_repeats(results, repeats, words, min_fix=0.5):
 def stale_note(out_path, cfg):
     """Why an existing alignment no longer matches the config, or None.
 
-    Word timings are relative to the trim window, so an edited `trim:` leaves
-    the file wrong by however far the window moved -- and generate.py reads it
-    happily, captions hundreds of ms out with nothing said. A named span's
-    words are compared too, since a span edited to one of the same word count
-    would otherwise be kept. Either edit is unambiguous intent, so it
-    re-aligns on its own instead of costing the author a --force they have to
-    remember. Trim values are compared to 10ms because both sides are rounded
-    to 2dp."""
+    Word timings are relative to the trim window, so an edited `trim:` shifts
+    every caption. A named span's words are compared too: the word count alone
+    cannot distinguish spans of equal length. Either edit requires new timing
+    without an extra --force. Trim values are compared to 10ms because both
+    sides are rounded to 2dp."""
     try:
         data = json.load(open(out_path, encoding="utf-8"))
     except ValueError:
@@ -351,8 +348,7 @@ def aligner():
     """(model, tokenizer) for the MMS aligner, loaded once per process.
 
     The import alone pulls in torch and the weights are ~1.2GB off disk, so
-    every config in one invocation shares them: a source with three reels cut
-    from it paid both three times when each config was its own run."""
+    every config in one invocation shares them."""
     import torch
     from ctc_forced_aligner import load_alignment_model
     device = "cuda" if torch.cuda.is_available() else "cpu"
