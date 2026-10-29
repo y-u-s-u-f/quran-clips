@@ -48,6 +48,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from itertools import groupby
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import quran  # noqa: E402
@@ -153,20 +154,13 @@ def caption(surah, a0, a1, reciter, with_ayat=True):
     then their single explanation, once. Printing per ayah instead repeats
     the same paragraph three times.
     """
-    groups = []
-    for v in quran.range(surah, a0, a1):
-        t = quran.tafsir(surah, v["ayah"])
-        if groups and groups[-1][0] == t:
-            groups[-1][1].append(v)
-        else:
-            groups.append((t, [v]))
-
     # "al-Tafsir al-Muyassar: ", escaped rather than pasted -- no Arabic is
     # typed into a source file here (see AGENTS.md invariant 1). Letter by
     # letter: alef lam teh feh seen yeh reh / alef lam meem yeh seen reh.
     lines = ["\u0627\u0644\u062a\u0641\u0633\u064a\u0631"      # al-Tafsir
              " \u0627\u0644\u0645\u064a\u0633\u0631: "]  # al-Muyassar
-    for t, verses in groups:
+    for t, verses in groupby(quran.range(surah, a0, a1),
+                             key=lambda v: quran.tafsir(surah, v["ayah"])):
         if with_ayat:
             # U+FD3E/U+FD3F ORNATE PARENTHESIS, the pair a mushaf sets an
             # ayah in. FD3F (the "right" one) is written FIRST on purpose:
