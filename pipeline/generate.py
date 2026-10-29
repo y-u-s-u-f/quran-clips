@@ -475,9 +475,9 @@ def align_words(ref_words, asr_words):
         while hi < n and stamps[hi] is None:
             hi += 1
         t_lo = stamps[lo]["end"] if lo >= 0 else max(
-            0.0, stamps[hi]["start"] - 0.5 * (hi - idx + 1)) if hi < n else 0.0
-        t_hi = stamps[hi]["start"] if hi < n else (
-            stamps[lo]["end"] + 0.5 * (n - idx)) if lo >= 0 else 0.0
+            0.0, stamps[hi]["start"] - 0.5 * (hi - idx + 1))
+        t_hi = stamps[hi]["start"] if hi < n else stamps[lo]["end"] + 0.5 * (
+            n - idx)
         span = max(0.0, t_hi - t_lo)
         k = hi - idx
         for step in range(k):
