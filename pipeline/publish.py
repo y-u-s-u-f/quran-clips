@@ -522,7 +522,9 @@ def main(argv=None):
         if posted and not a.draft:
             mark_published(a.reel)
         if len(posted) < len(targets):
-            print("  ! went out to %s only" % (" + ".join(posted) or "nothing"))
+            print("  ! %s %s only" % (
+                "draft ready on" if a.draft else "went out to",
+                " + ".join(posted) or "nothing"))
     if len(targets) == 1 and failed:
         raise failed[0][1]
     if failed:
