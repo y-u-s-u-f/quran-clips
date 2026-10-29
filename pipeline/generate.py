@@ -1131,6 +1131,9 @@ def run_config(config_path, output_override=None, vertical=False,
                verify_only=False):
     cfg = load_config(config_path)
     cfg = resolve_paths(cfg, config_path, output_override)
+    if not verify_only:
+        import render_common
+        render_common.require_gpu()
     tmp = cfg["tmp_dir"]
     os.makedirs(tmp, exist_ok=True)
     os.makedirs(os.path.dirname(cfg["output"]), exist_ok=True)
