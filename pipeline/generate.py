@@ -302,7 +302,7 @@ def get_video_info(path):
             "duration": float(data.get("format", {}).get("duration", 0))}
 
 
-def trim_media(path, out_path, start, end, thumb=False):
+def trim_media(path, start, end, thumb=False):
     """Cut [start, end) out of the source and re-encode. Re-encoding rather
     than stream-copying is deliberate: a copy cuts only at the nearest
     keyframe, which shifts the real start by up to a GOP and would offset
@@ -328,12 +328,13 @@ def trim_media(path, out_path, start, end, thumb=False):
     timing (26.19s against the audio's 26.14s on hujurat-4-5), and it sets
     the last card's end, so an audio-only cut would print a different block.
 
-    The full cut is cached under TRIM_CACHE and that file is returned instead
-    of `out_path`: the encode is deterministic, so a re-render of a reel whose
-    window has not moved copies nothing and encodes nothing. The key is
-    everything that decides the bytes -- the source's path, size and mtime,
-    the ffmpeg binary's, and the whole argv -- so an edited source, a moved
-    window, a changed setting or an upgraded ffmpeg misses."""
+    Both cuts are cached under TRIM_CACHE and that file is returned instead
+    of `out_path`: the encode is deterministic, so a re-render or a re-check
+    of a reel whose window has not moved copies nothing and encodes nothing.
+    The key is everything that decides the bytes -- the source's path, size
+    and mtime, the ffmpeg binary's, and the whole argv (which is what keeps
+    the proxy and the full cut apart) -- so an edited source, a moved window,
+    a changed setting or an upgraded ffmpeg misses."""
     src = os.path.abspath(path)
     cmd = [FFMPEG, "-y", "-v", "error", "-ss", "%.3f" % start]
     if end is not None:
@@ -342,9 +343,6 @@ def trim_media(path, out_path, start, end, thumb=False):
     cmd += (["-vf", "scale=32:-2", "-preset", "ultrafast"] if thumb
             else ["-preset", "veryfast", "-crf", "10"])
     cmd += ["-c:a", "aac", "-b:a", "192k"]
-    if thumb:
-        run(cmd + [out_path])
-        return out_path
     key = [(p, os.stat(p).st_size, os.stat(p).st_mtime_ns)
            for p in (src, shutil.which(FFMPEG) or FFMPEG)] + cmd
     cached = os.path.join(TRIM_CACHE, "trim_%s.mp4" % hashlib.sha256(
@@ -1120,15 +1118,12 @@ def run_config(config_path, output_override=None, vertical=False,
     t0w = window[0]
     # Cut even with no `trim:` (0 to the end): tools/render_gpu decodes with
     # AVFoundation, which reads no MKV/WebM and on an M1 no AV1 or VP9.
-    trimmed = os.path.join(tmp, "trimmed-verify.mp4" if verify_only
-                           else "trimmed.mp4")
     print("      %s%s"
           % ("trimming to %s-%ss" % (window[0], "end" if window[1] is None
                                      else window[1])
              if cfg.get("trim") else "re-encoding the whole source",
              " (32px proxy)" if verify_only else ""))
-    source = trim_media(source, trimmed, window[0], window[1],
-                        thumb=verify_only)
+    source = trim_media(source, window[0], window[1], thumb=verify_only)
     info = {**get_video_info(source),
             **({"width": info["width"], "height": info["height"]}
                if verify_only else {})}
