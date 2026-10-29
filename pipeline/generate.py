@@ -35,6 +35,7 @@ So the normal layout needs none of the three spelled out:
     sources/<id>/my-reel.yaml      ->  reels/my-reel.mp4
 """
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -286,6 +287,25 @@ def run(cmd, **kw):
     return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw)
 
 
+@contextlib.contextmanager
+def part_file(path):
+    """Yield a pid-tagged part path to write `path`'s bytes to; rename it
+    into place only if the block completes, and remove it either way. The
+    media caches (trim, heat, snow) are keyed by name alone, so a file that
+    exists must be complete -- and a producer killed from outside (^C, a
+    timeout, the OOM killer) never reaches a cleanup line of its own, leaving
+    a truncated mp4 every later run would load as a valid short input. The
+    pid goes BEFORE the extension: ffmpeg picks its muxer off the suffix."""
+    base, ext = os.path.splitext(path)
+    part = "%s.%d.part%s" % (base, os.getpid(), ext)
+    try:
+        yield part
+        os.replace(part, path)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+
+
 # ---------- media ----------------------------------------------------------
 
 def get_video_info(path):
@@ -302,7 +322,7 @@ def get_video_info(path):
             "duration": float(data.get("format", {}).get("duration", 0))}
 
 
-def trim_media(path, out_path, start, end, thumb=False):
+def trim_media(path, start, end, thumb=False):
     """Cut [start, end) out of the source and re-encode. Re-encoding rather
     than stream-copying is deliberate: a copy cuts only at the nearest
     keyframe, which shifts the real start by up to a GOP and would offset
@@ -328,12 +348,13 @@ def trim_media(path, out_path, start, end, thumb=False):
     timing (26.19s against the audio's 26.14s on hujurat-4-5), and it sets
     the last card's end, so an audio-only cut would print a different block.
 
-    The full cut is cached under TRIM_CACHE and that file is returned instead
-    of `out_path`: the encode is deterministic, so a re-render of a reel whose
-    window has not moved copies nothing and encodes nothing. The key is
-    everything that decides the bytes -- the source's path, size and mtime,
-    the ffmpeg binary's, and the whole argv -- so an edited source, a moved
-    window, a changed setting or an upgraded ffmpeg misses."""
+    Both cuts are cached under TRIM_CACHE and the cached path is returned:
+    the encode is deterministic, so a re-render or a re-check
+    of a reel whose window has not moved copies nothing and encodes nothing.
+    The key is everything that decides the bytes -- the source's path, size
+    and mtime, the ffmpeg binary's, and the whole argv (which is what keeps
+    the proxy and the full cut apart) -- so an edited source, a moved window,
+    a changed setting or an upgraded ffmpeg misses."""
     src = os.path.abspath(path)
     cmd = [FFMPEG, "-y", "-v", "error", "-ss", "%.3f" % start]
     if end is not None:
@@ -342,25 +363,14 @@ def trim_media(path, out_path, start, end, thumb=False):
     cmd += (["-vf", "scale=32:-2", "-preset", "ultrafast"] if thumb
             else ["-preset", "veryfast", "-crf", "10"])
     cmd += ["-c:a", "aac", "-b:a", "192k"]
-    if thumb:
-        run(cmd + [out_path])
-        return out_path
     key = [(p, os.stat(p).st_size, os.stat(p).st_mtime_ns)
            for p in (src, shutil.which(FFMPEG) or FFMPEG)] + cmd
     cached = os.path.join(TRIM_CACHE, "trim_%s.mp4" % hashlib.sha256(
         repr(key).encode()).hexdigest()[:16])
     if not os.path.exists(cached):
         os.makedirs(TRIM_CACHE, exist_ok=True)
-        # Same part-file rename as the bars heat/snow caches: the cache is
-        # keyed by name alone, so a cut killed mid-encode must not be left
-        # where a later run would take it for a complete window.
-        part = "%s.%d.part.mp4" % (os.path.splitext(cached)[0], os.getpid())
-        try:
+        with part_file(cached) as part:
             run(cmd + [part])
-            os.replace(part, cached)
-        finally:
-            if os.path.exists(part):
-                os.remove(part)
     return cached
 
 
@@ -465,9 +475,9 @@ def align_words(ref_words, asr_words):
         while hi < n and stamps[hi] is None:
             hi += 1
         t_lo = stamps[lo]["end"] if lo >= 0 else max(
-            0.0, stamps[hi]["start"] - 0.5 * (hi - idx + 1)) if hi < n else 0.0
-        t_hi = stamps[hi]["start"] if hi < n else (
-            stamps[lo]["end"] + 0.5 * (n - idx)) if lo >= 0 else 0.0
+            0.0, stamps[hi]["start"] - 0.5 * (hi - idx + 1))
+        t_hi = stamps[hi]["start"] if hi < n else stamps[lo]["end"] + 0.5 * (
+            n - idx)
         span = max(0.0, t_hi - t_lo)
         k = hi - idx
         for step in range(k):
@@ -596,6 +606,12 @@ def load_forced_alignment(path, ref_words, window):
             "%s has %d words but the verse range has %d -- the config's "
             "span changed since align.py ran; re-run pipeline/align.py"
             % (path, len(words), len(ref_words)))
+    differ = sum(w.get("w") != r for w, r in zip(words, ref_words))
+    if differ:
+        raise ValueError(
+            "%s does not hold the verse range's words (%d differ or are "
+            "missing) -- re-run pipeline/align.py on this config"
+            % (path, differ))
     stamps = [{"start": w["t0"], "end": w["t1"]} for w in words]
     _enforce_monotonic(stamps)
     print("      %d/%d mushaf words timed by %s"
@@ -606,9 +622,7 @@ def load_forced_alignment(path, ref_words, window):
 def identify_verse_span(asr_words):
     """Fuzzy-match transcript thirds against the mushaf; return the min/max
     ayah matched. Reliable for short windows (1-4 ayahs) only."""
-    text_tokens = []
-    for w in asr_words:
-        text_tokens.extend(quran.tokens(w["w"]))
+    text_tokens = [t for w in asr_words for t in quran.tokens(w["w"])]
     if not text_tokens:
         return None
     n_parts = max(1, min(4, len(text_tokens) // 8))
@@ -658,17 +672,23 @@ def spoken_words(verses, end_words=None):
 
 # ---------- caption building ------------------------------------------------
 
-def apply_groups(word_timestamps, words, groups, final_end):
-    """Time config-supplied semantic groups into index-aligned
-    (arabic, english) caption lists. n_words must sum to the word count
-    exactly, or ValueError -- catches a bad grouping immediately instead of
-    silently misaligning every later caption."""
+def check_group_total(groups, n_words):
+    """n_words must sum to the span's word count exactly, or ValueError --
+    catches a bad grouping immediately instead of silently misaligning every
+    later caption. check_shapes runs it for a named span, align.py once it
+    has identified one, apply_groups on every render."""
     total = sum(g["n_words"] for g in groups)
-    if total != len(word_timestamps):
+    if total != n_words:
         raise ValueError(
             "config groups cover %d words but the verse range has %d -- "
             "groups must partition every word exactly once"
-            % (total, len(word_timestamps)))
+            % (total, n_words))
+
+
+def apply_groups(word_timestamps, words, groups, final_end):
+    """Time config-supplied semantic groups into index-aligned
+    (arabic, english) caption lists, after check_group_total."""
+    check_group_total(groups, len(word_timestamps))
 
     arabic, english, i = [], [], 0
     for g in groups:
@@ -808,10 +828,8 @@ def clip_to_speech(arabic, english, silences):
     caption, and the frame goes clean for whatever of the rest is left."""
     for cap_a, cap_e in zip(arabic, english):
         for s_start, s_end in silences:
-            if s_end is None:
-                continue
-            if cap_a["start"] < s_start < cap_a["end"]:
-                cap_a["end"] = cap_e["end"] = max(cap_a["start"], s_start)
+            if s_end is not None and cap_a["start"] < s_start < cap_a["end"]:
+                cap_a["end"] = cap_e["end"] = s_start
     return arabic, english
 
 
@@ -1040,6 +1058,9 @@ def check_shapes(cfg, path):
             bad("groups[%d].line_split is the word count on line 1: %s "
                 "(got %r)" % (i, "1..%d for a %d-word card" % (n - 1, n)
                               if n > 1 else "a 1-word card cannot split", ls))
+    if cfg["groups"] and cfg["surah"] is not None:
+        check_group_total(cfg["groups"], len(spoken_words(
+            fetch_verses(*resolve_span(cfg, [])), cfg["ayah_end_words"])))
     for i, nd in enumerate(cfg["nudge"] or []):
         if not isinstance(nd, dict):
             bad("nudge[%d] must be a mapping, not %r" % (i, nd))
@@ -1106,6 +1127,9 @@ def run_config(config_path, output_override=None, vertical=False,
                verify_only=False):
     cfg = load_config(config_path)
     cfg = resolve_paths(cfg, config_path, output_override)
+    if not verify_only:
+        import render_common
+        render_common.require_gpu()
     tmp = cfg["tmp_dir"]
     os.makedirs(tmp, exist_ok=True)
     os.makedirs(os.path.dirname(cfg["output"]), exist_ok=True)
@@ -1120,15 +1144,12 @@ def run_config(config_path, output_override=None, vertical=False,
     t0w = window[0]
     # Cut even with no `trim:` (0 to the end): tools/render_gpu decodes with
     # AVFoundation, which reads no MKV/WebM and on an M1 no AV1 or VP9.
-    trimmed = os.path.join(tmp, "trimmed-verify.mp4" if verify_only
-                           else "trimmed.mp4")
     print("      %s%s"
           % ("trimming to %s-%ss" % (window[0], "end" if window[1] is None
                                      else window[1])
              if cfg.get("trim") else "re-encoding the whole source",
              " (32px proxy)" if verify_only else ""))
-    source = trim_media(source, trimmed, window[0], window[1],
-                        thumb=verify_only)
+    source = trim_media(source, window[0], window[1], thumb=verify_only)
     info = {**get_video_info(source),
             **({"width": info["width"], "height": info["height"]}
                if verify_only else {})}
@@ -1199,11 +1220,12 @@ def run_config(config_path, output_override=None, vertical=False,
     print("      %d captions, %d pause gap(s) left clean" % (len(arabic), gaps))
     print_verification(arabic, english, verses)
 
+    result = {"surah": surah, "ayah_start": a0, "ayah_end": a1,
+              "captions": len(arabic), "output": None,
+              "style": cfg["style"], "signature": cfg["signature"]}
     if verify_only:
         print("      --verify-only: stopping before the render")
-        return {"surah": surah, "ayah_start": a0, "ayah_end": a1,
-                "captions": len(arabic), "output": None,
-                "style": cfg["style"], "signature": cfg["signature"]}
+        return result
 
     plan = {"cfg": cfg, "src": source, "info": info,
             "arabic": arabic, "english": english,
@@ -1218,10 +1240,8 @@ def run_config(config_path, output_override=None, vertical=False,
         import render_text
         render_text.render(plan)
     print("Done: %s" % cfg["output"])
-    return {"surah": surah, "ayah_start": a0, "ayah_end": a1,
-            "captions": len(arabic), "output": cfg["output"],
-            "style": cfg["style"],
-            "signature": cfg["signature"]}
+    result["output"] = cfg["output"]
+    return result
 
 
 def main(argv=None):

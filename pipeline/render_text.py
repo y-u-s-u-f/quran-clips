@@ -35,6 +35,7 @@ The graph is tools/render_gpu's input (render_common.encode).
 
 Called by generate.py with the resolved plan; not a standalone CLI.
 """
+import functools
 import math
 import os
 import re
@@ -49,8 +50,8 @@ sys.path.insert(0, HERE)
 
 from render_common import (FADE_IN_S, FADE_OUT_S, FPS,  # noqa: E402
                            PORTRAIT_H, PORTRAIT_PAD, PORTRAIT_W, PROBE,
-                           encode, fit_pt, norm_ar, start_audio,
-                           source_chain, trim_to_ink)
+                           encode, fit_pt, hard_shadow, norm_ar,
+                           start_audio, source_chain, trim_to_ink)
 
 if not features.check("raqm"):
     sys.exit("FATAL: Pillow lacks RAQM (HarfBuzz+FriBiDi) -- Arabic would be "
@@ -202,9 +203,6 @@ def en_tokens(text, stroke_macron=True, caps=True):
     the case the line is being set in, and nothing is stroked."""
     toks = []
     for w in re.split(r"(\s+)", text):
-        if not w or w.isspace():
-            toks.extend((ch, False) for ch in w)
-            continue
         # strip leading quotes/punctuation to find the alpha core to test
         macron = _NON_LETTER.sub("", w).lower() == "allah"
         li = 0
@@ -222,9 +220,7 @@ def en_tokens(text, stroke_macron=True, caps=True):
     return toks
 
 
-_ADVANCE = {}
-
-
+@functools.cache
 def advance(font, ch):
     """font.getlength for ONE character, cached per (font, character).
 
@@ -232,11 +228,7 @@ def advance(font, ch):
     few dozen glyphs, and the same characters are re-measured for every line
     of every card -- the wrap solves against a whole width table, and
     backing_ellipse re-measures every line again afterwards."""
-    key = (font, ch)
-    w = _ADVANCE.get(key)
-    if w is None:
-        w = _ADVANCE[key] = font.getlength(ch)
-    return w
+    return font.getlength(ch)
 
 
 def en_width(toks, font, tracking_px):
@@ -486,16 +478,12 @@ def layout(orientation, phrases, english, cfg, face_bottom, geo):
 # drawing
 # ---------------------------------------------------------------------------
 
-def with_shadow(ink, W, H, k=1):
-    """The ink plus ONE hard drop shadow struck from its merged alpha: a solid
-    black layer through that alpha, pushed down-right, ink over it -- a lift
-    off the footage, not an outline ring. Never under 1px on a smaller
-    canvas."""
+def with_shadow(ink, k=1):
+    """The ink plus ONE hard drop shadow struck from its merged alpha, pushed
+    down-right -- a lift off the footage, not an outline ring. Never under 1px
+    on a smaller canvas."""
     off = max(1, round(SHADOW["offset_px"] * k))
-    solid = Image.new("RGBA", (W, H), SHADOW["color"] + (SHADOW["alpha"],))
-    sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    sh.paste(solid, (off, off), ink.getchannel("A"))
-    return Image.alpha_composite(sh, ink)
+    return hard_shadow(ink, SHADOW["color"], SHADOW["alpha"], (off, off))
 
 
 def draw_layers(lay, W, H, out_dir):
@@ -518,7 +506,7 @@ def draw_layers(lay, W, H, out_dir):
                          lay["tracking"], ENGLISH["color"] + (ENGLISH["alpha"],),
                          lay["k"])
         path = os.path.join(out_dir, "phrase%d.png" % p["i"])
-        card, x0, y0 = trim_to_ink(with_shadow(ink, W, H, lay["k"]))
+        card, x0, y0 = trim_to_ink(with_shadow(ink, lay["k"]))
         card.save(path)
         bb = p["ar_bbox"]
         report.append({"path": path, "box": (x0, y0),
@@ -610,7 +598,7 @@ def signature_card(text, font_path, W, H, tmp, offset=0, k=1):
          int(H * SIGNATURE_Y_FRAC) - (bbox[3] - bbox[1]) // 2 - bbox[1]
          + int(offset * k)),
         text, font=font, fill=(255, 255, 255, 255))
-    card = with_shadow(ink, W, H, k)
+    card = with_shadow(ink, k)
     card.putalpha(card.getchannel("A").point(
         lambda a: int(round(a * SIGNATURE_ALPHA))))
     card, x0, y0 = trim_to_ink(card)

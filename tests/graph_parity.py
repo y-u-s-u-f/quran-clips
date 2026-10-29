@@ -127,11 +127,15 @@ def main(argv=None):
                     stem + " input argv")]
     for path, got, sep, what in checks:
         rel = os.path.relpath(path, ROOT)
-        if a.bless or not os.path.exists(path):
-            why = "blessed" if os.path.exists(path) else "recorded (was missing)"
+        if a.bless:
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(got + "\n")
-            print("%s %s (%d chars)" % (why, rel, len(got)))
+            print("blessed %s (%d chars)" % (rel, len(got)))
+            continue
+        if not os.path.exists(path):
+            ok = False
+            print("FAIL  %s fixture %s is missing; record it with --bless."
+                  % (what, rel), file=sys.stderr)
             continue
         want = open(path, encoding="utf-8").read().rstrip("\n")
         if got == want:

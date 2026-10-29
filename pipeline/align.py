@@ -29,7 +29,8 @@ alignment when it exists beside the config.
 Word times are relative to `trim`, which is why the window is stamped into
 the file: a config whose trim has since been edited re-aligns on its own,
 with no --force, rather than leaving timings that are silently the wrong
-number of milliseconds off.
+number of milliseconds off -- as does a named span whose words no longer
+match the file's.
 
 A config with NO `trim:` is aligned against the whole source and the trim
 is derived from where the first and last mushaf word actually land, then
@@ -75,6 +76,7 @@ uncorrected; `nudge` is still the override either way, applied last.
 """
 import argparse
 import array
+import functools
 import json
 import math
 import os
@@ -311,46 +313,63 @@ def apply_repeats(results, repeats, words, min_fix=0.5):
     return fixed
 
 
-def trim_note(out_path, cfg):
+def stale_note(out_path, cfg):
     """Why an existing alignment no longer matches the config, or None.
 
-    Word timings are relative to the trim window, so an edited `trim:` leaves
-    the file wrong by however far the window moved -- and generate.py reads it
-    happily, captions hundreds of ms out with nothing said. Editing a trim is
-    unambiguous intent, so it re-aligns on its own instead of costing the
-    author a --force they have to remember. Values are compared to 10ms
-    because both sides are rounded to 2dp."""
+    Word timings are relative to the trim window, so an edited `trim:` shifts
+    every caption. A named span's words are compared too: the word count alone
+    cannot distinguish spans of equal length. Either edit requires new timing
+    without an extra --force. Trim values are compared to 10ms because both
+    sides are rounded to 2dp."""
     try:
-        was = json.load(open(out_path, encoding="utf-8")).get("trim")
+        data = json.load(open(out_path, encoding="utf-8"))
     except ValueError:
         return "unreadable -- re-aligning"
+    was = data.get("trim")
     if not was or len(was) != 2 or was[0] is None:
         return "no trim recorded -- re-aligning"
     now = generate.trim_window(cfg) if cfg.get("trim") else None
     if now is not None and (was[1] is None) == (now[1] is None) and all(
             abs(a - b) <= 0.01 for a, b in zip(was, now) if a is not None):
-        return None
+        if cfg["surah"] is None or [
+                w.get("w") for w in data.get("words") or []] == \
+                generate.spoken_words(
+                    generate.fetch_verses(*generate.resolve_span(cfg, [])),
+                    cfg["ayah_end_words"]):
+            return None
+        return "stale (the span's words changed), re-aligning"
     return "stale (trim %s -> %s), re-aligning" % (
         generate.format_window(was),
         "whole source" if now is None else generate.format_window(now))
 
 
-_ALIGNER = None
-
-
+@functools.cache
 def aligner():
     """(model, tokenizer) for the MMS aligner, loaded once per process.
 
     The import alone pulls in torch and the weights are ~1.2GB off disk, so
-    every config in one invocation shares them: a source with three reels cut
-    from it paid both three times when each config was its own run."""
-    global _ALIGNER
-    if _ALIGNER is None:
-        import torch
-        from ctc_forced_aligner import load_alignment_model
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        _ALIGNER = load_alignment_model(device, MODEL, dtype=torch.float32)
-    return _ALIGNER
+    every config in one invocation shares them."""
+    import torch
+    from ctc_forced_aligner import load_alignment_model
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    return load_alignment_model(device, MODEL, dtype=torch.float32)
+
+
+@functools.lru_cache(maxsize=1)
+def emissions_for(src, size, mtime_ns, t0, t1):
+    """(emissions, stride) of the MMS model over [t0, t1) of `src`.
+
+    The reels cut from one source share its window, and inference is most of
+    each config's cost in a batch, so the last window is kept. Keyed on
+    the file's size and mtime as well as its path, so a re-fetched source is
+    never answered from the old one. Callers only read the tensors."""
+    from ctc_forced_aligner import generate_emissions, load_audio
+
+    model = aligner()[0]
+    with tempfile.TemporaryDirectory(prefix="quran-align-") as tmp:
+        wav = os.path.join(tmp, "audio.wav")
+        extract_window(src, wav, t0, t1)
+        return generate_emissions(model, load_audio(wav, model.dtype, model.device))
 
 
 def align(config_path, force=False):
@@ -358,7 +377,7 @@ def align(config_path, force=False):
     cfg = generate.resolve_paths(cfg, config_path)
     out_path = generate.align_path_for(config_path)
     if os.path.exists(out_path):
-        note = trim_note(out_path, cfg)
+        note = stale_note(out_path, cfg)
         if note:
             print("  %s" % note)
         elif not force:
@@ -378,6 +397,11 @@ def align(config_path, force=False):
         asr_words, _ = generate.load_whisper_window(
             generate.require_whisper(cfg), t0, t1)
     surah, a0, a1 = generate.resolve_span(cfg, asr_words)
+    verses = generate.fetch_verses(surah, a0, a1)
+    words = generate.spoken_words(verses, cfg["ayah_end_words"])
+    if cfg["groups"] and cfg["surah"] is None:
+        generate.check_group_total(cfg["groups"], len(words))
+
     # An identified span is pinned into the config: generate.py would
     # otherwise re-identify it over the trimmed window, and a different
     # answer there with the same word count is silently wrong captions.
@@ -387,24 +411,19 @@ def align(config_path, force=False):
               % (quran.surah_name(surah), surah, a0, a1,
                  os.path.basename(config_path)))
 
-    verses = generate.fetch_verses(surah, a0, a1)
-    words = generate.spoken_words(verses, cfg["ayah_end_words"])
     ref_text = " ".join(words)
     print("aligning %d mushaf words (%s %d:%d-%d) against %s"
           % (len(words), quran.surah_name(surah), surah, a0, a1,
              os.path.relpath(cfg["input"], generate.ROOT)))
 
     from ctc_forced_aligner import (
-        generate_emissions, get_alignments, get_spans, load_audio,
-        postprocess_results, preprocess_text,
+        get_alignments, get_spans, postprocess_results, preprocess_text,
     )
 
-    model, tokenizer = aligner()
-    with tempfile.TemporaryDirectory(prefix="quran-align-") as tmp:
-        wav = os.path.join(tmp, "audio.wav")
-        extract_window(cfg["input"], wav, t0, t1)
-        audio_waveform = load_audio(wav, model.dtype, model.device)
-        emissions, stride = generate_emissions(model, audio_waveform)
+    tokenizer = aligner()[1]
+    st = os.stat(cfg["input"])
+    emissions, stride = emissions_for(os.path.realpath(cfg["input"]),
+                                      st.st_size, st.st_mtime_ns, t0, t1)
 
     tokens_starred, text_starred = preprocess_text(
         ref_text, romanize=True, language=LANGUAGE,

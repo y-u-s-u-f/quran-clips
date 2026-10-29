@@ -16,7 +16,7 @@ python3 pipeline/transcribe.py sources/<id>        # span finder + ibtidāʾ rep
 python3 pipeline/quran.py --search "<arabic>"     # -> surah:ayah
 # write sources/<id>/<reel>.yaml   (see Config)
 tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml   # several configs: one model load
-tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
+tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/<reel>-crop.png
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml [--vertical]
 ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate, always
 python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
@@ -25,7 +25,7 @@ python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
 - Skip transcribe only when you know the verses AND the reciter never restarts a phrase: without `whisper.json` align.py cannot repair an ibtidāʾ restart, and the card silently opens late.
 - Name the span in the config. Omitted, align.py identifies it from Whisper and writes it back beside `trim:` — reliable only on a short source; check what it wrote.
 - `captions.srt` is the cheapest span finder: dedupe rolling windows (keep each block's last line). Timings are ±1–2s — enough to pick a span, never to `trim:`.
-- Open `/tmp/c.png` and look, every time. crop.py's guards check its own numbers against each other, not whether it found a real face.
+- Open `/tmp/<reel>-crop.png` and look, every time: every solve rewrites it, an EMPTY shot included, and the per-reel name keeps another reel's frame out of it. crop.py's guards check its own numbers against each other, not whether it found a real face.
 - Never pipe `generate.py` through `tail`: output is withheld until the process exits, so a healthy 15-minute render reads as hung. `grep --line-buffered`, or redirect to a file and read that.
 
 ## Config
@@ -79,7 +79,7 @@ Per style: `vertical` (1080×1920) needs `crop:` + `face_bottom:` — generate r
 
 **Trim / the opening word.** Open ON the first word. Auto-trim (omit `trim:`) is only safe when the source is roughly the reel; on a long recording it returns valid JSON while a trailing word is captured, and the only tell is a collapsed score. So: rough span from captions/whisper → hand `trim:` → read the scores (low mid-phrase madd is normal) → re-bound. Hand-set trim is never moved; align prints the head gap and calls out >0.25s. Also hand-set for deliberate excerpts and second takes. Haram audio has no true silence (~−35dB floor): find boundaries by RMS envelope dips (0.4–0.9s at −27…−34dB against speech ~−11dB), not `silencedetect`.
 
-**Restarted phrase (ibtidāʾ).** It gets its own card: same words, separate group. align.py corrects the onset from consecutive identical Whisper segments and prints it. Whisper sometimes collapses a restart into one long word — scan align output for duration outliers (3.1s beside 0.7–1.2s neighbours) before concluding there was none. Check the card start against the envelope before reaching for `nudge:` (0-based indices).
+**Restarted phrase (ibtidāʾ).** Every mushaf word stays in `groups` once — never repeat the phrase as a second group (the counts must partition the span, so a duplicate is refused), and there is no way to time two identical cards. Give the restarted phrase its own group instead: align.py finds the restart from consecutive identical Whisper segments, moves that group's opening word back onto the FIRST utterance and prints it, so the one card spans both attempts. Whisper sometimes collapses a restart into one long word — scan align output for duration outliers (3.1s beside 0.7–1.2s neighbours) before concluding there was none. Check the card start against the envelope before reaching for `nudge:` (0-based indices).
 
 **crop.py boxed a shoulder.** A draped, hooded or turned head can box clean and confident (fy=0.275) and still be wrong; bowed posture fails differently. Look at the annotation. Hand-solve by measuring crown / body / congregation / graphics over several frames: face centre at **0.275 of the window height** (`FACE_Y`), crown kept in frame. For `x_offset`, match the outer margins, or centre him in the free space if he runs off the edge — `(f-0.5)*1920`. For `face_bottom`, where his head box ends as a fraction of canvas height.
 

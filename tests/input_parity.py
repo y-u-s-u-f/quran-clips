@@ -79,7 +79,7 @@ X265_HLG = (["-c:v", "libx265", "-preset", "ultrafast",
 
 def hlg(tmp):
     src = make(tmp, "hlg10.mp4", "1920x1080", X265_HLG[0], vf=X265_HLG[1])
-    return G.trim_media(src, os.path.join(tmp, "hlg-cut.mp4"), 0.0, None)
+    return G.trim_media(src, 0.0, None)
 
 
 ODD_CROP = {"x": 41, "y": 21, "w": 1101, "h": 619}
