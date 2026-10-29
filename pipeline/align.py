@@ -389,6 +389,10 @@ def align(config_path, force=False):
 
     verses = generate.fetch_verses(surah, a0, a1)
     words = generate.spoken_words(verses, cfg["ayah_end_words"])
+    # A named span's total was checked at load; an identified one only now,
+    # still before the backend's import and the model load.
+    if cfg["groups"] and cfg["surah"] is None:
+        generate.check_group_total(cfg["groups"], len(words))
     ref_text = " ".join(words)
     print("aligning %d mushaf words (%s %d:%d-%d) against %s"
           % (len(words), quran.surah_name(surah), surah, a0, a1,

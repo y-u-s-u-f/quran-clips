@@ -656,17 +656,23 @@ def spoken_words(verses, end_words=None):
 
 # ---------- caption building ------------------------------------------------
 
-def apply_groups(word_timestamps, words, groups, final_end):
-    """Time config-supplied semantic groups into index-aligned
-    (arabic, english) caption lists. n_words must sum to the word count
-    exactly, or ValueError -- catches a bad grouping immediately instead of
-    silently misaligning every later caption."""
+def check_group_total(groups, n_words):
+    """n_words must sum to the span's word count exactly, or ValueError --
+    catches a bad grouping immediately instead of silently misaligning every
+    later caption. check_shapes runs it for a named span, align.py once it
+    has identified one, apply_groups on every render."""
     total = sum(g["n_words"] for g in groups)
-    if total != len(word_timestamps):
+    if total != n_words:
         raise ValueError(
             "config groups cover %d words but the verse range has %d -- "
             "groups must partition every word exactly once"
-            % (total, len(word_timestamps)))
+            % (total, n_words))
+
+
+def apply_groups(word_timestamps, words, groups, final_end):
+    """Time config-supplied semantic groups into index-aligned
+    (arabic, english) caption lists, after check_group_total."""
+    check_group_total(groups, len(word_timestamps))
 
     arabic, english, i = [], [], 0
     for g in groups:
@@ -1038,6 +1044,9 @@ def check_shapes(cfg, path):
             bad("groups[%d].line_split is the word count on line 1: %s "
                 "(got %r)" % (i, "1..%d for a %d-word card" % (n - 1, n)
                               if n > 1 else "a 1-word card cannot split", ls))
+    if cfg["groups"] and cfg["surah"] is not None:
+        check_group_total(cfg["groups"], len(spoken_words(
+            fetch_verses(*resolve_span(cfg, [])), cfg["ayah_end_words"])))
     for i, nd in enumerate(cfg["nudge"] or []):
         if not isinstance(nd, dict):
             bad("nudge[%d] must be a mapping, not %r" % (i, nd))
