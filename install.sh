@@ -5,7 +5,8 @@
 #     ./install.sh --check    report only, install nothing
 #
 # What it does, in order:
-#   1. checks the system tools (python3, ffmpeg, ffprobe, yt-dlp)
+#   1. checks the system tools (python3, ffmpeg, ffprobe, yt-dlp -- the last
+#      three as QC_FFMPEG / QC_FFPROBE / QC_YT_DLP resolve, like every script)
 #   2. builds tools/render-venv  -- PyYAML + a Pillow whose RAQM does Arabic
 #      shaping (falls back to --system-site-packages when the pip wheel's
 #      Pillow lacks RAQM but the system python's has it)
@@ -50,25 +51,32 @@ if [ -n "$PY" ]; then
 else
     bad+=("python3: not found -- everything needs it. brew install python3 / apt install python3-venv")
 fi
-for tool in ffmpeg ffprobe yt-dlp; do
-    if have "$tool"; then
-        ok+=("$(printf '%-12s %s' "$tool" "$(command -v "$tool")")")
+# QC_* from the shell, else .env -- through pipeline/generate.py's one reader.
+envvar() { "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import generate; print(generate.envvar(sys.argv[2]) or "")' "$ROOT/pipeline" "$1" 2>/dev/null; }
+
+# The binaries the pipeline will run, so the check is of those and not PATH's.
+FFMPEG=ffmpeg
+for pair in ffmpeg:QC_FFMPEG ffprobe:QC_FFPROBE yt-dlp:QC_YT_DLP; do
+    tool="${pair%%:*}"
+    cmd="$([ -n "$PY" ] && envvar "${pair#*:}")"
+    cmd="${cmd:-$tool}" miss="not found"
+    [ "$cmd" != "$tool" ] && miss="$cmd not found"
+    [ "$tool" = ffmpeg ] && FFMPEG="$cmd"
+    if have "$cmd"; then
+        ok+=("$(printf '%-12s %s' "$tool" "$(command -v "$cmd")")")
     else
         case "$tool" in
-            ffmpeg|ffprobe) bad+=("$tool: not found -- cutting, probing, audio and the mux need it. brew install ffmpeg / apt install ffmpeg");;
-            yt-dlp)         bad+=("yt-dlp: not found -- fetch.py needs it for YouTube sources (local files still work). brew install yt-dlp / apt install yt-dlp");;
+            ffmpeg|ffprobe) bad+=("$tool: $miss -- cutting, probing, audio and the mux need it. brew install ffmpeg / apt install ffmpeg");;
+            yt-dlp)         bad+=("yt-dlp: $miss -- fetch.py needs it for YouTube sources (local files still work). brew install yt-dlp / apt install yt-dlp");;
         esac
     fi
 done
 # the heat effect needs ffmpeg's perlin source (ffmpeg >= 7.1)
-if have ffmpeg && ! ffmpeg -hide_banner -filters 2>/dev/null | grep -q ' perlin '; then
+if have "$FFMPEG" && ! "$FFMPEG" -hide_banner -filters 2>/dev/null | grep -q ' perlin '; then
     bad+=("ffmpeg has no 'perlin' filter -- the bars heat effect will fail; use fx: {heat: false} or upgrade ffmpeg")
 fi
 
 [ -z "$PY" ] && { say ""; printf '  MISSING: %s\n' "${bad[@]}"; exit 1; }
-
-# QC_* from the shell, else .env -- through pipeline/generate.py's one reader.
-envvar() { "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import generate; print(generate.envvar(sys.argv[2]) or "")' "$ROOT/pipeline" "$1" 2>/dev/null; }
 
 # ---------------------------------------------------------------------------
 # 2. render venv (PyYAML + RAQM Pillow)
