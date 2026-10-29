@@ -306,25 +306,19 @@ def _index():
     if _INDEX is not None:
         return _INDEX
     ayahs = _load("uthmani")["ayahs"]
-    norm = []
     exact = {}     # normalised word -> [(flat_idx, position), ...]
     skel = {}      # consonant skeleton -> [(flat_idx, position), ...]
     for i, a in enumerate(ayahs):
         ws = tokens(a)
         alt = tokens(a, keep_super_alif=True)
-        norm.append(ws)
-        seen = set()
         for p, w in enumerate(ws):
             forms = {w}
             if p < len(alt):
                 forms.add(alt[p])
             for form in forms:
-                if (form, p) in seen:
-                    continue
-                seen.add((form, p))
                 exact.setdefault(form, []).append((i, p))
             skel.setdefault(skeleton(w), []).append((i, p))
-    _INDEX = {"norm": norm, "exact": exact, "skel": skel}
+    _INDEX = {"exact": exact, "skel": skel}
     return _INDEX
 
 
