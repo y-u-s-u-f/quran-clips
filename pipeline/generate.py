@@ -1222,11 +1222,12 @@ def run_config(config_path, output_override=None, vertical=False,
     print("      %d captions, %d pause gap(s) left clean" % (len(arabic), gaps))
     print_verification(arabic, english, verses)
 
+    result = {"surah": surah, "ayah_start": a0, "ayah_end": a1,
+              "captions": len(arabic), "output": None,
+              "style": cfg["style"], "signature": cfg["signature"]}
     if verify_only:
         print("      --verify-only: stopping before the render")
-        return {"surah": surah, "ayah_start": a0, "ayah_end": a1,
-                "captions": len(arabic), "output": None,
-                "style": cfg["style"], "signature": cfg["signature"]}
+        return result
 
     plan = {"cfg": cfg, "src": source, "info": info,
             "arabic": arabic, "english": english,
@@ -1241,10 +1242,8 @@ def run_config(config_path, output_override=None, vertical=False,
         import render_text
         render_text.render(plan)
     print("Done: %s" % cfg["output"])
-    return {"surah": surah, "ayah_start": a0, "ayah_end": a1,
-            "captions": len(arabic), "output": cfg["output"],
-            "style": cfg["style"],
-            "signature": cfg["signature"]}
+    result["output"] = cfg["output"]
+    return result
 
 
 def main(argv=None):
