@@ -835,15 +835,19 @@ enum PF: String { case yuv420, yuva420, rgb, rgba, gray }
 
 struct Meta {
     var range = 0          // 0 tv/unspecified, 1 pc
-    var csp = 2            // AVColorSpace: 0 rgb, 1 bt709, 2 unspecified
+    var csp = 2            // AVColorSpace: 0 rgb, 1 bt709, 2 unspecified, 5/6 bt601
     var hloc = 128         // av_chroma_location_enum_to_pos x (0 left, 128 center)
     var vloc = 128
     var sar = (1, 1)
-    // The matrix an RGB -> YUV conversion downstream lands on: ffmpeg's
-    // format negotiation carries the source's csp through every
-    // single-input filter and overlay's main, and loses it at a framesync
-    // filter whose inputs disagree (bars: the heat maps are untagged).
-    var ncsp = 2
+    // The matrix and range an RGB -> YUV conversion downstream lands on:
+    // ffmpeg's format negotiation carries a YUV input's csp and range through
+    // every single-input filter and overlay's main; a framesync filter's
+    // inputs share one list (fsMeta).
+    var ncsp = 2, nrange = 0
+    // When reduce_formats pins ncsp, as pass * negotiationPass + 1 + the
+    // filter-list index of the scale that carried it there (nil: no YUV
+    // input upstream pins it -- PNGs, plates).
+    var ncspAt: Int?
     // H.273 primaries / transfer: frame properties every filter passes on
     var prim = 2, trc = 2
 }
@@ -1078,9 +1082,13 @@ func getLocalPos(_ sub: Int, _ posIn: Int) -> Int {
     return pos >> sub
 }
 
-// ff_yuv2rgb_coeffs rows used: 0/2/5 (BT.601) and 1 (BT.709).
+// ff_yuv2rgb_coeffs rows used: 0/2/5/6 (BT.601), 1 (BT.709), 9 (BT.2020 NCL).
 func yuv2rgbCoeffs(_ csp: Int) -> [Int64] {
-    csp == 1 ? [117489, 138438, 13975, 34925] : [104597, 132201, 25675, 53279]
+    switch csp {
+    case 1: return [117489, 138438, 13975, 34925]
+    case 9: return [110013, 140363, 12277, 42626]
+    default: return [104597, 132201, 25675, 53279]
+    }
 }
 
 func roundToInt16(_ f: Int64) -> Int32 {
@@ -1163,7 +1171,8 @@ final class Sws {
     var chrSrcW = 0, chrSrcH = 0, chrDstW = 0, chrDstH = 0, chrHalf = false
     var y2r: Yuv2Rgb?
     var bufs: [String: MTLBuffer] = [:]
-    var rangeLum: (Int32, Int32)?
+    var rangeLum: (Int32, Int32)?, rangeChr: (Int32, Int32)?
+    var fullChroma = false
     var out: Img?
     var tabY: MTLBuffer?, tabT: MTLBuffer?
     var alphaFilled = false
@@ -1176,7 +1185,8 @@ final class Sws {
     // hU/hV hold the constant a grey frame's chroma path writes
     var greyChroma = false
 
-    init(src: Img, dstPF: PF, w: Int, h: Int, flags: Int) {
+    // `at`: this scale's index in ffmpeg's filter list (Graph.filterIndex)
+    init(src: Img, dstPF: PF, w: Int, h: Int, flags: Int, at: Int) {
         self.src = (src.pf, src.w, src.h, src.meta)
         self.dstPF = dstPF; dw = w; dh = h
         let srgb = src.pf == .rgb || src.pf == .rgba, drgb = dstPF == .rgb || dstPF == .rgba
@@ -1184,8 +1194,10 @@ final class Sws {
         m.sar = src.meta.sar
         m.prim = src.meta.prim; m.trc = src.meta.trc
         m.ncsp = srgb ? src.meta.ncsp : src.meta.csp
+        m.ncspAt = src.meta.ncspAt.map { reduced($0, by: at) }
+        m.nrange = srgb ? src.meta.nrange : src.meta.range
         if drgb { m.range = 1; m.csp = 0 } else if dstPF == .gray { m.range = 1; m.csp = src.meta.csp }
-        else { m.range = srgb ? 0 : src.meta.range; m.csp = srgb ? m.ncsp : src.meta.csp; m.hloc = srgb ? 128 : src.meta.hloc; m.vloc = srgb ? 128 : src.meta.vloc }
+        else { m.range = m.nrange; m.csp = srgb ? m.ncsp : src.meta.csp; m.hloc = srgb ? 128 : src.meta.hloc; m.vloc = srgb ? 128 : src.meta.vloc }
         if (w, h) != (src.w, src.h) {
             // vf_scale's output SAR keeps the display aspect
             let n = src.meta.sar.0 * h * src.w, d = src.meta.sar.1 * w * src.h
@@ -1208,13 +1220,16 @@ final class Sws {
         guard src.pf == .yuv420 || src.pf == .yuva420 || srgb else { die("sws from \(src.pf) not ported") }
         guard dstPF != .yuva420 else { die("sws to \(dstPF) not ported") }
         // packed RGBA reuses one chroma sample for two pixels (no
-        // SWS_FULL_CHR_H_INT): legal for an even width off subsampled chroma
-        guard dstPF != .rgba || (w & 1 == 0 && !srgb) else { die("full-chroma rgba output not ported") }
+        // SWS_FULL_CHR_H_INT): legal for an even width off subsampled chroma.
+        // An odd width forces full chroma (sws_init_context), which writes
+        // through yuv2rgba32_full_X_c: yuv2gbrp_full_X_c's arithmetic per pixel.
+        guard dstPF != .rgba || !srgb else { die("rgba output from RGB not ported") }
+        fullChroma = dstPF == .rgba && w & 1 == 1
         kind = .scaled
         let srcW = src.w, srcH = src.h
         var chrSrcHSub = (src.pf == .yuv420 || src.pf == .yuva420) ? 1 : 0
         let chrSrcVSub = chrSrcHSub
-        let chrDstHSub = dstPF == .yuv420 || dstPF == .rgba ? 1 : 0, chrDstVSub = dstPF == .yuv420 ? 1 : 0
+        let chrDstHSub = dstPF == .yuv420 || (dstPF == .rgba && !fullChroma) ? 1 : 0, chrDstVSub = dstPF == .yuv420 ? 1 : 0
         if srgb && srcW & 1 == 0 && (w >> chrDstHSub) <= (srcW >> 1) { chrSrcHSub = 1; chrHalf = true }
         chrSrcW = (srcW + (1 << chrSrcHSub) - 1) >> chrSrcHSub
         chrSrcH = (srcH + (1 << chrSrcVSub) - 1) >> chrSrcVSub
@@ -1239,14 +1254,21 @@ final class Sws {
                             srcPos: getLocalPos(chrSrcVSub, srcV0), dstPos: getLocalPos(chrDstVSub, dstV0))
         }
         if srcRange != dstRange && !drgb {
-            // solve_range_convert, 8-bit dst, mpeg -> jpeg (luma; gray needs no chroma)
-            let coeff = Int64((((UInt64(255) << 21) / 219) + 127) >> 7)
-            let offset = (Int64(255) << 21) - (Int64(235) << 7) * coeff + (1 << 13)
-            guard srcRange == 0, dstPF == .gray else { die("range conversion \(srcRange)->\(dstRange) not ported") }
-            rangeLum = (Int32(coeff), Int32(offset))
+            // solve_range_convert, 8-bit dst, mpeg -> jpeg (an RGB source counts as mpeg)
+            func solve(_ mx: Int64) -> (Int32, Int32) {
+                let coeff = Int64((((UInt64(255) << 21) / UInt64(mx - 16)) + 127) >> 7)
+                return (Int32(coeff), Int32((Int64(255) << 21) - (mx << 7) * coeff + (1 << 13)))
+            }
+            guard srcRange == 0, dstPF == .gray || dstPF == .yuv420 else { die("range conversion \(srcRange)->\(dstRange) not ported") }
+            rangeLum = solve(235)
+            if dstPF == .yuv420 { rangeChr = solve(240) }
         }
         if drgb { y2r = Yuv2Rgb(csp: src.meta.csp, fullRange: !srgb && src.meta.range == 1) }
         if dstPF == .rgba { tabY = bufOf(y2r!.ytab); tabT = bufOf(y2r!.tabs) }
+        // packed_vscale takes yuv2packed1/2, other arithmetic, for these tap counts
+        if dstPF == .rgba, let vl = vl, let vc = vc, (vl.size == 1 && vc.size <= 2) || (vl.size == 2 && vc.size == 2) {
+            die("packed rgba from a \(vl.size)/\(vc.size)-tap vertical filter not ported")
+        }
         for (k, f) in [("hl", hl), ("hc", hc), ("vl", vl), ("vc", vc)] {
             if let f = f { bufs[k + "p"] = bufOf(f.pos); bufs[k + "f"] = bufOf(f.coef) }
         }
@@ -1292,7 +1314,12 @@ final class Sws {
     func run(_ s: Img, shift: [Int] = [0, 0, 0]) -> Img {
         if shift != [0, 0, 0] && (kind != .scaled || s.pf != .yuv420) { die("scroll into this scale not ported") }
         switch kind {
-        case .pass: return s
+        case .pass:
+            // a no-op scale still carries the negotiation over a filter boundary
+            if s.meta.ncspAt == dmeta.ncspAt { return s }
+            let o = Img(s.pf, s.w, s.h, s.meta, planes: s.p).gray(s.gray)
+            o.meta.ncspAt = dmeta.ncspAt; o.live = s.live
+            return o
         case .dropAlpha: return Img(.rgb, s.w, s.h, dmeta, planes: Array(s.p[0..<3])).gray(s.gray)
         case .addAlpha:
             if out == nil { out = Img(.rgba, dw, dh, dmeta, planes: [buf(16), buf(16), buf(16), buf(dw * dh)]); fillPlane(out!.p[3], dw * dh, 255) }
@@ -1377,6 +1404,10 @@ final class Sws {
                             [Int32(chrSrcW), Int32(chrDstW), Int32(chrSrcH), Int32(hc.size), Int32(shift[i])], grid: (chrDstW, chrSrcH))
                 }
             }
+            // ff_chrRangeToJpeg8_neon: the luma kernel's arithmetic on each chroma plane
+            if let (c, off) = rangeChr {
+                for k in ["hU", "hV"] { gpu.run("k_lumtojpeg", [bufs[k]!], [Int32(chrDstW * chrSrcH), c, off], grid: (chrDstW * chrSrcH, 1)) }
+            }
         }
         // vertical
         switch dstPF {
@@ -1395,6 +1426,13 @@ final class Sws {
                     [Int32(dw), Int32(dh), Int32(vl.size), Int32(vc.size), y.yOff, y.yCoef, y.v2r, y.v2g, y.u2g, y.u2b],
                     grid: (dw, dh))
             o.gray = s.gray && keepsGray && postLut == nil
+        case .rgba where fullChroma:
+            let y = y2r!, vc = self.vc!
+            gpu.run("k_vgbrp", [bufs["hY"]!, bufs["hU"]!, bufs["hV"]!, o.p[0], o.p[1], o.p[2],
+                                bufs["vlp"]!, bufs["vlf"]!, bufs["vcp"]!, bufs["vcf"]!],
+                    [Int32(dw), Int32(dh), Int32(vl.size), Int32(vc.size), y.yOff, y.yCoef, y.v2r, y.v2g, y.u2g, y.u2b],
+                    grid: (dw, dh))
+            if !alphaFilled { fillPlane(o.p[3], dw * dh, 255); alphaFilled = true }
         case .rgba:
             let vc = self.vc!
             gpu.run("k_vrgba", [bufs["hY"]!, bufs["hU"]!, bufs["hV"]!, o.p[0], o.p[1], o.p[2],
@@ -1431,6 +1469,17 @@ func parseInputs(_ argv: [String]) -> [InSpec] {
     return out
 }
 
+// (primaries, transfer, matrix) of an ISO sample entry's colr nclx / nclc box
+func colrCodes(_ entry: Data?) -> (Int, Int, Int)? {
+    guard let d = entry.map({ [UInt8]($0) }) else { return nil }
+    for i in 0..<max(d.count - 13, 0) where d[i..<i + 4].elementsEqual("colr".utf8)
+        && (d[i + 4..<i + 8].elementsEqual("nclx".utf8) || d[i + 4..<i + 8].elementsEqual("nclc".utf8)) {
+        func u16(_ o: Int) -> Int { Int(d[i + o]) << 8 | Int(d[i + o + 1]) }
+        return (u16(8), u16(10), u16(12))
+    }
+    return nil
+}
+
 final class VideoIn {
     let spec: InSpec
     var asset: AVURLAsset!, track: AVAssetTrack!
@@ -1444,26 +1493,46 @@ final class VideoIn {
     init(_ s: InSpec) {
         spec = s
         asset = AVURLAsset(url: URL(fileURLWithPath: s.path))
-        guard let t = asset.tracks(withMediaType: .video).first else { die("no video in \(s.path)") }
+        guard let t = asset.tracks(withMediaType: .video).first else { die("no video AVFoundation reads in \(s.path) (MKV/WebM: render inputs are generate.trim_media's mp4)") }
         track = t
-        let sz = t.naturalSize
-        w = Int(sz.width); h = Int(sz.height)
+        // the coded size the decoder delivers; naturalSize is the display
+        // size, which a non-square SAR stretches (1920x1080 at 16:15 -> 2048)
         let fd = t.formatDescriptions[0] as! CMFormatDescription
+        let dims = CMVideoFormatDescriptionGetDimensions(fd)
+        w = Int(dims.width); h = Int(dims.height)
         let ext = CMFormatDescriptionGetExtensions(fd) as? [String: Any] ?? [:]
+        if let par = ext["CVPixelAspectRatio"] as? [String: Int], let n = par["HorizontalSpacing"], let d = par["VerticalSpacing"], n > 0, d > 0 {
+            func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+            meta.sar = (n / gcd(n, d), d / gcd(n, d))
+        }
         meta.range = (ext["FullRangeVideo"] as? Bool ?? false) ? 1 : 0
-        switch ext["CVImageBufferYCbCrMatrix"] as? String {
-        case nil: meta.csp = 2
-        case "ITU_R_709_2"?: meta.csp = 1
-        case let m?: die("YCbCr matrix \(m) not ported")
-        }
-        meta.ncsp = meta.csp
-        for (k, v) in [("CVImageBufferColorPrimaries", \Meta.prim), ("CVImageBufferTransferFunction", \Meta.trc)] {
-            switch ext[k] as? String {
-            case nil: meta[keyPath: v] = 2
-            case "ITU_R_709_2"?: meta[keyPath: v] = 1
-            case let m?: die("\(k) \(m) not ported")
+        // H.273 code points. CoreVideo's names fold transfer 6 into
+        // ITU_R_709_2 (measured: a smpte170m-tagged x264 mp4), so the sample
+        // entry's colr box -- ffmpeg's muxer writes it from the tags it puts
+        // in the VUI ffmpeg's decoder reads -- comes first.
+        if let colr = colrCodes(ext["VerbatimISOSampleEntry"] as? Data) {
+            (meta.prim, meta.trc, meta.csp) = colr
+        } else {
+            func code(_ k: String, _ names: [String: Int]) -> Int {
+                guard let s = ext[k] as? String else { return 2 }
+                if let c = names[s] { return c }
+                if let i = s.firstIndex(of: "#"), let c = Int(s[s.index(after: i)...]) { return c }
+                die("\(k) \(s) not ported")
             }
+            meta.csp = code("CVImageBufferYCbCrMatrix", ["ITU_R_709_2": 1, "ITU_R_601_4": 6, "ITU_R_2020": 9])
+            meta.prim = code("CVImageBufferColorPrimaries", ["ITU_R_709_2": 1, "EBU_3213": 5, "SMPTE_C": 6, "ITU_R_2020": 9])
+            meta.trc = code("CVImageBufferTransferFunction", ["ITU_R_709_2": 1, "SMPTE_ST_2084_PQ": 16, "ITU_R_2100_HLG": 18])
         }
+        // the matrices yuv2rgbCoeffs has (BT.709, unspecified, both BT.601
+        // code points, BT.2020 NCL). Primaries and transfer are only ever
+        // passed on, as ffmpeg does: an HDR source (BT.2020, PQ or HLG)
+        // renders its 8-bit samples untone-mapped and keeps its tags.
+        if ![1, 2, 5, 6, 9].contains(meta.csp) { die("YCbCr matrix \(meta.csp) not ported") }
+        if ![1, 2, 5, 6, 9].contains(meta.prim) { die("colour primaries \(meta.prim) not ported") }
+        if ![1, 2, 5, 6, 14, 15, 16, 18].contains(meta.trc) { die("transfer \(meta.trc) not ported") }
+        // trim_media delivers 8-bit; a deeper stream would be AVFoundation's own reduction
+        if let bits = ext["BitsPerComponent"] as? Int, bits > 8 { die("\(s.path): \(bits)-bit video not ported (cut it with generate.trim_media)") }
+        meta.ncsp = meta.csp; meta.nrange = meta.range; meta.ncspAt = 0
         // the chroma location tag is not read: ffmpeg's scale resolves to
         // centre siting on these left-tagged streams (measured: its output is
         // byte-identical to in_h_chr_pos=128:out_h_chr_pos=128)
@@ -1474,8 +1543,10 @@ final class VideoIn {
     func open() {
         guard let r = try? AVAssetReader(asset: asset) else { die("cannot read \(spec.path)") }
         reader = r
+        // the stream's own range: asked for the other, AVFoundation converts the samples
         output = AVAssetReaderTrackOutput(track: track, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange])
+            kCVPixelBufferPixelFormatTypeKey as String: meta.range == 1 ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange])
         output.alwaysCopiesSampleData = false
         reader.add(output)
         reader.startReading()
@@ -1515,7 +1586,11 @@ final class VideoIn {
         while next <= k {
             var r = readNext()
             if r == nil && spec.loop && next > 0 { open(); r = readNext() }
-            guard let (pb, _) = r else { die("\(spec.path) has no frame \(k)") }
+            guard let (pb, _) = r else {
+                // AV1 and VP9 on an M1, for one: generate.trim_media cuts every source to H.264 first
+                if next == 0 { die("\(spec.path): AVFoundation decodes no frame (\(reader.error.map { "\($0.localizedDescription)" } ?? "unsupported codec")); render inputs are generate.trim_media's H.264") }
+                die("\(spec.path) has no frame \(k)")
+            }
             let img = slots[next % slots.count]
             upload(pb, into: img)
             cache = [next: img]
@@ -1536,13 +1611,18 @@ func probeTimeline(_ v: VideoIn) -> ([CMTime], CMTime) {
     guard edits.count == 1, CMTimeCompare(edits[0].timeMapping.source.duration, edits[0].timeMapping.target.duration) == 0
     else { die("\(v.spec.path): edit list not ported") }
     let edit = edits[0].timeMapping
+    // ffmpeg's input offset (-ss 0 without -copyts) takes the file's start
+    // time, the earliest stream's first presented time, to 0; an audio
+    // track that starts earlier holds the video late by the difference
+    let start = v.asset.tracks.compactMap { $0.segments.first { !$0.isEmpty }?.timeMapping.target.start }
+        .min { CMTimeCompare($0, $1) < 0 } ?? .zero
     while let sb = o.copyNextSampleBuffer() {
         if CMSampleBufferGetNumSamples(sb) == 0 { continue }
         let t = CMSampleBufferGetPresentationTimeStamp(sb)
         // undecoded samples carry media time; the edit list maps it to the
         // presentation time ffmpeg's mov demuxer gives the frame
         if CMTimeCompare(t, edit.source.start) < 0 { continue }
-        ts.append(CMTimeAdd(CMTimeSubtract(t, edit.source.start), edit.target.start))
+        ts.append(CMTimeSubtract(CMTimeAdd(CMTimeSubtract(t, edit.source.start), edit.target.start), start))
         fdur = CMSampleBufferGetDuration(sb)
     }
     ts.sort { CMTimeCompare($0, $1) < 0 }
@@ -1595,6 +1675,9 @@ class Node {
     var last: Img?
     var label = ""
     var tb: Int64 = 0       // time base denominator (numerator 1), as ffmpeg's link carries it
+    // the pts in 1/30 the stream's EOF carries (nil: it never ends before
+    // the fps'd source does), for a framesync filter's shortest=1
+    var end: Int?
     // frame N of this node's own stream
     func get(_ n: Int) -> Img {
         if constant, let l = last { return l }
@@ -1671,11 +1754,29 @@ final class FpsNode: Node {
     }
 }
 
-// a framesync filter's output: the first input's properties, the
-// negotiated YUV matrix only where every input agrees on it
+// reduce_formats: passes over the filter list, each scale handing its
+// input's pinned list on to its output. A list pinned at `t` reaches the
+// scale at index `i` in the same pass if `i` comes later in the list, else
+// in the next one.
+let negotiationPass = 1 << 20
+func reduced(_ t: Int, by i: Int) -> Int {
+    let pass = t / negotiationPass, idx = t % negotiationPass - 1
+    return (idx < i ? pass : pass + 1) * negotiationPass + i + 1
+}
+
+// a framesync filter's output: the first input's properties, the matrix
+// its shared list was pinned to first (bars: the heat maps' untagged one
+// reaches displace through parsed scales, ahead of the source's through an
+// auto-inserted one; with heat off the source's wins). The range is a pc
+// input's: the baked layers' unspecified range offers buffersrc's
+// {unspecified, mpeg} and a PNG every range, so neither pins it (measured:
+// a pc source's bars graph delivers pc).
 func fsMeta(_ imgs: [Img]) -> Meta {
     var m = imgs[0].meta
-    if !imgs.allSatisfy({ $0.meta.ncsp == m.ncsp }) { m.ncsp = 2 }
+    if let w = imgs.filter({ $0.meta.ncspAt != nil }).min(by: { $0.meta.ncspAt! < $1.meta.ncspAt! }) {
+        m.ncsp = w.meta.ncsp; m.ncspAt = w.meta.ncspAt
+    }
+    m.nrange = imgs.map { $0.meta.nrange }.max()!
     return m
 }
 
@@ -1690,9 +1791,16 @@ final class Graph {
     // lutrgb into the scale before it, a scroll into the scale after it
     var folded = Set<[Int]>()
     var scrollInto: [[Int]: ScrollState] = [:]
+    // ffmpeg's filter list: the parsed filters in text order, then the
+    // auto-inserted scales in the order of the filter input each feeds
+    var chainStart: [Int] = [], nParsed = 0
+    var building = (ci: 0, fi: 0)
+    func filterIndex(_ ci: Int, _ fi: Int) -> Int { chainStart[ci] + fi }
+    func autoIndex(_ input: Int) -> Int { nParsed + 4 * filterIndex(building.ci, building.fi) + input }
 
     init(fc: String, specs: [InSpec]) {
         chains = parseGraph(fc)
+        for c in chains { chainStart.append(nParsed); nParsed += c.filters.count }
         inSpecs = specs
         for (ci, c) in chains.enumerated() { for l in c.ins { consumers[l, default: []].append((ci, 0)) } }
         inputs = specs.map { InputNode($0) }
@@ -1736,6 +1844,7 @@ final class Graph {
         for (fi, s) in c.filters.enumerated() {
             let ins = cur
             if folded.contains([ci, fi]) { continue }
+            building = (ci, fi)
             cur = make(s, ins, ci, fi)
             // framesync filters run on the gcd of their inputs' time bases; overlay keeps the main's
             let fsync = ["blend", "displace", "alphamerge"].contains(s.name)
@@ -1743,6 +1852,22 @@ final class Graph {
                 func gcd(_ a: Int64, _ b: Int64) -> Int64 { b == 0 ? a : gcd(b, a % b) }
                 n.tb = fsync ? ins.map { $0.tb }.reduce(1) { $0 / gcd($0, $1) * $1 } : ins[0].tb
             }
+            let end: Int?
+            switch s.name {
+            case "color":
+                // vsrc color stops at the first pts >= d
+                end = s.kv["d"].map { Int((durationUs($0) * 30 + 999_999) / 1_000_000) }
+            case "loop":
+                // loop=N:size=1 sends its one frame N + 1 times, pts 0 up
+                guard ins[0].tb == 30, (s.kv["size"] ?? "1") == "1", let n = Int(s.kv["loop"] ?? "") else { die("loop \(s.kv) not ported") }
+                end = n + 1
+            case "fps": end = (cur[0] as? FpsNode).map { Int($0.first) + $0.map.count }
+            case "blend", "overlay", "displace", "alphamerge":
+                // framesync ends at the main input's EOF, with shortest=1 at the first one's
+                end = s.kv["shortest"] == "1" ? ins.compactMap { $0.end }.min() : ins[0].end
+            default: end = ins.first?.end
+            }
+            for n in cur { n.end = end }
         }
         if cur.count != c.outs.count { die("chain output count mismatch at \(c.outs)") }
         for (o, n) in zip(c.outs, cur) { labels[o] = n; n.label = o }
@@ -1760,11 +1885,12 @@ final class Graph {
 
     // `n` in one of `pfs`, else converted to `prefer` as ffmpeg's
     // auto-inserted scale (default flags: bicubic) does it.
-    func need(_ n: Node, _ pfs: [PF], prefer: PF) -> Node {
+    func need(_ n: Node, _ pfs: [PF], prefer: PF, input: Int = 0) -> Node {
         var sws: Sws?
+        let at = autoIndex(input)
         return FuncNode([n], constant: true) { _, ins in
             if pfs.contains(ins[0].pf) { return ins[0] }
-            if sws == nil { sws = Sws(src: ins[0], dstPF: prefer, w: ins[0].w, h: ins[0].h, flags: SWS_BICUBIC) }
+            if sws == nil { sws = Sws(src: ins[0], dstPF: prefer, w: ins[0].w, h: ins[0].h, flags: SWS_BICUBIC, at: at) }
             return sws!.run(ins[0])
         }
     }
@@ -1800,7 +1926,7 @@ final class Graph {
             return [FuncNode([need(ins[0], [.rgba, .yuva420], prefer: .rgba)], constant: true) { _, i in
                 Img(.gray, i[0].w, i[0].h, Meta(range: 1, csp: 2), planes: [i[0].p[3]]) }]
         case "alphamerge":
-            return [FuncNode([need(ins[0], [.rgba], prefer: .rgba), need(ins[1], [.gray], prefer: .gray)], constant: true) { _, i in
+            return [FuncNode([need(ins[0], [.rgba], prefer: .rgba), need(ins[1], [.gray], prefer: .gray, input: 1)], constant: true) { _, i in
                 guard i[0].w == i[1].w && i[0].h == i[1].h else { die("alphamerge size mismatch") }
                 return Img(.rgba, i[0].w, i[0].h, fsMeta(i), planes: [i[0].p[0], i[0].p[1], i[0].p[2], i[1].p[0]]).gray(i[0].gray) }]
         case "fade": return [fade(s, ins[0])]
@@ -1817,12 +1943,19 @@ final class Graph {
         var out: Img?
         return FuncNode([n], constant: true) { _, i in
             let src = i[0]
-            let vars: [String: Double] = ["iw": Double(src.w), "ih": Double(src.h), "in_w": Double(src.w), "in_h": Double(src.h)]
-            let w = Int(Expr.parse(s.opt("w", 0) ?? "iw").eval(vars)), h = Int(Expr.parse(s.opt("h", 1) ?? "ih").eval(vars))
-            var x = Int(Expr.parse(s.opt("x", 2) ?? "\((src.w - w) / 2)").eval(vars))
-            var y = Int(Expr.parse(s.opt("y", 3) ?? "\((src.h - h) / 2)").eval(vars))
+            // vf_crop: lrint, the size rounded down to the chroma grid, the
+            // position clamped into the frame, then rounded down to it too
+            var vars: [String: Double] = ["iw": Double(src.w), "ih": Double(src.h), "in_w": Double(src.w), "in_h": Double(src.h)]
+            let sub = src.pf == .yuv420 || src.pf == .yuva420 ? ~1 : ~0
+            let ow = Expr.parse(s.opt("w", 0) ?? "iw").eval(vars), oh = Expr.parse(s.opt("h", 1) ?? "ih").eval(vars)
+            // x and y see out_w / out_h as evaluated, before the rounding
+            for (k, v) in [("ow", ow), ("out_w", ow), ("oh", oh), ("out_h", oh)] { vars[k] = v }
+            func ev(_ e: String) -> Int { Int(lrint(Expr.parse(e).eval(vars))) }
+            let w = Int(lrint(ow)) & sub, h = Int(lrint(oh)) & sub
+            guard w > 0, h > 0, w <= src.w, h <= src.h else { die("crop \(w)x\(h) out of a \(src.w)x\(src.h) frame") }
+            var x = ev(s.opt("x", 2) ?? "(in_w-out_w)/2"), y = ev(s.opt("y", 3) ?? "(in_h-out_h)/2")
+            x = min(max(x, 0), src.w - w) & sub; y = min(max(y, 0), src.h - h) & sub
             if (w, h, x, y) == (src.w, src.h, 0, 0) { return src }
-            if src.pf == .yuv420 || src.pf == .yuva420 { x &= ~1; y &= ~1 }
             if out == nil { out = Img(src.pf, w, h, src.meta) }
             out!.gray = src.gray
             for pi in 0..<src.p.count {
@@ -1849,6 +1982,7 @@ final class Graph {
             postLut = bufOf(lutTables(fs[j]).flatMap { $0 }); folded.insert([ci, j])
         }
         let scrolled = scrollInto[[ci, fi]]
+        let at = filterIndex(ci, fi)
         var sws: Sws?
         return FuncNode([n], constant: scrolled == nil, sequential: scrolled != nil) { k, i in
             let src = i[0]
@@ -1860,7 +1994,7 @@ final class Graph {
                 let th = Int(rescale(Int64(w), Int64(src.h), 1, Int64(src.w), 1))
                 w = max(tw, w); h = max(th, h)
             }
-            if sws == nil { sws = Sws(src: src, dstPF: want ?? src.pf, w: w, h: h, flags: flags); sws!.postLut = postLut }
+            if sws == nil { sws = Sws(src: src, dstPF: want ?? src.pf, w: w, h: h, flags: flags, at: at); sws!.postLut = postLut }
             guard let sc = scrolled else { return sws!.run(src) }
             let v = sc.step(k, src.h)
             return sws!.run(src, shift: (0..<3).map { pi in pi == 0 ? v : (v + 1) >> 1 })
@@ -2131,11 +2265,11 @@ final class Graph {
                 gpu.run("k_fade_a", [src.p[3], outImg!.p[3]], [Int32(src.w * src.h), Int32(f), 0, 32768], grid: (src.w * src.h, 1))
                 return Img(.rgba, src.w, src.h, src.meta, planes: [src.p[0], src.p[1], src.p[2], outImg!.p[3]]).gray(src.gray)
             }
-            if src.pf == .rgba {
-                // a black fade on packed RGB takes filter_slice_luma over every
-                // byte of the pixel, alpha included, at black level 0
-                if outImg == nil { outImg = Img(.rgba, src.w, src.h, src.meta) }
-                for pi in 0..<4 {
+            if src.pf == .rgba || src.pf == .rgb {
+                // a black fade on RGB takes filter_slice_luma at black level 0
+                // over every plane of gbrp, every byte of packed RGBA (alpha included)
+                if outImg == nil { outImg = Img(src.pf, src.w, src.h, src.meta) }
+                for pi in 0..<src.p.count {
                     gpu.run("k_fade_a", [src.p[pi], outImg!.p[pi]], [Int32(src.w * src.h), Int32(f), 0, 32768], grid: (src.w * src.h, 1))
                 }
                 return outImg!.gray(src.gray)
@@ -2225,7 +2359,7 @@ final class Graph {
         var out: Img?
         return FuncNode([n]) { _, i in
             let src = i[0]
-            guard src.pf == .yuv420 || src.pf == .rgba else { die("pad on \(src.pf) not ported") }
+            guard src.pf == .yuv420 || src.pf == .rgba || src.pf == .rgb else { die("pad on \(src.pf) not ported") }
             let sub = src.pf == .yuv420 ? 1 : 0
             var vars: [String: Double] = ["iw": Double(src.w), "ih": Double(src.h), "in_w": Double(src.w), "in_h": Double(src.h)]
             let W = Int(Expr.parse(s.opt("w", 0)!).eval(vars)), H = Int(Expr.parse(s.opt("h", 1)!).eval(vars))
@@ -2233,8 +2367,8 @@ final class Graph {
             let x = Int(Expr.parse(s.opt("x", 2) ?? "0").eval(vars)) & ~sub, y = Int(Expr.parse(s.opt("y", 3) ?? "0").eval(vars)) & ~sub
             if out == nil {
                 out = Img(src.pf, W, H, src.meta)
-                // black: tv-range YUV, or opaque RGBA 0x000000FF
-                let fill = src.pf == .yuv420 ? [16, 128, 128] : [0, 0, 0, 255]
+                // black (ff_draw_color): YUV in its range, or opaque RGB(A) 0x000000FF
+                let fill = src.pf == .yuv420 ? [src.meta.range == 1 ? 0 : 16, 128, 128] : Array([0, 0, 0, 255].prefix(src.p.count))
                 for pi in 0..<fill.count { let (pw, ph) = out!.dims(pi); fillPlane(out!.p[pi], pw * ph, fill[pi]) }
                 out!.live = y..<(y + src.h)
             }
@@ -2381,7 +2515,9 @@ func dependsOnFps(_ n: Node) -> FpsNode? {
 }
 let fpsNode = dependsOnFps(outNode)
 let firstPts = Int(fpsNode?.first ?? 0)
-let count = fpsNode?.map.count ?? graph.srcTimeline.0.count
+// a shortest=1 framesync can end the graph before the source does (bars:
+// its d= plates and loops stop at the window, a source starting at pts 1 not)
+let count = min(fpsNode?.map.count ?? graph.srcTimeline.0.count, outNode.end.map { $0 - firstPts } ?? .max)
 // The delivered encode (`-r 30 -t dur`) is fftools' CFR sync over [vout]:
 // output frame k shows the graph frame video_sync_process gives it, and the
 // file keeps the frames that start before `dur`. A frame's duration is one

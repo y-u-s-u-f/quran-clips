@@ -1118,17 +1118,20 @@ def run_config(config_path, output_override=None, vertical=False,
                          "footage" % os.path.basename(cfg["input"]))
     window = trim_window(cfg)
     t0w = window[0]
-    if cfg.get("trim"):
-        trimmed = os.path.join(tmp, "trimmed-verify.mp4" if verify_only
-                               else "trimmed.mp4")
-        print("      trimming to %s-%ss%s"
-              % (window[0], "end" if window[1] is None else window[1],
-                 " (32px proxy)" if verify_only else ""))
-        source = trim_media(source, trimmed, window[0], window[1],
-                            thumb=verify_only)
-        info = {**get_video_info(source),
-                **({"width": info["width"], "height": info["height"]}
-                   if verify_only else {})}
+    # Cut even with no `trim:` (0 to the end): tools/render_gpu decodes with
+    # AVFoundation, which reads no MKV/WebM and on an M1 no AV1 or VP9.
+    trimmed = os.path.join(tmp, "trimmed-verify.mp4" if verify_only
+                           else "trimmed.mp4")
+    print("      %s%s"
+          % ("trimming to %s-%ss" % (window[0], "end" if window[1] is None
+                                     else window[1])
+             if cfg.get("trim") else "re-encoding the whole source",
+             " (32px proxy)" if verify_only else ""))
+    source = trim_media(source, trimmed, window[0], window[1],
+                        thumb=verify_only)
+    info = {**get_video_info(source),
+            **({"width": info["width"], "height": info["height"]}
+               if verify_only else {})}
     print("      %sx%s, %.1fs" % (info["width"], info["height"],
                                   info["duration"]))
 

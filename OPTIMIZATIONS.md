@@ -80,7 +80,7 @@ What the stages around the render pay before any pixel moves.
 - **Scan's tint folded into its final `lutrgb`**: not identical in general -- `colorchannelmixer` rounds `lrintf` in float (half to even), `lutrgb`'s `round()` is double, half away from zero, so identity depends on the tint; it was worth ~6% of the glow+scan subset.
 - **Snow bake in a fork pool**: byte-identical and 8.8 -> 4.2s wall, but +65% CPU, once per bar colour (4.7s serial at the portrait canvas), and `fork` after importing Pillow on macOS is the hazard CPython moved its default off.
 - **Native 1080x608 heat bake for portrait**: the same field as the 1920 maps scaled (see above), no closer to the landscape look, same render cost, plus a ~3min bake and 117 MB.
-- **Delete `trim_media`**: ~3.1s wall; seek into long source is cheaper to decode than the intermediate. Not worth the A/V-sync surface.
+- **Delete `trim_media`**: ~3.1s wall; seek into long source is cheaper to decode than the intermediate. Not worth the A/V-sync surface, and render_gpu needs it: AVFoundation reads no MKV/WebM and on an M1 decodes no VP9 or AV1, and render_gpu takes 8-bit only, which is why a config with no `trim:` is cut too (0 to the end).
 
 ## Open
 

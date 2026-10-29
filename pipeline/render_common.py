@@ -215,10 +215,13 @@ def mux(video, audio, dur, out, meta, tags):
     artist}) is written here: publish.py captions a reel from these tags
     alone. VideoToolbox writes no VUI, so `tags` (render_gpu's report of the
     last frame) go into the SPS as libx264 tagged the same frames: video_format
-    5, the range flag, the colour description, the sample aspect ratio. Bars'
-    matrix is unspecified: its untagged baked layers (snow, heat) drop the
-    source's BT.709 at the filters that merge them, so its RGB -> YUV runs on
-    swscale's BT.601 default (todo.md)."""
+    5, the range flag, the colour description, the sample aspect ratio. With
+    heat on, bars' matrix is unspecified: the heat maps' untagged one wins
+    the negotiation at the filter that merges them, so its RGB -> YUV runs on
+    swscale's BT.601 default (todo.md); with heat off the source's survives.
+    The same tags go to the muxer too, which writes them as the mp4's colr
+    box (the bsf's are not seen by it) when none of the three is unspecified,
+    movenc's rule for an x264 delivery too: the bitstream is unchanged."""
     vui = ("h264_metadata=video_format=5:video_full_range_flag=%d:"
            "colour_primaries=%d:transfer_characteristics=%d:"
            "matrix_coefficients=%d:sample_aspect_ratio=%d/%d"
@@ -226,7 +229,11 @@ def mux(video, audio, dur, out, meta, tags):
                tags["color_trc"], tags["colorspace"]) + tuple(tags["sar"])))
     cmd = [FFMPEG, "-y", "-v", "error", "-i", video, "-i", audio,
            "-map", "0:v", "-map", "1:a", "-t", "%.3f" % dur, "-c", "copy",
-           "-bsf:v", vui]
+           "-bsf:v", vui,
+           "-color_range", "pc" if tags["color_range"] == 1 else "tv",
+           "-color_primaries", str(tags["color_primaries"]),
+           "-color_trc", str(tags["color_trc"]),
+           "-colorspace", str(tags["colorspace"])]
     for k, v in (meta or {}).items():
         cmd += ["-metadata", "%s=%s" % (k, v)]
     if subprocess.run(cmd + ["-movflags", "+faststart", out]).returncode:

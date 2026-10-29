@@ -14,5 +14,6 @@
 - [ ] Reel ledger: table of `reels/*.mp4` from their tags (span, reciter, style, posted).
 - [ ] Caption sidecar (`reels/<name>.srt`) from the burned cards.
 - [ ] English search in `quran.py` (`en.sahih`, `en.taqi`, word glosses).
-- [ ] Bars reels are BT.601-converted but tagged matrix unspecified (`render_common.mux`), which most players read as BT.709 for HD. Tag it smpte170m, or tag the baked layers so the graph stays BT.709: an owner look decision, checked on a phone.
+- [ ] Bars reels with heat on are BT.601-converted but tagged matrix unspecified (`render_common.mux`), which most players read as BT.709 for HD. Tag it smpte170m, or tag the baked layers so the graph stays BT.709: an owner look decision, checked on a phone.
 - [ ] Delivered mp4s carry edit lists (video media_time 1280, AAC 1024 priming; hujurat-4-5). Check Instagram's and Facebook's ingest keeps A/V in sync with them.
+- [ ] HDR sources (BT.2020 PQ/HLG, phone footage) render untone-mapped and keep their tags, as an ffmpeg render did: the 8-bit cut is HDR-coded, so the reel plays as HDR where the player honours it. Tone-mapping to SDR BT.709 is an owner look decision, checked on a phone.
