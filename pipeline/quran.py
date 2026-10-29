@@ -173,12 +173,9 @@ def display_words(text):
     space-delimited tokens, so `ar.split()` over-counts. A token is a word only
     when normalising it leaves a letter behind.
     """
-    out = []
-    for w in nfc(text).split():
-        if (normalize(w).replace(" ", "")
-                or normalize(w, keep_super_alif=True).replace(" ", "")):
-            out.append(w)
-    return out
+    return [w for w in nfc(text).split()
+            if normalize(w).replace(" ", "")
+            or normalize(w, keep_super_alif=True).replace(" ", "")]
 
 
 def words(surah, num):
