@@ -48,6 +48,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from itertools import groupby
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import quran  # noqa: E402
@@ -153,20 +154,13 @@ def caption(surah, a0, a1, reciter, with_ayat=True):
     then their single explanation, once. Printing per ayah instead repeats
     the same paragraph three times.
     """
-    groups = []
-    for v in quran.range(surah, a0, a1):
-        t = quran.tafsir(surah, v["ayah"])
-        if groups and groups[-1][0] == t:
-            groups[-1][1].append(v)
-        else:
-            groups.append((t, [v]))
-
     # "al-Tafsir al-Muyassar: ", escaped rather than pasted -- no Arabic is
     # typed into a source file here (see AGENTS.md invariant 1). Letter by
     # letter: alef lam teh feh seen yeh reh / alef lam meem yeh seen reh.
     lines = ["\u0627\u0644\u062a\u0641\u0633\u064a\u0631"      # al-Tafsir
              " \u0627\u0644\u0645\u064a\u0633\u0631: "]  # al-Muyassar
-    for t, verses in groups:
+    for t, verses in groupby(quran.range(surah, a0, a1),
+                             key=lambda v: quran.tafsir(surah, v["ayah"])):
         if with_ayat:
             # U+FD3E/U+FD3F ORNATE PARENTHESIS, the pair a mushaf sets an
             # ayah in. FD3F (the "right" one) is written FIRST on purpose:
@@ -277,7 +271,9 @@ def multipart(fields, filename, blob, field="source"):
     return "multipart/form-data; boundary=%s" % b.decode(), b"\r\n".join(out)
 
 
-def publish_instagram(path, text, publish=True, cover_ms=0):
+def upload_instagram(path, text, cover_ms=0):
+    """Container + bytes. -> (ig, token, container id) for publish_instagram,
+    which polls it once Instagram has transcoded it."""
     ig, token = need("IG_BUSINESS_ACCOUNT_ID", "FB_PAGE_TOKEN")
     print("  instagram: creating container...")
     c = api("%s/media" % ig, token, {
@@ -292,6 +288,10 @@ def publish_instagram(path, text, publish=True, cover_ms=0):
     print("  instagram: uploading %.1f MB..." % (os.path.getsize(path) / 1e6))
     rupload(c.get("uri") or "%s/ig-api-upload/v21.0/%s" % (RUPLOAD, cid),
             token, path)
+    return ig, token, cid
+
+
+def publish_instagram(ig, token, cid, publish=True):
     # The container transcodes after the bytes land; media_publish on an
     # IN_PROGRESS container is an error, not a wait.
     for _ in range(60):
@@ -473,14 +473,21 @@ def main(argv=None):
 
     if a.cover_ms:
         a.cover_ms = clamp_cover(dur_ms, a.cover_ms)
-    # Tagged as soon as ONE platform is live, so a Facebook failure after
-    # Instagram published still leaves the file marked -- and says which.
-    posted = []
+    # Tagged as soon as ONE platform is live, so a failure on the other
+    # still leaves the file marked -- and says which. Failures are collected
+    # per platform, not raised mid-flow: a Facebook failure must not strand an
+    # Instagram container that is already uploaded.
+    posted, failed = [], []
     try:
+        container = None
         if not a.fb_only:
-            publish_instagram(a.reel, ig_text, publish=not a.draft,
-                              cover_ms=a.cover_ms)
-            posted.append("Instagram")
+            try:
+                container = upload_instagram(a.reel, ig_text,
+                                             cover_ms=a.cover_ms)
+            except (Exception, SystemExit) as e:
+                failed.append(("Instagram", e))
+        # Instagram transcodes the container after its bytes land; the whole
+        # Facebook flow runs inside that wait instead of after it.
         if not a.ig_only:
             cover = None
             try:
@@ -491,15 +498,27 @@ def main(argv=None):
                                      "qc-cover-%d.jpg" % os.getpid()))
                 publish_facebook(a.reel, fb_text, publish=not a.draft,
                                  cover=cover)
+                posted.append("Facebook")
+            except (Exception, SystemExit) as e:
+                failed.append(("Facebook", e))
             finally:
                 if cover and os.path.exists(cover):
                     os.remove(cover)
-            posted.append("Facebook")
+        if container:
+            try:
+                publish_instagram(*container, publish=not a.draft)
+                posted.insert(0, "Instagram")
+            except (Exception, SystemExit) as e:
+                failed.insert(0, ("Instagram", e))
     finally:
         if posted and not a.draft:
             mark_published(a.reel)
         if len(posted) < len(targets):
             print("  ! went out to %s only" % (" + ".join(posted) or "nothing"))
+    if len(targets) == 1 and failed:
+        raise failed[0][1]
+    if failed:
+        raise SystemExit("\n".join("%s failed: %s" % f for f in failed))
     return 0
 
 

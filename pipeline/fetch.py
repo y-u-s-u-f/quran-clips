@@ -116,45 +116,39 @@ def slugify(name):
     return s or "source"
 
 
-def probe_duration(path):
-    """Seconds, or 0.0 when the file cannot be probed at all."""
+def probe(path):
+    """One ffprobe: {"duration", "width", "height", "fps", "audio"} of the
+    file and its first video / first audio stream; 0 / "" for whatever is
+    missing or unprobeable. Stale once the file changes -- probe again."""
     p = subprocess.run([ffprobe(), "-v", "error", "-show_entries",
-                        "format=duration", "-of", "json", path],
+                        "format=duration:stream=codec_type,codec_name,width,"
+                        "height,avg_frame_rate", "-of", "json", path],
                        capture_output=True, text=True)
+    info = {"duration": 0.0, "width": 0, "height": 0, "fps": 0.0, "audio": ""}
     try:
-        return float(json.loads(p.stdout)["format"]["duration"])
+        data = json.loads(p.stdout)
+    except ValueError:
+        return info
+    try:
+        info["duration"] = float(data["format"]["duration"])
     except Exception:
-        return 0.0
-
-
-def video_info(path):
-    """(width, height, fps) of the first video stream; zeros when there is
-    none."""
-    p = subprocess.run([ffprobe(), "-v", "error", "-select_streams", "v:0",
-                        "-show_entries", "stream=width,height,avg_frame_rate",
-                        "-of", "json", path],
-                       capture_output=True, text=True)
+        pass
+    streams = data.get("streams") or []
+    v = next((s for s in streams if s.get("codec_type") == "video"), None)
+    a = next((s for s in streams if s.get("codec_type") == "audio"), None)
     try:
-        s = json.loads(p.stdout)["streams"][0]
-        num, _, den = s["avg_frame_rate"].partition("/")
-        return int(s["width"]), int(s["height"]), \
-            float(num) / (float(den or 1) or 1.0)
-    except (ValueError, KeyError, IndexError):
-        return 0, 0, 0.0
+        num, _, den = v["avg_frame_rate"].partition("/")
+        info.update(width=int(v["width"]), height=int(v["height"]),
+                    fps=float(num) / (float(den or 1) or 1.0))
+    except (TypeError, ValueError, KeyError):
+        pass
+    info["audio"] = (a or {}).get("codec_name") or ""
+    return info
 
 
-def audio_codec(path):
-    p = subprocess.run([ffprobe(), "-v", "error", "-select_streams", "a:0",
-                        "-show_entries", "stream=codec_name",
-                        "-of", "default=nw=1:nk=1", path],
-                       capture_output=True, text=True)
-    out = (p.stdout or "").strip()
-    return out.splitlines()[0].strip() if out else ""
-
-
-def ensure_aac(path, dst=None):
+def ensure_aac(path, info, dst=None):
     """Guarantee the source's audio is AAC, writing to `dst` (default: in
-    place). -> True if it had to transcode.
+    place); `info` is probe(path). -> True if it had to transcode.
 
     OPUS-IN-MP4 DEADLOCKS FFMPEG at some seek points -- the demuxer blocks in
     tq_send while the filter and encoder threads block in tq_receive, 0% CPU,
@@ -163,7 +157,7 @@ def ensure_aac(path, dst=None):
     file rather than merely requested in the format string. The VIDEO IS
     COPIED, never re-encoded.
     """
-    codec = audio_codec(path)
+    codec = info["audio"]
     if codec in ("aac", ""):
         return False
     dst = dst or path
@@ -184,23 +178,26 @@ def ensure_aac(path, dst=None):
 
 
 def usable(path):
-    """A downloaded file is usable only when it has real size AND a probeable
-    duration -- a stalled or stub fetch leaves a file that is present and
-    worthless, so mere existence is never accepted."""
-    return (os.path.exists(path) and os.path.getsize(path) >= 100_000
-            and probe_duration(path) > 0)
+    """probe(path) when the file is usable, else None. Usable means real size
+    AND a probeable duration -- a stalled or stub fetch leaves a file that is
+    present and worthless, so mere existence is never accepted."""
+    if not (os.path.exists(path) and os.path.getsize(path) >= 100_000):
+        return None
+    info = probe(path)
+    return info if info["duration"] > 0 else None
 
 
-def cap_fps(src, dst):
-    """Re-encode `src` to MAX_FPS at `dst` (they may be the same path). The
+def cap_fps(src, info, dst):
+    """Re-encode `src` (`info` is probe(src)) to MAX_FPS at `dst` (they may be
+    the same path). The
     renderers drop the surplus frames anyway, so carrying them only buys
     every later pass (bar-colour sample, loudnorm, the render's own decode +
     grade) twice the work. Audio leaves as AAC -- see ensure_aac."""
     print("  fps     : %.3f -> %d (re-encoded once, at intake)"
-          % (video_info(src)[2], MAX_FPS))
+          % (info["fps"], MAX_FPS))
     # crf 16: this copy becomes the master every reel is cut from, so it is
     # encoded well above the crf 18 equivalent the reels are delivered at.
-    acodec = ["-c:a", "copy"] if audio_codec(src) == "aac" else \
+    acodec = ["-c:a", "copy"] if info["audio"] == "aac" else \
         ["-c:a", "aac", "-b:a", "192k"]
     tmp = dst + ".part.mp4"
     rc = subprocess.run([ffmpeg(), "-hide_banner", "-nostats", "-loglevel",
@@ -215,11 +212,12 @@ def cap_fps(src, dst):
     os.replace(tmp, dst)
 
 
-def describe(dst):
-    """The one line that reveals a quality downgrade: what actually landed."""
-    w, h, fps = video_info(dst)
-    return "%dx%d %gfps, audio %s" % (w, h, round(fps, 3),
-                                      audio_codec(dst) or "none")
+def describe(info):
+    """The one line that reveals a quality downgrade: what actually landed
+    (`info` is its probe)."""
+    return "%dx%d %gfps, audio %s" % (info["width"], info["height"],
+                                      round(info["fps"], 3),
+                                      info["audio"] or "none")
 
 
 # --- YouTube ---------------------------------------------------------------
@@ -326,9 +324,10 @@ def fetch_youtube(vid, out_dir, proxy=None, timestamps=None, client=None):
     # reaches the network at all. The metadata call is a player-API request
     # like any other and can fail the bot check -- failing it for a fetch
     # that would have downloaded nothing is a re-fetch that fails for free.
-    if usable(dst) and (os.path.exists(srt) or os.path.exists(none)):
+    info = usable(dst)
+    if info and (os.path.exists(srt) or os.path.exists(none)):
         print("  video   : %s  %s  (reused)"
-              % (os.path.relpath(dst, ROOT), describe(dst)))
+              % (os.path.relpath(dst, ROOT), describe(info)))
         print("  captions: %s  (reused)"
               % os.path.relpath(srt if os.path.exists(srt) else none, ROOT))
         return
@@ -352,9 +351,10 @@ def _fetch_media(info, meta, dst, srt, none, proxy, timestamps, vid):
     """Media + captions from the metadata call's own JSON: same formats, same
     exit, no second player-API request."""
     out_dir = os.path.dirname(dst)
-    if usable(dst):
+    media = usable(dst)
+    if media:
         print("  video   : %s  %s  (reused)"
-              % (os.path.relpath(dst, ROOT), describe(dst)))
+              % (os.path.relpath(dst, ROOT), describe(media)))
     else:
         args = ["--load-info-json", info, "-f", FORMAT, "-S", SORT,
                 "--merge-output-format", "mp4",
@@ -364,22 +364,24 @@ def _fetch_media(info, meta, dst, srt, none, proxy, timestamps, vid):
             args = ["--download-sections",
                     "*%s-%s" % (parse_ts(a), parse_ts(b))] + args
         rc, _, _ = _run_ytdlp(args, proxy)
-        if rc != 0 or not usable(dst):
+        media = usable(dst) if rc == 0 else None
+        if not media:
             raise RuntimeError(
                 "download failed for %s (file %s)" % (
                     vid, "missing" if not os.path.exists(dst)
                     else "present but stub/unprobeable -- not accepted"))
         want = min(best_height(meta), 1080)
-        if video_info(dst)[1] < want:
-            got = describe(dst)
+        if media["height"] < want:
             os.remove(dst)
             raise RuntimeError("download landed at %s but %dp was offered "
-                               "-- not accepted" % (got, want))
-        if video_info(dst)[2] > MAX_FPS:
-            cap_fps(dst, dst)
-        else:
-            ensure_aac(dst)
-        print("  video   : %s  %s" % (os.path.relpath(dst, ROOT), describe(dst)))
+                               "-- not accepted" % (describe(media), want))
+        if media["fps"] > MAX_FPS:
+            cap_fps(dst, media, dst)
+            media = probe(dst)
+        elif ensure_aac(dst, media):
+            media = probe(dst)
+        print("  video   : %s  %s"
+              % (os.path.relpath(dst, ROOT), describe(media)))
 
     if os.path.exists(srt):
         print("  captions: %s  (reused)" % os.path.relpath(srt, ROOT))
@@ -422,9 +424,10 @@ def fetch_local(path, out_dir):
     src = os.path.abspath(path)
     if not os.path.isfile(src):
         raise SystemExit("not a file: %s" % src)
-    fps = video_info(src)[2]
+    info = probe(src)
+    fps = info["fps"]
     ext = os.path.splitext(src)[1].lower()
-    fix_audio = ext in (".mp4", ".m4v") and audio_codec(src) not in ("aac", "")
+    fix_audio = ext in (".mp4", ".m4v") and info["audio"] not in ("aac", "")
     if fps > MAX_FPS or fix_audio or ext == ".m4v":
         ext = ".mp4"
     dst = os.path.join(out_dir, "source" + ext)
@@ -433,19 +436,19 @@ def fetch_local(path, out_dir):
                          % (src, " ".join(n[6:] for n in generate.SOURCE_NAMES)))
     if os.path.islink(dst) or os.path.exists(dst):
         print("  video   : %s  %s  (already present, untouched)"
-              % (os.path.relpath(dst, ROOT), describe(dst)))
+              % (os.path.relpath(dst, ROOT), describe(probe(dst))))
         return
     if fps > MAX_FPS:
-        cap_fps(src, dst)
+        cap_fps(src, info, dst)
     elif fix_audio:
-        ensure_aac(src, dst)
+        ensure_aac(src, info, dst)
     else:
         os.symlink(src, dst)
         print("  video   : %s -> %s  %s"
-              % (os.path.relpath(dst, ROOT), src, describe(dst)))
+              % (os.path.relpath(dst, ROOT), src, describe(info)))
         return
     print("  video   : %s  %s  [from %s]"
-          % (os.path.relpath(dst, ROOT), describe(dst), src))
+          % (os.path.relpath(dst, ROOT), describe(probe(dst)), src))
 
 
 # --- main ------------------------------------------------------------------

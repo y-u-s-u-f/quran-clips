@@ -7,7 +7,7 @@ macOS: rendering runs on Metal (`tools/render_gpu`), so there is no rendering on
 ./install.sh --check    # report what resolved, change nothing
 ```
 
-It checks the system tools, builds the three Python environments and the GPU renderer, checks the vision API settings, and creates `.env` from the template. A green summary means every pipeline stage can run; anything listed under `MISSING:` names exactly which stage it blocks and the command that fixes it.
+It checks the system tools (the ffmpeg, ffprobe and yt-dlp that `QC_FFMPEG` / `QC_FFPROBE` / `QC_YT_DLP` name when set, as every script resolves them), builds the three Python environments and the GPU renderer, checks the vision API settings, and creates `.env` from the template. A green summary means every pipeline stage can run; anything listed under `MISSING:` names exactly which stage it blocks and the command that fixes it.
 
 ## 1. System tools
 

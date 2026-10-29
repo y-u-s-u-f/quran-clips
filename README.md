@@ -17,9 +17,10 @@ python3 pipeline/fetch.py "https://www.youtube.com/watch?v=..."
 python3 pipeline/transcribe.py sources/<id>           # find the span; repairs restarts
 # write sources/<id>/<reel>.yaml  (verse span, card splits)
 tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml
-tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png
+tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/<reel>-crop.png
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml
-python3 pipeline/publish.py reels/<reel>.mp4          # Instagram + Facebook
+ffmpeg -v error -i reels/<reel>.mp4 -f null -         # decode check, always
+python3 pipeline/publish.py reels/<reel>.mp4          # optional: Instagram + Facebook
 ```
 
 The config schema: `tools/render-venv/bin/python pipeline/generate.py --print-schema`. The two example sources' configs are tracked, each with its `# source:` URL, so any of them re-renders after a fetch.

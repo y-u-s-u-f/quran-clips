@@ -5,7 +5,8 @@
 #     ./install.sh --check    report only, install nothing
 #
 # What it does, in order:
-#   1. checks the system tools (python3, ffmpeg, ffprobe, yt-dlp)
+#   1. checks the system tools (python3, ffmpeg, ffprobe, yt-dlp -- the last
+#      three as QC_FFMPEG / QC_FFPROBE / QC_YT_DLP resolve, like every script)
 #   2. builds tools/render-venv  -- PyYAML + a Pillow whose RAQM does Arabic
 #      shaping (falls back to --system-site-packages when the pip wheel's
 #      Pillow lacks RAQM but the system python's has it)
@@ -31,6 +32,13 @@ bad=()   # missing pieces + what they block
 
 say()  { printf '%s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+# venv dir, its python: created (and pip upgraded) only when absent
+mkvenv() {
+    [ -x "$2" ] && return
+    say "  creating $1"
+    "$PY" -m venv "$1" || exit 1
+    "$2" -m pip -q install --upgrade pip
+}
 
 CHECK_ONLY=0
 for arg in "$@"; do
@@ -50,25 +58,32 @@ if [ -n "$PY" ]; then
 else
     bad+=("python3: not found -- everything needs it. brew install python3 / apt install python3-venv")
 fi
-for tool in ffmpeg ffprobe yt-dlp; do
-    if have "$tool"; then
-        ok+=("$(printf '%-12s %s' "$tool" "$(command -v "$tool")")")
+# QC_* from the shell, else .env -- through pipeline/generate.py's one reader.
+envvar() { "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import generate; print(generate.envvar(sys.argv[2]) or "")' "$ROOT/pipeline" "$1" 2>/dev/null; }
+
+# The binaries the pipeline will run, so the check is of those and not PATH's.
+FFMPEG=ffmpeg
+for pair in ffmpeg:QC_FFMPEG ffprobe:QC_FFPROBE yt-dlp:QC_YT_DLP; do
+    tool="${pair%%:*}"
+    cmd="$([ -n "$PY" ] && envvar "${pair#*:}")"
+    cmd="${cmd:-$tool}" miss="not found"
+    [ "$cmd" != "$tool" ] && miss="$cmd not found"
+    [ "$tool" = ffmpeg ] && FFMPEG="$cmd"
+    if have "$cmd"; then
+        ok+=("$(printf '%-12s %s' "$tool" "$(command -v "$cmd")")")
     else
         case "$tool" in
-            ffmpeg|ffprobe) bad+=("$tool: not found -- cutting, probing, audio and the mux need it. brew install ffmpeg / apt install ffmpeg");;
-            yt-dlp)         bad+=("yt-dlp: not found -- fetch.py needs it for YouTube sources (local files still work). brew install yt-dlp / apt install yt-dlp");;
+            ffmpeg|ffprobe) bad+=("$tool: $miss -- cutting, probing, audio and the mux need it. brew install ffmpeg / apt install ffmpeg");;
+            yt-dlp)         bad+=("yt-dlp: $miss -- fetch.py needs it for YouTube sources (local files still work). brew install yt-dlp / apt install yt-dlp");;
         esac
     fi
 done
 # the heat effect needs ffmpeg's perlin source (ffmpeg >= 7.1)
-if have ffmpeg && ! ffmpeg -hide_banner -filters 2>/dev/null | grep -q ' perlin '; then
+if have "$FFMPEG" && ! "$FFMPEG" -hide_banner -filters 2>/dev/null | grep -q ' perlin '; then
     bad+=("ffmpeg has no 'perlin' filter -- the bars heat effect will fail; use fx: {heat: false} or upgrade ffmpeg")
 fi
 
 [ -z "$PY" ] && { say ""; printf '  MISSING: %s\n' "${bad[@]}"; exit 1; }
-
-# QC_* from the shell, else .env -- through pipeline/generate.py's one reader.
-envvar() { "$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import generate; print(generate.envvar(sys.argv[2]) or "")' "$ROOT/pipeline" "$1" 2>/dev/null; }
 
 # ---------------------------------------------------------------------------
 # 2. render venv (PyYAML + RAQM Pillow)
@@ -81,11 +96,7 @@ raqm_ok() { "$1" -c "from PIL import features; import sys; sys.exit(0 if feature
 yaml_ok() { "$1" -c "import yaml" 2>/dev/null; }
 
 if [ "$CHECK_ONLY" = 0 ]; then
-    if [ ! -x "$RPY" ]; then
-        say "  creating $RVENV"
-        "$PY" -m venv "$RVENV" || exit 1
-        "$RPY" -m pip -q install --upgrade pip
-    fi
+    mkvenv "$RVENV" "$RPY"
     yaml_ok "$RPY" || "$RPY" -m pip -q install pyyaml
     raqm_ok "$RPY" || "$RPY" -m pip -q install --upgrade pillow
     if ! raqm_ok "$RPY" && raqm_ok "$PY"; then
@@ -122,25 +133,24 @@ case "$ASR_BACKEND" in
     faster) ASR_PKG="faster-whisper"; ASR_MOD="faster_whisper";;
     *) say "QC_ASR_BACKEND=$ASR_BACKEND: want mlx or faster"; exit 2;;
 esac
-if [ "$CHECK_ONLY" = 0 ]; then
-    if [ ! -x "$APY" ]; then
-        say "  creating $AVENV"
-        "$PY" -m venv "$AVENV" || exit 1
-        "$APY" -m pip -q install --upgrade pip
-    fi
-    "$APY" -c "import $ASR_MOD" 2>/dev/null || {
-        say "  installing $ASR_PKG (first transcription will also download the model)"
-        case "$ASR_BACKEND" in
-            # mlx-whisper lists torch, but only its checkpoint converter imports
-            # it, and torch has no Python 3.15 wheel on PyPI (2026-10).
-            mlx) "$APY" -m pip -q install --no-deps mlx-whisper &&
-                 "$APY" -m pip -q install mlx numba numpy tqdm more-itertools \
-                     tiktoken huggingface_hub scipy;;
-            *)   "$APY" -m pip -q install "$ASR_PKG";;
-        esac
-    }
+# Each heavy import costs seconds, so a working venv is imported once and the
+# answer kept; only an install attempt earns a second import.
+ASR_OK=0
+[ -x "$APY" ] && "$APY" -c "import $ASR_MOD" 2>/dev/null && ASR_OK=1
+if [ "$CHECK_ONLY" = 0 ] && [ "$ASR_OK" = 0 ]; then
+    mkvenv "$AVENV" "$APY"
+    say "  installing $ASR_PKG (first transcription will also download the model)"
+    case "$ASR_BACKEND" in
+        # mlx-whisper lists torch, but only its checkpoint converter imports
+        # it, and torch has no Python 3.15 wheel on PyPI (2026-10).
+        mlx) "$APY" -m pip -q install --no-deps mlx-whisper &&
+             "$APY" -m pip -q install mlx numba numpy tqdm more-itertools \
+                 tiktoken huggingface_hub scipy;;
+        *)   "$APY" -m pip -q install "$ASR_PKG";;
+    esac
+    "$APY" -c "import $ASR_MOD" 2>/dev/null && ASR_OK=1
 fi
-if [ -x "$APY" ] && "$APY" -c "import $ASR_MOD" 2>/dev/null; then
+if [ "$ASR_OK" = 1 ]; then
     ok+=("asr venv     $APY ($ASR_PKG)")
 else
     bad+=("asr venv: cannot import $ASR_MOD -- transcribe.py cannot run. $APY -m pip install $ASR_PKG")
@@ -156,21 +166,18 @@ FPY="$FVENV/bin/python"
 # PyPI's "ctc-forced-aligner" is an UNRELATED project (an English-only onnx
 # aligner); Meta's MMS one only ships from git.
 FPKG="git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git"
-if [ "$CHECK_ONLY" = 0 ]; then
-    if [ ! -x "$FPY" ]; then
-        say "  creating $FVENV"
-        "$PY" -m venv "$FVENV" || exit 1
-        "$FPY" -m pip -q install --upgrade pip
-    fi
-    "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null || {
-        say "  installing ctc-forced-aligner + torch (first align will also download the ~1.2GB MMS model)"
-        # Python 3.15 wheels are only on the nightly index (2026-10).
-        "$FPY" -m pip -q install torch ||
-            "$FPY" -m pip -q install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
-        "$FPY" -m pip -q install "$FPKG" pyyaml
-    }
+FOK=0
+[ -x "$FPY" ] && "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null && FOK=1
+if [ "$CHECK_ONLY" = 0 ] && [ "$FOK" = 0 ]; then
+    mkvenv "$FVENV" "$FPY"
+    say "  installing ctc-forced-aligner + torch (first align will also download the ~1.2GB MMS model)"
+    # Python 3.15 wheels are only on the nightly index (2026-10).
+    "$FPY" -m pip -q install torch ||
+        "$FPY" -m pip -q install --pre torch --index-url https://download.pytorch.org/whl/nightly/cpu
+    "$FPY" -m pip -q install "$FPKG" pyyaml
+    "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null && FOK=1
 fi
-if [ -x "$FPY" ] && "$FPY" -c "import ctc_forced_aligner, yaml" 2>/dev/null; then
+if [ "$FOK" = 1 ]; then
     ok+=("align venv   $FPY (ctc-forced-aligner)")
 else
     bad+=("align venv: cannot import ctc_forced_aligner -- align.py cannot run (generate.py still works off whisper.json). $FPY -m pip install $FPKG pyyaml")
@@ -236,5 +243,5 @@ say "All set. Next:"
 say "  python3 pipeline/fetch.py <youtube-url-or-file>"
 say "  python3 pipeline/transcribe.py sources/<id>        # span finder + ibtida' repair"
 say "  tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml"
-say "  tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/c.png"
+say "  tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/<reel>-crop.png"
 say "  tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml"
