@@ -61,7 +61,7 @@ What the stages around the render pay before any pixel moves.
 - **`crop.py`** — the cache is read BEFORE any frame is extracted, so a cached geometry re-solve runs no ffmpeg at all: 0.13s against 0.65s for a 4-frame solve. A cached `--annotate` extracts only the one frame it draws.
 - **`generate.py --verify-only`** — the verification block without the render, off a 32px-wide cut of the window: ~1.7s wall / ~6s CPU against an 8s `vertical` render, and the block is the only thing a split check reads.
 - **`transcribe.py`** — the interpreter probe asks `importlib.util.find_spec` instead of importing the backend: 0.02s per candidate against 0.9s warm and 3.1s cold for `import mlx_whisper`.
-- **`align.py`** — takes several configs per invocation, so the 7.1s of start-up (1.0s torch, 4.9s the aligner package, 1.3s the MMS weights) is paid once for every reel cut from one source rather than once per reel.
+- **`align.py`** — takes several configs per invocation, so the 7.1s of start-up (1.0s torch, 4.9s the aligner package, 1.3s the MMS weights) is paid once for every reel cut from one source rather than once per reel. Configs sharing a source and window also share its extraction and MMS inference (`emissions_for`, the last window kept): the three hujurat-4-5 configs in one batch run 1 inference instead of 3, 19.6 -> 14.5s wall (best of three each, alongside other jobs; paired runs 33.1 -> 18.7, 48.2 -> 21.5), sidecars byte-identical.
 - **`publish.py`** — one `ffprobe` for the tags, the frame size and the duration `clamp_cover` needs.
 
 ## Rejected

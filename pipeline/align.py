@@ -75,6 +75,7 @@ uncorrected; `nudge` is still the override either way, applied last.
 """
 import argparse
 import array
+import functools
 import json
 import math
 import os
@@ -353,6 +354,23 @@ def aligner():
     return _ALIGNER
 
 
+@functools.lru_cache(maxsize=1)
+def emissions_for(src, size, mtime_ns, t0, t1):
+    """(emissions, stride) of the MMS model over [t0, t1) of `src`.
+
+    The reels cut from one source share its window, and inference is most of
+    each config's cost in a batch, so the last window is kept. Keyed on
+    the file's size and mtime as well as its path, so a re-fetched source is
+    never answered from the old one. Callers only read the tensors."""
+    from ctc_forced_aligner import generate_emissions, load_audio
+
+    model = aligner()[0]
+    with tempfile.TemporaryDirectory(prefix="quran-align-") as tmp:
+        wav = os.path.join(tmp, "audio.wav")
+        extract_window(src, wav, t0, t1)
+        return generate_emissions(model, load_audio(wav, model.dtype, model.device))
+
+
 def align(config_path, force=False):
     cfg = generate.load_config(config_path)
     cfg = generate.resolve_paths(cfg, config_path)
@@ -395,16 +413,13 @@ def align(config_path, force=False):
              os.path.relpath(cfg["input"], generate.ROOT)))
 
     from ctc_forced_aligner import (
-        generate_emissions, get_alignments, get_spans, load_audio,
-        postprocess_results, preprocess_text,
+        get_alignments, get_spans, postprocess_results, preprocess_text,
     )
 
-    model, tokenizer = aligner()
-    with tempfile.TemporaryDirectory(prefix="quran-align-") as tmp:
-        wav = os.path.join(tmp, "audio.wav")
-        extract_window(cfg["input"], wav, t0, t1)
-        audio_waveform = load_audio(wav, model.dtype, model.device)
-        emissions, stride = generate_emissions(model, audio_waveform)
+    tokenizer = aligner()[1]
+    st = os.stat(cfg["input"])
+    emissions, stride = emissions_for(os.path.realpath(cfg["input"]),
+                                      st.st_size, st.st_mtime_ns, t0, t1)
 
     tokens_starred, text_starred = preprocess_text(
         ref_text, romanize=True, language=LANGUAGE,
