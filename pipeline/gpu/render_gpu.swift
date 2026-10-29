@@ -1155,7 +1155,7 @@ func rgb2yuvTable(_ csp: Int) -> Rgb2Yuv {
 }
 
 final class Sws {
-    let src: (PF, Int, Int, Meta), dstPF: PF, dw: Int, dh: Int, dmeta: Meta
+    let dstPF: PF, dw: Int, dh: Int, dmeta: Meta
     enum Kind { case pass, yuv2rgbTab, yuv2rgbNeon, addAlpha, dropAlpha, scaled }
     var kind: Kind = .scaled
     var hl: SwsFilter?, hc: SwsFilter?, vl: SwsFilter?, vc: SwsFilter?
@@ -1178,7 +1178,6 @@ final class Sws {
 
     // `at`: this scale's index in ffmpeg's filter list (Graph.filterIndex)
     init(src: Img, dstPF: PF, w: Int, h: Int, flags: Int, at: Int) {
-        self.src = (src.pf, src.w, src.h, src.meta)
         self.dstPF = dstPF; dw = w; dh = h
         let srgb = src.pf == .rgb || src.pf == .rgba, drgb = dstPF == .rgb || dstPF == .rgba
         var m = Meta()
@@ -1664,7 +1663,6 @@ class Node {
     var constant = false
     var lastN = Int.min
     var last: Img?
-    var label = ""
     var tb: Int64 = 0       // time base denominator (numerator 1), as ffmpeg's link carries it
     // the pts in 1/30 the stream's EOF carries (nil: it never ends before
     // the fps'd source does), for a framesync filter's shortest=1
@@ -1774,7 +1772,6 @@ func fsMeta(_ imgs: [Img]) -> Meta {
 final class Graph {
     var labels: [String: Node] = [:]
     var inputs: [InputNode] = []
-    var inSpecs: [InSpec] = []
     let chains: [Chain]
     var consumers: [String: [(Int, Int)]] = [:]
     var srcTimeline: ([CMTime], CMTime) = ([], .zero)
@@ -1792,7 +1789,6 @@ final class Graph {
     init(fc: String, specs: [InSpec]) {
         chains = parseGraph(fc)
         for c in chains { chainStart.append(nParsed); nParsed += c.filters.count }
-        inSpecs = specs
         for (ci, c) in chains.enumerated() { for l in c.ins { consumers[l, default: []].append((ci, 0)) } }
         inputs = specs.map { InputNode($0) }
         for (i, n) in inputs.enumerated() { labels["\(i):v"] = n }
@@ -1861,7 +1857,7 @@ final class Graph {
             for n in cur { n.end = end }
         }
         if cur.count != c.outs.count { die("chain output count mismatch at \(c.outs)") }
-        for (o, n) in zip(c.outs, cur) { labels[o] = n; n.label = o }
+        for (o, n) in zip(c.outs, cur) { labels[o] = n }
     }
 
     func pfOf(_ name: String) -> PF {
