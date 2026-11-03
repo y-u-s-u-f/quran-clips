@@ -1,7 +1,7 @@
 ---
 name: make-post
 description: >-
-  Make a Quran recitation clip/reel from a YouTube URL or local video. Trigger on "make a post from <url>", "make a clip from this recitation", "turn this into a reel". Runs fetch -> (transcribe) -> config -> align -> crop -> generate. Styles: vertical | horizontal | bars.
+  Make a Quran recitation clip/reel from a YouTube URL or local video. Trigger on "make a post from <url>", "make a clip from this recitation", "turn this into a reel", "make a before/after" of a reel. Runs fetch -> (transcribe) -> config -> align -> crop -> generate. Styles: vertical | horizontal | bars.
 ---
 
 # make-post — make a reel
@@ -19,6 +19,7 @@ tools/align-venv/bin/python  pipeline/align.py    sources/<id>/<reel>.yaml   # s
 tools/render-venv/bin/python pipeline/crop.py     sources/<id>/<reel>.yaml --write --annotate /tmp/<reel>-crop.png
 tools/render-venv/bin/python pipeline/generate.py sources/<id>/<reel>.yaml [--vertical]
 ffmpeg -v error -i reels/<reel>.mp4 -f null -     # decode gate, always
+tools/render-venv/bin/python pipeline/before_after.py sources/<id>/<reel>.yaml   # ONLY if asked: "before/after"
 python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
 ```
 
@@ -26,6 +27,7 @@ python3 pipeline/publish.py reels/<reel>.mp4      # ONLY if asked
 - Name the span in the config. Omitted, align.py identifies it from Whisper and writes it back beside `trim:` — reliable only on a short source; check what it wrote.
 - `captions.srt` is the cheapest span finder: dedupe rolling windows (keep each block's last line). Timings are ±1–2s — enough to pick a span, never to `trim:`.
 - Open `/tmp/<reel>-crop.png` and look, every time: every solve rewrites it, an EMPTY shot included, and the per-reel name keeps another reel's frame out of it. crop.py's guards check its own numbers against each other, not whether it found a real face.
+- A before/after is cut from the finished reel, never a re-render: run it after generate, or alone on an existing reel's config. Writes `reels/<reel>-before-after.mp4`. Landscape and `--vertical` reels only.
 - Never pipe `generate.py` through `tail`: output is withheld until the process exits, so a healthy 15-minute render reads as hung. `grep --line-buffered`, or redirect to a file and read that.
 
 ## Config
