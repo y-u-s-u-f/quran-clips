@@ -91,7 +91,7 @@ Per style: `vertical` (1080×1920) needs `crop:` + `face_bottom:` — generate r
 
 **Bars timing previews.** `fx: {heat: false}` (cost: `OPTIMIZATIONS.md`), but never judge the LOOK without the full stack.
 
-**The picture is too dark.** The house grade (`GRADE_EQ` in render_bars.py) is the default for every bars reel. A source that still reads too dark gets `grade: {brightness: -0.05, gamma: 1.0}` in its own config (keys: brightness contrast saturation gamma, merged over the house values). The pill colour is sampled at `BAR_SAMPLE_EQ`, not the house grade, so the house exposure does not move it; a `grade:` override is merged over both and does. The scrim is not the lever — its whole range is worth about 3 luma here.
+**Bars picture grade.** The warm picture grade is off by default to preserve natural skin tones. A reel can opt in with `fx: {grade: true}` or a `grade:` override (keys: brightness, contrast, saturation, gamma; merged over `GRADE_EQ` in render_bars.py). With grading enabled, pill colour is sampled at `BAR_SAMPLE_EQ` with the same overrides.
 
 **fetch: "Sign in to confirm you're not a bot", or low resolution.** The bot check is per exit IP and per player client; fetch walks the clients itself and passes over any that offers under 720p (without a PO token only `web_embedded` reaches 1080p). Read the printed `client` and `WxH` before blaming the proxy pool. If every client lands short fetch stops and says so; for a genuinely low-res source pin one with `--client`, which takes whatever it offers. Pool + `--proxy` goes static residential → datacentre → fail; rotating exits cannot download. Prefer a full download plus `trim:` over `--timestamps` through an authenticated proxy.
 

@@ -181,7 +181,7 @@ DEFAULTS = {
                                  # brightness contrast saturation gamma.
     "fx": None,                  # per-stage switches, e.g. {heat: false};
                                  # stages: grade scrim glow barglow textglow
-                                 # scan snow heat (all on by default)
+                                 # scan snow heat (grade off by default)
 }
 
 
@@ -250,7 +250,7 @@ an error rather than a silent no-op.
     # bars style: bar_color ("#RRGGBB" | omit for auto),
     #   grade: {brightness: -0.05, gamma: 1.0, ...} to move the picture
     #   grade for THIS source only (keys: brightness contrast saturation
-    #   gamma; merged over the house grade),
+    #   gamma; enables and merges over the house grade),
     #   fx: {heat: false, ...} to switch stages off (grade scrim glow
     #   barglow textglow scan snow heat; heat off is the cheap preview)
 

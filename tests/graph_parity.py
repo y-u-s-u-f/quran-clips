@@ -95,7 +95,7 @@ def phrases_from_clip():
 def build(portrait):
     """-> (filtergraph, argv text) for the fixture clip."""
     phrases = phrases_from_clip()
-    on = {n: True for n in RB.SWITCHES}
+    on = RB.switches(None)
     lay = RB.layout(phrases, X_OFFSET, 0, RB.geometry(portrait))
     with tempfile.TemporaryDirectory(prefix="graph-parity-") as tmp:
         rep = RB.draw_layers(lay, RB.predraw_color(TINT_RGB),
@@ -115,6 +115,10 @@ def main(argv=None):
                          "decision: it declares the look change intended.")
     a = ap.parse_args(argv)
 
+    assert not RB.switches(None)["grade"]
+    assert RB.switches({"grade": True})["grade"]
+    assert RB.switches(None, {"brightness": -0.05})["grade"]
+    assert not RB.switches({"grade": False}, {"brightness": -0.05})["grade"]
     ok = True
     # One filter per line so a diff points at the stage that moved; the
     # emitted graph is a single ';'-joined line and would diff as "everything".

@@ -1,6 +1,6 @@
 """pipeline/render_bars.py -- the `bars` style renderer.
 
-Landscape 1920x1080: graded footage, white Thuluth on colour pills, wipe then
+Landscape 1920x1080: natural-colour footage, white Thuluth on colour pills, wipe then
 sequential crossfades, full-frame FX (fx.py). The 16:9 picture IS the canvas --
 this style does not letterbox, because black padding is not content.
 `--vertical` composes the same look at 1080x608, the size the portrait file
@@ -181,11 +181,12 @@ TASHKEEL = set("\u064B\u064C\u064D\u064E\u064F\u0650\u0651\u0652\u0653"
                "\u06EA\u06ED\u06EB\u06EC")
 
 
-def switches(clip_fx):
-    """name -> bool for every switchable stage, template default (all on)
+def switches(clip_fx, grade=None):
+    """name -> bool for every switchable stage, grade off unless requested
     merged with the reel config's `fx:` overrides. Unknown name = error --
     a typo'd one would silently do nothing."""
     on = {n: True for n in SWITCHES}
+    on["grade"] = bool(grade)
     for k, v in (clip_fx or {}).items():
         if k not in on:
             raise SystemExit("unknown fx switch %r (known: %s)"
@@ -235,7 +236,7 @@ def grade_eq(grade=None, base=GRADE_EQ):
 
 
 def band_source_chain(crop, W, H, grade_on=True, grade=None, base=GRADE_EQ):
-    """[0:v] -> the graded WxH picture (no captions).
+    """[0:v] -> the WxH picture (no captions), graded when enabled.
     The grade also feeds the bar-colour derivation (at BAR_SAMPLE_EQ), so
     turning it off or overriding it moves the pill hue as well as the
     picture."""
@@ -853,8 +854,8 @@ def render(plan):
     audio = start_audio(src, dur, tmp)
 
     crop = cfg.get("crop")
-    on = switches(cfg.get("fx"))
     grade = cfg.get("grade")
+    on = switches(cfg.get("fx"), grade)
     if grade:
         print("      grade override: eq=%s" % grade_eq(grade))
 

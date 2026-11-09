@@ -48,7 +48,7 @@ All 30fps and fixed-size; a weak source is upscaled, never delivered small.
 
 - **`vertical`** — 1080×1920, `render_text.py`. Arabic + English over a graded plate, centred horizontally, block top just under his chin (`face_bottom`).
 - **`horizontal`** — 1920×1080, the SAME renderer and the same look; block centred vertically, column opposite him (`x_offset`).
-- **`bars`** — 1920×1080, Thuluth on pills (213pt / 96px / 0.45 W ink), wipe then sequential crossfades, full FX (`fx.py`). Never burns a signature. Golden: `tests/graph_parity.py`. `fx: {heat: false}` for timing previews.
+- **`bars`** — 1920×1080, Thuluth on pills (213pt / 96px / 0.45 W ink), wipe then sequential crossfades, FX (`fx.py`), with the warm picture grade off by default for natural skin tones. Never burns a signature. Golden: `tests/graph_parity.py`. `fx: {heat: false}` for timing previews.
 
 Every style renders on `tools/render_gpu` (macOS + Metal only), which runs the style's own ffmpeg filtergraph string as its input spec, an exact port of each filter, and encodes VideoToolbox H.264 at `render_common.VT_QUALITY`, keyed by style. ffmpeg renders no frame; `tests/gpu_parity.py` pins the frames. render_gpu never reads the source itself: `generate.trim_media` re-encodes it to an 8-bit H.264 mp4 first, the whole of it when the config has no `trim:`, so any source fetch takes (MKV, WebM, VP9, AV1, 10-bit HDR) renders.
 
